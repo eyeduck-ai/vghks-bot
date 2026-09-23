@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vghks-bot"
+version = "6.6.1"
+description = "Portable VGHKS outpatient, surgery, approval and earnings workspaces"
+requires-python = ">=3.11"
+dependencies = [
+  "vghks-sdk @ git+https://github.com/eyeduck-ai/vghks-sdk.git@950b27e452918d20a6bfc3105c931435ae6e8ac5",
+  "google-auth==2.58.0",
+  "cryptography==50.0.1",
+]
+
+[project.optional-dependencies]
+build = ["PyInstaller==6.14.2", "ruff==0.14.14"]
+
+[project.scripts]
+vghks-bot = "opd_monitor.app:main"
+
+[project.urls]
+Repository = "https://github.com/eyeduck-ai/vghks-bot"
+Issues = "https://github.com/eyeduck-ai/vghks-bot/issues"
+
+[tool.setuptools.packages.find]
+include = ["opd_monitor*"]
+
+[tool.setuptools.package-data]
+opd_monitor = ["static/*", "defaults.json", "licenses/*"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+extend-exclude = [".build", ".local", ".venv", "build", "dist", "VGHKS-bot-data"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "B", "UP"]

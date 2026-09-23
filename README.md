@@ -1,0 +1,59 @@
+# VGHKS-bot
+
+[![Windows build](https://github.com/eyeduck-ai/vghks-bot/actions/workflows/windows.yml/badge.svg)](https://github.com/eyeduck-ai/vghks-bot/actions/workflows/windows.yml)
+
+VGHKS 院內系統的本機工作台。使用 Windows 單檔 EXE、瀏覽器介面與 SQLite，透過 [vghks-sdk](https://github.com/eyeduck-ai/vghks-sdk) 整合門診、手術排程、審查及薪資資料。這是非官方工具，院內功能需要可連線的醫院網路及有效帳號。
+
+## 下載與開始使用
+
+1. 從 [Releases](https://github.com/eyeduck-ai/vghks-bot/releases/latest) 下載 `VGHKS-bot.exe`，或下載附文件的 Windows x64 ZIP。
+2. 將 EXE 放在可寫入的資料夾後執行，瀏覽器會開啟本機介面。
+3. 輸入院內帳密；成功後可記住登入資訊。多帳號各有獨立資料與任務。
+4. 以側欄「結束程式」離開。更新時先關閉舊程式，再換 EXE，保留原有資料夾。
+
+發布包不含帳密、Google 金鑰、個人刀表網址或病人資料。Google 刀表需自行設定。[服務帳戶設定](docs/GOOGLE_SHEETS_SETUP.md)
+
+## 功能
+
+| 系統 | 功能 |
+| --- | --- |
+| 門診 | 日期掛號清單、手動輸入病歷號／身分證、病人集合、結構化 SOAP 檢閱、tag 與全文／regex 搜尋 |
+| 進階工具 | 視網膜比較、白內障術前比較、Google 刀表差異預覽與明確套用 |
+| 手術 | 即時刀房連結／按需內嵌、登入帳號的手術排程、未來與過去分區 |
+| 審查 | 單一累積案件表、變更歷史、可調整頻率的持續監控 |
+| 薪資 | 保存院方目前公布報表、內容版本、監控、CSV／JSON 匯出 |
+| 資料庫 | 本機保存、離線檢閱、備份、獨立匯入、多資料庫切換 |
+
+## 資料存放
+
+```text
+VGHKS-bot.exe
+VGHKS-bot-data/
+  databases.json
+  datasets/<資料庫>/
+    accounts.sqlite3
+    accounts/<帳號>/clinical.sqlite3
+    accounts/<帳號>/diagnostics/
+    accounts/<帳號>/assets/
+```
+
+預設儲存在 EXE 同層；搬移時攜帶 EXE 與完整 `VGHKS-bot-data`。憑證採可攜式保存，解密資料也在資料庫內，因此持有整份資料的人可以使用這些憑證。若開啟外部位置的資料庫，也要另外攜帶該資料夾。
+
+## 文件
+
+- [完整操作說明](docs/USER_GUIDE.md)
+- [開發、測試與本機打包](docs/DEVELOPMENT.md)
+- [系統架構與資料範圍](docs/ARCHITECTURE.md)
+- [GitHub CI 與 Release 發布](docs/RELEASING.md)
+- [驗證範圍與院內驗收](docs/VALIDATION.md)
+- [版本紀錄](CHANGELOG.md)
+
+## 開發快速開始
+
+需要 Windows x64、Python 3.11、Git 與 Node.js 24。從 clone 後的 repository 根目錄執行：
+
+```powershell
+./build.ps1
+```
+
+它會安裝鎖定依賴，執行測試、打包、EXE 自測及封裝核對，輸出至 `dist/`。測試只使用合成資料，不需院內或 Google 帳密。SDK 與第三方依賴的授權聲明隨發布包提供，也內嵌於 EXE。

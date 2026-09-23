@@ -1,0 +1,36 @@
+.surgery-heading{margin-bottom:12px}
+.surgery-heading h1{font-size:24px;letter-spacing:-.02em}
+.surgery-heading p{margin:4px 0 0}
+.surgery-query{display:flex;align-items:end;gap:10px;flex-wrap:wrap}
+.surgery-query label{min-width:145px}
+.surgery-query .surgery-department{min-width:90px;width:108px}
+.surgery-query .surgery-department input{width:100%}
+.surgery-query input[type=date]{width:155px}
+.surgery-query .actions{margin-left:auto}
+.schedule-meta{padding:9px 0 12px;border-bottom:1px solid var(--line)}
+.schedule-search{display:flex;gap:10px;align-items:center;margin:12px 0}
+.schedule-search input{width:min(100%,350px)}
+.schedule-group{border:1px solid var(--line);border-radius:7px;margin:10px 0;background:var(--paper,#fff)}
+.schedule-group>summary{display:flex;align-items:center;gap:10px;cursor:pointer;padding:9px 12px;background:#edf3e7;border-radius:6px;color:var(--ink)}
+.schedule-group>summary::before{content:"›";display:inline-block;transform:rotate(0deg);font-size:18px;line-height:16px}
+.schedule-group[open]>summary::before{transform:rotate(90deg)}
+.schedule-group>summary:focus-visible{outline:2px solid var(--green);outline-offset:2px}
+.schedule-group .table-wrap{border:0;border-radius:0;margin:0}
+.schedule-group .patient-table th{position:static}
+.schedule-group .patient-table td{vertical-align:middle}
+.schedule-group .patient-table td:nth-child(1),.schedule-group .patient-table td:nth-child(2),.schedule-group .patient-table td:nth-child(3),.schedule-group .patient-table td:nth-child(4){white-space:nowrap}
+.schedule-group .patient-table td:last-child{width:42px}
+.schedule-procedure{display:block;min-width:140px;max-width:360px;overflow-wrap:anywhere}
+.schedule-past>summary{background:#eeefeb;color:#586150}
+.schedule-past .patient-table{background:#f7f8f4}
+.schedule-unconfirmed>summary{background:#f6efdb}
+.schedule-warning{display:block;color:#826424;margin-top:3px}
+.schedule-group .empty{padding:18px}
+.board-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:14px 0 10px}
+.board-actions .button-link{display:inline-flex;align-items:center;gap:6px;min-height:32px;padding:5px 10px;border:1px solid var(--green);border-radius:6px;background:var(--green);color:white;text-decoration:none;font-size:13px}
+.board-actions .button-link:hover{filter:brightness(.9)}
+.board-placeholder{display:grid;place-items:center;min-height:320px;border:1px dashed #bacbb2;border-radius:8px;background:#f5f7f1}
+#operatingRoomFrame{width:100%;height:calc(100dvh - 240px);min-height:420px;border:1px solid var(--line);border-radius:6px;background:white}
+#surgeryConnection:empty{display:none}
+.sidebar .surgery-nav{border-top:1px solid #ccd7c5;padding-top:6px;margin-top:7px}
+@media(max-width:700px){.surgery-query .actions{margin-left:0}.surgery-query label{min-width:0}.surgery-query input[type=date]{width:145px}.surgery-heading h1{font-size:21px}.schedule-group .patient-table{min-width:850px}.board-placeholder{min-height:180px}#operatingRoomFrame{height:70dvh;min-height:300px}}
