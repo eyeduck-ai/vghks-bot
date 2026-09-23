@@ -47,11 +47,13 @@ class DatabaseTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             manager.handle("forget", {"id": manager.active_entry})
         manager.close()
-        shutil.copytree(manager.home, self.path / "relocated")
-        copied = DatabaseManager(self.path / "relocated", Settings(), BotSyntheticSDK)
+        # Windows TEMP can use an 8.3 alias; the manager canonicalizes its paths.
+        relocated = (self.path / "relocated").resolve()
+        shutil.copytree(manager.home, relocated)
+        copied = DatabaseManager(relocated, Settings(), BotSyntheticSDK)
         try:
             self.assertEqual(copied.current.database["name"], "門診研究")
-            self.assertTrue(copied.current.directory.is_relative_to(self.path / "relocated"))
+            self.assertTrue(copied.current.directory.is_relative_to(relocated))
         finally:
             copied.close()
 
