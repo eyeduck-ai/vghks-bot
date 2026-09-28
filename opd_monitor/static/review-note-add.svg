@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" fill="none">
+  <title>新增備註</title>
+  <defs>
+    <linearGradient id="note-add-ink" x1="290" y1="230" x2="1000" y2="1030" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FAA314"/><stop offset="1" stop-color="#F59C0A"/>
+    </linearGradient>
+    <linearGradient id="note-add-paper" x1="330" y1="280" x2="850" y2="1000" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF"/><stop offset="1" stop-color="#FDFDFE"/>
+    </linearGradient>
+    <linearGradient id="note-add-light" x1="400" y1="320" x2="970" y2="1040" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFF1C9"/><stop offset="1" stop-color="#FFE7AB"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(-13.2413793 -13.2413793) scale(.2206896552)">
+  <g stroke="url(#note-add-ink)" stroke-linejoin="round" stroke-linecap="round">
+    <path d="M341 266H713L897 448V930Q897 988 839 988H341Q284 988 284 931V324Q284 266 341 266Z" fill="url(#note-add-paper)" stroke-width="51"/>
+    <path d="M713 268V399Q713 448 762 448H895" stroke-width="50"/>
+  </g>
+  <g stroke="#FFC76B" stroke-width="47" stroke-linecap="round">
+    <path d="M398 509H700"/><path d="M398 600H648"/>
+    <path d="M398 690H587"/><path d="M398 782H529"/>
+  </g>
+  <g stroke="url(#note-add-ink)" stroke-linejoin="round" stroke-linecap="round">
+    <path d="M550 912L582 804Q585 791 594 782L798 579Q820 558 841 579L889 627Q910 648 889 670L680 879Q674 885 664 889L556 926Q537 932 550 912Z" fill="url(#note-add-light)" stroke-width="37"/>
+    <path d="M750 627L845 722M583 801L666 882" stroke-width="35"/>
+    <circle cx="855" cy="860" r="140" fill="url(#note-add-paper)" stroke-width="40"/>
+    <path d="M855 795V925M789 860H921" stroke-width="47"/>
+  </g>
+  </g>
+</svg>

@@ -71,8 +71,15 @@ def extract_tables(payload, source_key, saved_at=""):
     case_day = (payload.get("case") or {}).get("visit_date", "")
     for ti, table in enumerate(payload.get("tables", [])):
         title = str(table.get("title", ""))
-        headers = [str(v) for v in table.get("headers", [])]
+        legacy_headers = [str(v) for v in table.get("headers", [])]
         rows = table.get("rows", [])
+        paths = table.get("column_paths") or []
+        aligned = bool(rows) and (bool(paths) and all(len(paths) == len(row) for row in rows)
+                                  or not paths and not table.get("header_rows")
+                                  and all(len(legacy_headers) == len(row) for row in rows))
+        headers = ([" / ".join(str(part) for part in path if str(part).strip()) for path in paths]
+                   if aligned and paths else legacy_headers if aligned else
+                   [f"欄 {i + 1}" for i in range(max((len(row) for row in rows), default=0))])
         title_exam = exam_name(title)
         normalized = [norm(h).casefold() for h in headers]
         date_cols = [i for i, h in enumerate(normalized) if re.search(r"date|日期|時間", h)]
@@ -82,6 +89,16 @@ def extract_tables(payload, source_key, saved_at=""):
         detected = {exam_name(h) for h in headers} - {""}
         for ri, row in enumerate(rows):
             values = [str(v) for v in row]
+            if not aligned:
+                exams = ({title_exam} | {exam_name(h) for h in legacy_headers}) - {""}
+                if exams:
+                    output.append({"id": digest([source_key, ti, ri, "unaligned"])[:24],
+                                   "source": source_key, "saved_at": saved_at, "title": title,
+                                   "headers": headers, "header_rows": table.get("header_rows", []),
+                                   "parsing_issues": table.get("parsing_issues", []),
+                                   "values": values, "date": case_day, "exams": sorted(exams),
+                                   "cells": [], "unparsed": True})
+                continue
             def get(i, values=values):
                 return values[i] if i < len(values) else ""
             row_exam = next((exam_name(get(i)) for i in item_cols if exam_name(get(i))), "")
@@ -117,6 +134,8 @@ def extract_tables(payload, source_key, saved_at=""):
                 dated = [c for c in cells if c["date"] == day]
                 output.append({"id": digest([source_key, ti, ri, day])[:24], "source": source_key,
                                "saved_at": saved_at, "title": title, "headers": headers,
+                               "header_rows": table.get("header_rows", []),
+                               "parsing_issues": table.get("parsing_issues", []),
                                "values": values, "date": day, "exams": sorted(exams), "cells": dated,
                                "unparsed": not dated or not day})
     return output

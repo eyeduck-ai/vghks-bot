@@ -10,14 +10,21 @@ window.JobProgress = (() => {
   function create(run) {
     const p=value(run),box=document.createElement("div");box.className="job-progress";box.dataset.status=run.status||"";
     if(!visible(run)){box.hidden=true;return box;}
-    const bar=document.createElement("progress"),text=document.createElement("span");bar.setAttribute("aria-label",(run.name||"資料抓取")+"進度");
+    const bar=document.createElement("progress"),line=document.createElement("div"),stage=document.createElement("small"),text=document.createElement("span");bar.setAttribute("aria-label",(run.name||"資料抓取")+"進度");line.className="job-progress-line";
     if(p.total!=null){bar.max=Math.max(1,p.total);bar.value=p.total?Math.min(p.done,p.total):(run.status==="completed"?1:0);}
     else if(!["queued","running","cancelling"].includes(run.status)){bar.max=1;bar.value=0;}
-    text.textContent=(p.total==null?`已處理 ${p.done||0} ${p.unit||"項"} · 確認總量中`:`${p.done} / ${p.total} ${p.unit||"項"}`)+(p.failed?` · ${p.failed} 項未完成`:"");box.append(bar,text);
-    if(p.stage){const detail=document.createElement("small");detail.textContent=p.stage;box.append(detail);}
-    if(run.status==="completed")setTimeout(()=>{box.hidden=true;const card=box.closest('[data-transient="true"]');if(card)card.hidden=true;},remaining(run));
+    text.textContent=(p.total==null?`已處理 ${p.done||0} ${p.unit||"項"} · 確認總量中`:`${p.done} / ${p.total} ${p.unit||"項"}`)+(p.failed?` · ${p.failed} 項未完成`:"");
+    stage.textContent=p.stage||run.name||"資料抓取";stage.title=stage.textContent;line.append(stage,text);box.append(line,bar);
+    if(run.status==="completed")setTimeout(()=>{const card=box.closest('[data-transient="true"]');if(card)card.hidden=true;else box.remove();},remaining(run));
     return box;
   }
-  function show(target,run){if(typeof target==="string")target=document.querySelector(target);if(target)target.replaceChildren(create(run));}
-  return {create,show,visible};
+  function show(target,run){if(typeof target==="string")target=document.querySelector(target);if(target)target.replaceChildren(...(visible(run)?[create(run)]:[]));}
+  function pending(target,name,stage="正在送出查詢…"){
+    if(typeof target==="string")target=document.querySelector(target);
+    if(!target)return null;
+    const box=create({status:"queued",name,progress:{done:0,total:null,unit:"項",stage}});
+    target.replaceChildren(box);
+    return box;
+  }
+  return {create,show,visible,pending};
 })();

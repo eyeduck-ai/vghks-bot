@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" fill="none">
+  <title>該次醫囑清單</title>
+  <defs>
+    <linearGradient id="orders-current-ink" x1="54" y1="44" x2="199" y2="217" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#246253" />
+      <stop offset="1" stop-color="#1A5548" />
+    </linearGradient>
+    <linearGradient id="orders-current-paper" x1="65" y1="48" x2="191" y2="216" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF" />
+      <stop offset="1" stop-color="#FAFBFC" />
+    </linearGradient>
+    <linearGradient id="orders-current-accent" x1="84" y1="69" x2="166" y2="194" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#24836A" />
+      <stop offset="1" stop-color="#08744F" />
+    </linearGradient>
+    <linearGradient id="orders-current-muted" x1="85" y1="148" x2="177" y2="196" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#B8C3C8" />
+      <stop offset="1" stop-color="#ADB9BF" />
+    </linearGradient>
+  </defs>
+  <g stroke="url(#orders-current-ink)" stroke-width="8.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M72 47H158L196 85V206A10 10 0 0 1 186 216H72A10 10 0 0 1 62 206V57A10 10 0 0 1 72 47Z" fill="url(#orders-current-paper)" />
+    <path d="M158 48V79A6 6 0 0 0 164 85H194" />
+  </g>
+  <g fill="url(#orders-current-ink)">
+    <path fill-rule="evenodd" d="M88 68H102C114 68 120 74 120 83.5C120 90.6 116.8 95.3 110.7 97.8L122 114H109.7L99.6 99.2H95V112.5Q95 115 92.5 115H87.5Q85 115 85 112.5V71Q85 68 88 68ZM95 77V90H101.5C107.2 90 110 87.9 110 83.5C110 79.1 107.2 77 101.5 77H95Z" />
+    <path d="M112.2 94H101.7Q99.7 94 100.9 95.7L113.1 112.5L99.2 129.5Q97.8 131.5 100.3 131.5H108.5Q109.7 131.5 110.6 130.3L118.9 119.9L127.2 130.3Q128.1 131.5 129.4 131.5H138Q140.2 131.5 138.8 129.5L125.1 112L138 95.6Q139.2 94 137.1 94H128.9Q127.4 94 126.5 95.1L118.7 105L112.2 94Z" />
+  </g>
+  <circle cx="91" cy="147" r="7.5" fill="url(#orders-current-accent)" />
+  <rect x="109" y="142" width="73" height="10" rx="3" fill="url(#orders-current-muted)" />
+  <circle cx="91" cy="170" r="7.5" fill="url(#orders-current-accent)" />
+  <rect x="109" y="165" width="64" height="10" rx="3" fill="url(#orders-current-muted)" />
+  <circle cx="91" cy="193" r="7.5" fill="url(#orders-current-accent)" />
+  <rect x="109" y="188" width="47" height="10" rx="3" fill="url(#orders-current-muted)" />
+</svg>

@@ -29,7 +29,7 @@ py -3.11 -m venv .venv
 .venv/Scripts/python.exe -m unittest discover -s tests -p test_surgery_schedule.py -v
 ```
 
-瀏覽器 fixture 會印出帶本機登入 token 的 URL；開啟後以「結束程式」離開。原有比較模組可用 `tools/browser_analysis_fixture.py` 驗證，`tools/sheet_validation.py` 提供合成刀表資料。
+瀏覽器 fixture 會印出帶本機登入 token 的 URL；開啟後以「結束程式」離開。進階工具目前仍使用嵌入的 `/tools` 比較頁，因此 `index.html`、`app.js`、`analysis.js` 等檔案仍是正式程式的一部分。可用 `tools/browser_analysis_fixture.py` 單獨驗證比較頁，`tools/sheet_validation.py` 提供合成刀表資料。
 
 新增檔案先以 `git add <明確路徑>` 納入，來源邊界檢查才會檢查到它。不要加入真實資料庫或病歷 fixture。失敗重現請建立合成資料。
 
@@ -59,7 +59,7 @@ py -3.11 -m venv .venv
 
 清理 `.build/`、`.ruff_cache/`、`build/` 及來源下的 Python 快取；先檢查範圍，遇到連結／junction 會停止。保留 `dist/`、`.venv/`、`.local/` 與 `VGHKS-bot-data/`。
 
-`.local/` 供個人備份及診斷封存，不列入 Git。版本控制只保存可分享的原始碼、合成測試、公開預設值與文件。
+`.local/` 供個人備份及診斷封存，不列入 Git。HAR 擷取檔及 SDK 診斷 JSONL 也會被忽略，來源發布檢查會拒絕它們與 ZIP 建置包。版本控制只保存可分享的原始碼、合成測試、公開預設值與文件；`dist/` 的舊版本包經確認後可移除，`VGHKS-bot-data/` 不屬於建置快取。
 
 ## 更新 SDK
 

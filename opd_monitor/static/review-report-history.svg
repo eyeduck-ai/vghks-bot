@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" fill="none">
+  <title>歷年數值類報告</title>
+  <defs>
+    <linearGradient id="report-history-ink" x1="54" y1="44" x2="199" y2="217" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#284D60" />
+      <stop offset="1" stop-color="#1F4154" />
+    </linearGradient>
+    <linearGradient id="report-history-paper" x1="65" y1="48" x2="191" y2="216" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF" />
+      <stop offset="1" stop-color="#FAFBFC" />
+    </linearGradient>
+    <linearGradient id="report-history-accent" x1="84" y1="69" x2="166" y2="194" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#45A0EB" />
+      <stop offset="1" stop-color="#348EDD" />
+    </linearGradient>
+    <linearGradient id="report-history-muted" x1="85" y1="148" x2="177" y2="196" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#B8C3C8" />
+      <stop offset="1" stop-color="#ADB9BF" />
+    </linearGradient>
+    <mask id="report-history-clock-clearance" x="0" y="0" width="256" height="256" maskUnits="userSpaceOnUse" maskContentUnits="userSpaceOnUse" style="mask-type:luminance">
+      <rect width="256" height="256" fill="#fff" />
+      <circle cx="182" cy="183" r="43" fill="#000" />
+    </mask>
+  </defs>
+  <g mask="url(#report-history-clock-clearance)">
+    <g stroke="url(#report-history-ink)" stroke-width="7.8" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M85 56V47A9 9 0 0 1 94 38H160A8 8 0 0 1 165.7 40.3L195.7 70.3A8 8 0 0 1 198 76V191A9 9 0 0 1 189 200H94A9 9 0 0 1 85 191Z" fill="url(#report-history-paper)" />
+      <path d="M64 75V62A9 9 0 0 1 73 53H142A8 8 0 0 1 147.7 55.3L175.7 83.3A8 8 0 0 1 178 89V199A9 9 0 0 1 169 208H73A9 9 0 0 1 64 199Z" fill="url(#report-history-paper)" />
+      <path d="M53 70H123L156 101V201A9 9 0 0 1 147 210H53A10 10 0 0 1 43 200V80A10 10 0 0 1 53 70Z" fill="url(#report-history-paper)" />
+      <path d="M123 72V96A5 5 0 0 0 128 101H154" />
+    </g>
+    <g fill="url(#report-history-accent)">
+      <rect x="61" y="138" width="18" height="22" rx="2.5" />
+      <rect x="86" y="124" width="18" height="36" rx="2.5" />
+      <rect x="111" y="109" width="18" height="51" rx="2.5" />
+    </g>
+    <g fill="url(#report-history-muted)">
+      <rect x="61" y="168" width="70" height="8.5" rx="3" />
+      <rect x="61" y="185" width="45" height="8.5" rx="3" />
+    </g>
+  </g>
+  <g>
+    <path d="M157 203.5A33 33 0 1 0 149 181" stroke="url(#report-history-ink)" stroke-width="8" stroke-linecap="round" />
+    <path d="M140 176H159Q162 176 160.3 178.6L151.5 189.9Q149.1 193 146.8 190L138 179.3Q135.6 176 140 176Z" fill="url(#report-history-ink)" />
+    <path d="M182 165V188L194 194" stroke="url(#report-history-ink)" stroke-width="7.6" stroke-linecap="round" stroke-linejoin="round" />
+  </g>
+</svg>

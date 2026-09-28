@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" fill="none">
+  <title>歷次就診</title>
+  <defs>
+    <linearGradient id="visits-history-ink" x1="290" y1="230" x2="1000" y2="1030" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#05728A"/><stop offset="1" stop-color="#006B80"/>
+    </linearGradient>
+    <linearGradient id="visits-history-paper" x1="330" y1="280" x2="850" y2="1000" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF"/><stop offset="1" stop-color="#FDFDFE"/>
+    </linearGradient>
+    <linearGradient id="visits-history-light" x1="400" y1="320" x2="970" y2="1040" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F4FCFC"/><stop offset="1" stop-color="#ECF8F8"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(-13.2413793 -13.2413793) scale(.2206896552)">
+  <g fill="url(#visits-history-paper)" stroke="url(#visits-history-ink)" stroke-width="43" stroke-linejoin="round">
+    <rect x="253" y="435" width="264" height="458" rx="46"/>
+    <rect x="746" y="435" width="256" height="458" rx="46"/>
+    <rect x="448" y="256" width="357" height="638" rx="56"/>
+  </g>
+  <g fill="url(#visits-history-ink)">
+    <path d="M608 310H646Q665 310 665 329V364H697Q717 364 717 385V417Q717 437 697 437H665V466Q665 486 646 486H609Q590 486 590 466V437H559Q539 437 539 417V384Q539 364 559 364H590V329Q590 310 608 310Z"/>
+    <rect x="312" y="509" width="77" height="72" rx="15"/>
+    <rect x="312" y="613" width="77" height="73" rx="15"/>
+    <rect x="866" y="509" width="77" height="72" rx="15"/>
+    <rect x="866" y="613" width="77" height="73" rx="15"/>
+    <rect x="529" y="524" width="77" height="73" rx="17"/>
+    <rect x="649" y="524" width="76" height="73" rx="17"/>
+    <rect x="529" y="623" width="77" height="73" rx="17"/>
+    <rect x="649" y="623" width="76" height="73" rx="17"/>
+  </g>
+  <g stroke="url(#visits-history-ink)" stroke-width="29">
+    <rect x="542" y="736" width="170" height="151" rx="9" fill="url(#visits-history-light)"/>
+    <path d="M627 739V887"/>
+  </g>
+  <g fill="url(#visits-history-light)" stroke="#FFFFFF" stroke-width="68" stroke-linejoin="round">
+    <circle cx="408" cy="795" r="79"/>
+    <path d="M288 1029H524Q557 1029 557 996V977C557 915 510 866 449 866H364C303 866 256 915 256 977V997Q256 1029 288 1029Z"/>
+  </g>
+  <g fill="url(#visits-history-light)" stroke="url(#visits-history-ink)" stroke-width="40" stroke-linejoin="round">
+    <circle cx="408" cy="795" r="79"/>
+    <path d="M288 1029H524Q557 1029 557 996V977C557 915 510 866 449 866H364C303 866 256 915 256 977V997Q256 1029 288 1029Z"/>
+  </g>
+  <circle cx="911" cy="887" r="145" fill="url(#visits-history-light)" stroke="#FFFFFF" stroke-width="59"/>
+  <g stroke="url(#visits-history-ink)" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M768.202 912.179A145 145 0 1 0 774.745 837.407" stroke-width="43"/>
+    <path d="M763 794L766 845L822 834" stroke-width="36"/>
+    <path d="M911 829V895L962 931" stroke-width="43"/>
+  </g>
+  </g>
+</svg>

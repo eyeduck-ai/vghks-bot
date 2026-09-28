@@ -42,7 +42,8 @@ class SyntheticSDK:
     def patients(self, card, day):
         self.days.add(day)
         self.observed_days.add(day)
-        return [OutpatientPatient(f"TEST{i:03}", name, day, sex, age, "70", "02", card, True)
+        return [OutpatientPatient(f"TEST{i:03}", name, day, sex, age, "70", "02", card, True,
+                                  sequence_no=f"{i:03}")
             for i, (name, sex, age) in enumerate((("測試病人甲", "女", "68歲"), ("測試病人乙", "男", "72歲"), ("測試病人丙", "女", "59歲"), ("測試病人丁", "男", "64歲")), 1)]
 
     def visits(self, mrn):

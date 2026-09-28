@@ -1,5 +1,6 @@
 """Account-scoped, read-only preauthorization queries and saved snapshots."""
 import copy
+import json
 import uuid
 from datetime import date
 
@@ -15,6 +16,23 @@ from .storage import StorageError
 
 KINDS = {"approval_search", "approval_options", "approval_case", "approval_refresh", "approval_sync"}
 PARTS = {"detail": "get_case", "orders": "get_orders", "attachments": "get_attachments", "pacs": "get_pacs"}
+
+
+def order_names(payload):
+    """Distinct OrderName values from saved SDK rows; [] also means fetched."""
+    result, seen = [], set()
+    for row in payload.get("rows", []) or []:
+        if not isinstance(row, dict):
+            continue
+        raw = next((value for key, value in row.items()
+                    if isinstance(key, str) and key.casefold() == "ordername"), None)
+        if raw is None or isinstance(raw, (dict, list)):
+            continue
+        name = " ".join(str(raw).split())
+        if name and name.casefold() not in seen:
+            result.append(name)
+            seen.add(name.casefold())
+    return result
 
 
 class Approvals:
@@ -137,7 +155,7 @@ class Approvals:
                     key = task["apply_seq"] + ":" + part
                     cached = self.db.get("approval_part", key, required=False)
                     try:
-                        if cached and not task["force"] and fresh(cached["updated_at"], 60):
+                        if cached and not task["force"] and (part == "orders" or fresh(cached["updated_at"], 60)):
                             result = cached
                         else:
                             response = getattr(sdk.reviews, PARTS[part])(ReviewCaseRef(task["apply_seq"]))
@@ -192,7 +210,8 @@ class Approvals:
 
     def sync(self, sdk, state, task):
         run = {"id": uuid.uuid4().hex, "task_id": task["id"], "started_at": timestamp(),
-               "automatic": task.get("automatic", False), "status": "running", "new": 0, "changed": 0, "unchanged": 0}
+               "automatic": task.get("automatic", False), "status": "running", "new": 0, "changed": 0, "unchanged": 0,
+               "orders_needed": 0, "orders_fetched": 0, "orders_reused": 0, "orders_failed": 0}
         self.db.save("approval_sync_run", run)
         try:
             self.app.review.report(state, task, stage="取得完整審查清單")
@@ -215,7 +234,45 @@ class Approvals:
                     "version": outcome.get("version"), "change": change, "checked_at": checked})
                 self.db.save("approval_sync_run", {**run, "fetched_at": checked, "total": len(cases)})
                 self.app.review.report(state, task, stage="審查案件已保存")
-            run.update(status="completed", total=len(cases), fetched_at=checked)
+            saved = self.saved_orders()
+            known_cases = self.db.all("approval_case")
+            known_cases.sort(key=lambda row: (row["case"].get("application_date", ""), row["id"]), reverse=True)
+            missing = [row["id"] for row in known_cases if row["id"] not in saved]
+            task["order_total"] = len(missing)
+            self.db.save("task", {**self.db.get("task", task["id"]), "order_total": len(missing)})
+            run["orders_needed"] = len(missing)
+            self.app.review.report(state, task, stage="補查未保存的案件醫囑")
+            for ref in missing:
+                state.check_cancel()
+                self.app.review.report(state, task, stage="取得案件 " + ref + " 的醫囑")
+                try:
+                    current = self.db.get("approval_part", ref + ":orders", required=False)
+                    if current and current.get("part") == "orders" and current.get("payload", {}).get("reference", {}).get("apply_seq") == ref and current["payload"].get("kind") == "orders":
+                        payload = current["payload"]
+                        run["orders_reused"] += 1
+                    else:
+                        response = sdk.reviews.get_orders(ReviewCaseRef(ref))
+                        order_checked = self.app.gateway.response_at()
+                        payload = clean(response)
+                        if payload.get("reference", {}).get("apply_seq") != ref or payload.get("kind") != "orders":
+                            raise ValueError("醫囑明細與審查案件編號不符。")
+                        self.db.save("approval_part", {"id": ref + ":orders", "part": "orders", "payload": payload,
+                                                       "fetched_at": order_checked})
+                        run["orders_fetched"] += 1
+                    self.db.item(task["id"], "orders:" + ref, {"status": "ready", "apply_seq": ref,
+                                                                 "checked_at": checked, "order_names": order_names(payload)})
+                except (Cancelled, StorageError):
+                    raise
+                except Exception as exc:
+                    message, code = safe_failure(exc)
+                    self.db.item(task["id"], "orders:" + ref, {"status": "error", "apply_seq": ref,
+                                                                 "checked_at": checked, "message": message, "code": code})
+                    run["orders_failed"] += 1
+                    if not self.app.gateway.online:
+                        raise
+                self.db.save("approval_sync_run", {**run, "fetched_at": checked, "total": len(cases)})
+                self.app.review.report(state, task, stage="案件醫囑已處理")
+            run.update(status="partial" if run["orders_failed"] else "completed", total=len(cases), fetched_at=checked)
             # Labels are shared selectors, not a second crawl of every case.
             cached = self.db.get("approval_options", "all", required=False)
             if not cached or not fresh(cached["fetched_at"], 86400):
@@ -252,22 +309,57 @@ class Approvals:
         values = values or {}
         data = self.tracker.overview({"mode": values.get("mode", "all")})
         rows = data.pop("rows")
+        saved_orders = self.saved_orders()
+        for row in rows:
+            order = saved_orders.get(row["id"])
+            row["order_names"] = order["names"] if order else []
+            row["orders_fetched"] = order is not None
         query = str(values.get("q", "")).casefold().strip()
+        order_query = str(values.get("order_name", "")).casefold().strip()
+        if len(order_query) > 200:
+            raise ValueError("醫囑名稱篩選過長。")
+        sort = values.get("sort", "date_desc")
+        if sort not in {"date_desc", "order_asc", "order_desc"}:
+            raise ValueError("審查排序條件不正確。")
         for name in ("start", "end"):
             if values.get(name):
                 date.fromisoformat(values[name])
         def match(row):
             c = row["case"]
-            text = " ".join(str(c.get(k, "")) for k in ("mrn", "patient_name", "doctor_card", "department", "review_label")) + " " + row["id"]
+            text = " ".join(str(c.get(k, "")) for k in ("mrn", "patient_name", "doctor_card", "department", "review_label")) + " " + row["id"] + " " + " ".join(row["order_names"])
             return ((not query or query in text.casefold())
+                and (not order_query or any(order_query in name.casefold() for name in row["order_names"]))
                 and (not values.get("mrn") or values["mrn"] in c["mrn"])
                 and (not values.get("start") or c["application_date"] >= values["start"])
                 and (not values.get("end") or c["application_date"] <= values["end"])
                 and (not values.get("decision") or c["verify_code"] == values["decision"]))
-        filtered = sorted((r for r in rows if match(r)), key=lambda r: (r["case"]["application_date"], r["id"]), reverse=True)
+        filtered = [r for r in rows if match(r)]
+        if sort == "date_desc":
+            filtered.sort(key=lambda r: (r["case"]["application_date"], r["id"]), reverse=True)
+        else:
+            named = [r for r in filtered if r["order_names"]]
+            unnamed = [r for r in filtered if not r["order_names"]]
+            named.sort(key=lambda r: (r["order_names"][0].casefold(), r["case"]["application_date"], r["id"]),
+                       reverse=sort == "order_desc")
+            unnamed.sort(key=lambda r: (r["case"]["application_date"], r["id"]), reverse=True)
+            filtered = named + unnamed
         return {**data, "rows": filtered, "total": len(filtered),
+                "orders_fetched": sum(r["orders_fetched"] for r in filtered),
                 "options": self.db.get("approval_options", "all", required=False),
                 "runs": self.db.all("approval_sync_run")[:20]}
+
+    def saved_orders(self):
+        """Read only order parts so list filtering also works offline."""
+        with self.db.library.connect() as db:
+            documents = db.execute("SELECT id,payload FROM bot_documents WHERE kind='approval_part' AND id LIKE '%:orders'").fetchall()
+        result = {}
+        for key, content in documents:
+            part = json.loads(content)
+            ref = key.removesuffix(":orders")
+            payload = part.get("payload", {})
+            if part.get("part") == "orders" and payload.get("reference", {}).get("apply_seq") == ref and payload.get("kind") == "orders":
+                result[ref] = {"names": order_names(payload), "fetched_at": part.get("fetched_at", "")}
+        return result
 
     def sync_history(self, _=None):
         return {"runs": self.db.all("approval_sync_run")}

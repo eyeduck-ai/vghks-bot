@@ -47,7 +47,12 @@ async function api(path, body) {
 }
 async function action(callback) {
   $("#notice").hidden = true;
+  const control = document.activeElement?.tagName === "BUTTON" ? document.activeElement : null;
+  if (control?.dataset.busy) return;
+  const disabled = control?.disabled;
+  if (control) {control.dataset.busy = "true"; control.setAttribute("aria-busy", "true"); control.disabled = true;}
   try { await callback(); } catch (error) { notify(error.message, true); }
+  finally {if (control) {delete control.dataset.busy; control.removeAttribute("aria-busy"); if (control.isConnected) control.disabled = !!disabled;}}
 }
 const rangeLabel = r => r.start === r.end ? r.start : `${r.start} ～ ${r.end}`;
 const accountLabel = r => r.account_label ? `${r.account_label} · ${r.account}` : r.account;
@@ -149,6 +154,7 @@ function updateAccountProgress() {
     if (shown) {
       form.dataset.run = shown.id;
       $(".account-progress>span", form).textContent = `${rangeLabel(shown)} · ${shown.message} SOAP ${shown.counts.soap_read}`;
+      $(".account-progress>span", form).title = $(".account-progress>span", form).textContent;
       $(".account-progress .job-progress", form)?.remove();$(".account-progress", form).append(JobProgress.create(shown));
       $(".stop-account", form).hidden = !active.has(shown.status);
     }
@@ -218,6 +224,7 @@ function renderRun() {
   $("#runStatus").hidden = false;
   $("#runStatusLabel").textContent = statusLabels[current.status] || current.status;
   $("#runMessage").textContent = current.message;
+  $("#runMessage").title = current.message || "";
   $("#stopRun").hidden = !active.has(current.status);
   $("#runProgress").hidden = !active.has(current.status);
   const c = current.counts;

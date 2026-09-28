@@ -8,6 +8,8 @@ from datetime import timedelta
 from pathlib import Path
 from unittest.mock import patch
 
+from vghks_sdk import LoginRejectedError, RequestError
+
 from opd_monitor.bot import BotApplication
 from opd_monitor.bot_gateway import AccountGateway, NetworkGate
 from opd_monitor.bot_server import BotServer
@@ -40,9 +42,7 @@ class BotTests(unittest.TestCase):
 
     def review(self, group=None, **options):
         group = group or self.group()
-        scope = self.work.review.scope({"set_id": group["id"], **options})
-        run = self.work.review.start({"set_id": group["id"], "department_confirmed": True,
-            "department_confirmation": scope["confirmation_key"], **options})["task_id"]
+        run = self.work.review.start({"set_id": group["id"], **options})["task_id"]
         return wait_task(self.work, run)
 
     def test_accounts_isolate_every_clinical_store_and_encrypt_only_after_success(self):
@@ -86,6 +86,49 @@ class BotTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.app.login({"id": self.key})
 
+    def test_switching_accounts_keeps_independent_sessions_and_uses_memory_password(self):
+        first_session = self.work.gateway.session_id
+        other_id = self.app.login({"username": "SECOND", "password": "other", "remember": False})["account"]["id"]
+        other = self.app.workspace(other_id)
+        second_session = other.gateway.session_id
+        self.assertNotEqual(first_session, second_session)
+        self.assertEqual(self.app.registry.password(other_id), "")
+        before = sum(call[0] == "TEST" and call[1] == "login" for call in BotSyntheticSDK.calls)
+        self.assertTrue(self.app.activate(self.key)["online"])
+        self.assertEqual(self.work.gateway.session_id, first_session)
+        self.assertEqual(before, sum(call[0] == "TEST" and call[1] == "login" for call in BotSyntheticSDK.calls))
+        other.gateway.close()
+        self.assertTrue(self.app.activate(other_id)["online"])
+        self.assertNotEqual(other.gateway.session_id, second_session)
+        self.assertEqual(self.work.gateway.session_id, first_session)
+        self.assertTrue(self.work.gateway.online)
+        self.assertEqual(self.app.registry.password(other_id), "")
+        self.app.logout(other_id)
+        self.assertEqual(self.app.activate(other_id)["status"], "needs_password")
+        self.assertTrue(self.work.gateway.online)
+
+    def test_activate_reports_connection_failure_without_affecting_other_account(self):
+        other_id = self.app.login({"username": "SECOND", "password": "other", "remember": False})["account"]["id"]
+        other = self.app.workspace(other_id)
+        other.gateway.close()
+        first_session = self.work.gateway.session_id
+        with patch.object(other.gateway, "login", side_effect=RequestError("temporary outage", code="NETWORK_TIMEOUT")):
+            result = self.app.activate(other_id)
+        self.assertEqual(result["status"], "unavailable")
+        self.assertEqual(result["error_code"], "NETWORK_TIMEOUT")
+        self.assertNotIn("temporary outage", json.dumps(result))
+        self.assertEqual(self.work.gateway.session_id, first_session)
+        self.assertTrue(self.app.activate(other_id)["online"])
+
+    def test_activate_requests_password_only_after_explicit_rejection(self):
+        other_id = self.app.login({"username": "SECOND", "password": "other"})["account"]["id"]
+        other = self.app.workspace(other_id)
+        other.gateway.close()
+        with patch.object(other.gateway, "login", side_effect=LoginRejectedError("rejected", code="AUTH_LOGIN_REJECTED")):
+            result = self.app.activate(other_id)
+        self.assertEqual(result["status"], "needs_password")
+        self.assertTrue(self.work.gateway.online)
+
     def test_latest_same_day_aliases_cutoff_and_first_visit_vs_error(self):
         result = self.review(self.group("TEST001,NEW000,FAIL"))
         patients = {p["mrn"]: p for p in result["items"]}
@@ -115,6 +158,7 @@ class BotTests(unittest.TestCase):
         self.assertTrue(self.work.idle.wait(10))
         rows = self.work.patient_list({"account_id": self.key, "start": day})["days"][0]["rows"]
         self.assertEqual(len(rows), 4)
+        self.assertEqual([row["sequence_no"] for row in rows], ["001", "002", "003", "004"])
         refs = [{"day": day, "id": r["id"]} for r in rows]
         group = self.work.review.save_set({"registrations": refs + refs[:1]})
         self.assertEqual(len(group["members"]), 4)
@@ -205,7 +249,7 @@ class BotTests(unittest.TestCase):
     def test_unknown_department_does_not_become_first_visit(self):
         group = self.group()
         with self.assertRaises(ValueError):
-            self.work.review.preferences({"departments": [{"id": "bad", "name": "bad", "codes": [], "names": []}], "default_department": "bad"})
+            self.work.review.preferences({"review_options": {"department_keyword": ""}})
         original = BotSyntheticSDK.visits
         from dataclasses import replace
         with patch.object(BotSyntheticSDK, "visits", lambda sdk, mrn: [replace(c, section_name="", section_code="") for c in original(sdk, mrn)]):
@@ -301,6 +345,9 @@ class BotTests(unittest.TestCase):
                 self.assertEqual(request("/api/history")[0], 404)
                 self.assertEqual(request(f"/api/accounts/{self.key}/workbench", cookie=False)[0], 401)
                 self.assertEqual(request(f"/api/accounts/{self.key}/draft/save", {}, csrf=False)[0], 403)
+                self.assertEqual(request("/api/accounts/activate", {"id": other}, cookie=False)[0], 401)
+                self.assertEqual(request("/api/accounts/activate", {"id": other}, csrf=False)[0], 403)
+                self.assertEqual(json.loads(request("/api/accounts/activate", {"id": other})[1])["status"], "ready")
                 self.assertEqual(request(f"/api/accounts/{self.key}/draft/save", {"test": "first"})[0], 200)
                 self.assertNotIn(b"first", request(f"/api/accounts/{other}/workbench")[1])
                 self.assertEqual(request(f"/api/accounts/{self.key}/accounts/save", {"accounts": [{"id": other, "username": "OTHER"}]})[0], 400)
@@ -310,8 +357,8 @@ class BotTests(unittest.TestCase):
                 own = f"/api/accounts/{self.key}"
                 foreign = f"/api/accounts/{other}"
                 group = self.group()
-                self.assertEqual(request(own+"/reviews/scope", {"set_id": group["id"]})[0], 200)
-                self.assertEqual(request(foreign+"/reviews/scope", {"set_id": group["id"]})[0], 400)
+                self.assertEqual(request(own+"/sets/cohort", {"set_id": group["id"]})[0], 200)
+                self.assertEqual(request(foreign+"/sets/cohort", {"set_id": group["id"]})[0], 400)
                 state = {"module": "retina", "set_id": group["id"]}
                 self.assertEqual(request(own+"/tools/state/save", state, csrf=False)[0], 403)
                 self.assertEqual(request(own+"/tools/state/save", state)[0], 200)
@@ -328,6 +375,51 @@ class BotTests(unittest.TestCase):
 
 
 class GatewayTests(unittest.TestCase):
+    def test_safe_read_reconnects_once_after_network_failure(self):
+        logins_before = sum(call[1] == "login" for call in BotSyntheticSDK.calls)
+        gateway = AccountGateway(BotSyntheticSDK, NetworkGate())
+        gateway.login(Settings(username="TEST", password="fake"))
+        first_session = gateway.session_id
+        try:
+            with patch.object(gateway.connection.opd, "get_doctor_patients",
+                              side_effect=RequestError("temporary outage", code="NETWORK_TIMEOUT")):
+                rows = gateway.invoke("opd", "get_doctor_patients", "TEST", today())
+            self.assertEqual(len(rows), 4)
+            self.assertEqual(gateway.recovery_count, 1)
+            self.assertNotEqual(gateway.session_id, first_session)
+            self.assertTrue(gateway.online)
+            self.assertEqual(sum(call[1] == "login" for call in BotSyntheticSDK.calls) - logins_before, 2)
+        finally:
+            gateway.close()
+
+    def test_network_failure_does_not_repeat_non_read_operation(self):
+        gateway = AccountGateway(BotSyntheticSDK, NetworkGate())
+        gateway.login(Settings(username="TEST", password="fake"))
+        try:
+            with patch.object(gateway.connection.earnings, "open_performance",
+                              side_effect=RequestError("temporary outage", code="NETWORK_TIMEOUT")) as operation:
+                with self.assertRaises(RequestError):
+                    gateway.invoke("earnings", "open_performance", object())
+            self.assertEqual(operation.call_count, 1)
+            self.assertEqual(gateway.recovery_count, 0)
+            self.assertFalse(gateway.online)
+        finally:
+            gateway.close()
+
+    def test_http_error_does_not_disconnect_account(self):
+        gateway = AccountGateway(BotSyntheticSDK, NetworkGate())
+        gateway.login(Settings(username="TEST", password="fake"))
+        try:
+            with patch.object(gateway.connection.opd, "get_doctor_patients",
+                              side_effect=RequestError("hospital HTTP error", status_code=404)) as operation:
+                with self.assertRaises(RequestError):
+                    gateway.invoke("opd", "get_doctor_patients", "TEST", today())
+            self.assertEqual(operation.call_count, 1)
+            self.assertEqual(gateway.recovery_count, 0)
+            self.assertTrue(gateway.online)
+        finally:
+            gateway.close()
+
     def test_foreground_runs_between_background_steps_not_after_whole_batch(self):
         gateway = AccountGateway(BotSyntheticSDK, NetworkGate())
         gateway.login(Settings(username="TEST", password="fake"))

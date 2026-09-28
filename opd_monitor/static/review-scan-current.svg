@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" fill="none">
+  <title>單次掃描紀錄</title>
+  <defs>
+    <linearGradient id="scan-current-ink" x1="285" y1="259" x2="970" y2="1020" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#05788C"/>
+      <stop offset="1" stop-color="#006F82"/>
+    </linearGradient>
+    <linearGradient id="scan-current-paper" x1="627" y1="359" x2="627" y2="940" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF"/>
+      <stop offset=".29" stop-color="#FFFFFF"/>
+      <stop offset=".49" stop-color="#F0FEFA"/>
+      <stop offset=".72" stop-color="#F9FFFD"/>
+      <stop offset="1" stop-color="#FFFFFF"/>
+    </linearGradient>
+    <radialGradient id="scan-current-glow" cx="626" cy="597" r="276" gradientTransform="translate(0 238.8) scale(1 .6)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#4CE6D8" stop-opacity=".25"/>
+      <stop offset="1" stop-color="#4CE6D8" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="scan-current-beam" x1="363" y1="597" x2="892" y2="597" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#00778A"/>
+      <stop offset=".12" stop-color="#10B9BE"/>
+      <stop offset=".23" stop-color="#68E5DD"/>
+      <stop offset=".77" stop-color="#68E5DD"/>
+      <stop offset=".9" stop-color="#10B9BE"/>
+      <stop offset="1" stop-color="#00778A"/>
+    </linearGradient>
+    <linearGradient id="scan-current-light" x1="627" y1="580" x2="627" y2="614" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ECFFF5"/>
+      <stop offset="1" stop-color="#DBFCF0"/>
+    </linearGradient>
+    <clipPath id="scan-current-page-clip" clipPathUnits="userSpaceOnUse">
+      <path d="M458 335H722L856 470V902Q856 960 798 960H456Q398 960 398 902V393Q398 335 458 335Z"/>
+    </clipPath>
+  </defs>
+  <g transform="translate(-13.2413793 -13.2413793) scale(.2206896552)">
+    <g id="scan-current-frame" stroke="url(#scan-current-ink)" stroke-width="53" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M442 259H342Q285 259 285 316V405"/>
+      <path d="M813 259H913Q970 259 970 316V405"/>
+      <path d="M285 873V961Q285 1020 344 1020H442"/>
+      <path d="M970 873V961Q970 1020 911 1020H813"/>
+    </g>
+    <g id="scan-current-document">
+      <path d="M458 335H722L856 470V902Q856 960 798 960H456Q398 960 398 902V393Q398 335 458 335Z" fill="url(#scan-current-paper)"/>
+      <rect x="398" y="350" width="458" height="610" fill="url(#scan-current-glow)" clip-path="url(#scan-current-page-clip)"/>
+      <g stroke="url(#scan-current-ink)" stroke-width="50" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M458 335H722L856 470V902Q856 960 798 960H456Q398 960 398 902V393Q398 335 458 335Z"/>
+        <path d="M722 337V434Q722 478 766 478H854"/>
+      </g>
+      <g fill="url(#scan-current-ink)">
+        <rect x="487" y="725" width="73" height="71" rx="17"/>
+        <rect x="590" y="695" width="74" height="101" rx="17"/>
+        <rect x="688" y="654" width="77" height="142" rx="17"/>
+      </g>
+      <g stroke="url(#scan-current-ink)" stroke-width="36" stroke-linecap="round">
+        <path d="M482 838H768"/>
+        <path d="M482 892H665"/>
+      </g>
+    </g>
+    <g id="scan-current-scanline">
+      <rect x="286" y="554" width="682" height="85" rx="42.5" fill="url(#scan-current-beam)"/>
+      <rect x="313" y="582" width="628" height="31" rx="15.5" fill="url(#scan-current-light)"/>
+    </g>
+  </g>
+</svg>

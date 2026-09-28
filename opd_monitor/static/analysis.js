@@ -3,18 +3,18 @@
 // Static shell only. All clinical/remote content below is inserted with textContent.
 $("#analysisPane").innerHTML = [
   '<div class="section-heading"><div><h2 id="analysisTitle">分析工作區</h2></div><div class="actions"><button id="googleSettingsButton" type="button">刀表連線設定</button><button id="sheetHistoryButton" type="button">刀表更新紀錄</button></div></div>',
-  '<div class="analysis-step-heading"><h3><span>1</span> 選擇病人</h3><div class="actions"><button id="manualCohort" type="button">直接輸入病歷號</button><button id="analysisFromList" type="button">從門診清單選取</button><button id="analysisFromLibrary" type="button">從 tag／病歷搜尋選取</button></div></div>',
+  '<div class="analysis-step-heading"><h3><span>1</span> 選擇病人</h3><div class="actions"><button id="analysisFromList" type="button">從門診清單選取</button><button id="analysisFromLibrary" type="button">從 tag／病歷搜尋選取</button></div></div>',
   '<div class="analysis-controls"><label>分析清單<select id="cohortSelect"></select></label><label>清單名稱<input id="cohortName" maxlength="100"></label><button id="saveCohort" type="button">儲存清單與帳號</button><button id="deleteCohort" type="button" class="quiet-button danger">移除清單</button></div>',
   '<details id="cohortDetails" class="analysis-members"><summary id="cohortSummary">抓取帳號</summary><div class="table-wrap"><table class="patient-table"><thead><tr><th scope="col">病人</th><th scope="col">病歷號</th><th scope="col">來源紀錄</th><th scope="col">抓取帳號</th><th scope="col">清單</th></tr></thead><tbody id="cohortMembers"></tbody></table></div></details>',
   '<div class="analysis-step-heading"><h3><span>2</span> 選擇模組與檢查期間</h3></div><div class="analysis-run-controls"><fieldset class="analysis-modules"><legend>執行模組</legend><label class="check-label"><input type="checkbox" name="analysisModule" value="retina" checked>視網膜</label><label class="check-label"><input type="checkbox" name="analysisModule" value="cataract">白內障</label><label class="check-label"><input type="checkbox" name="analysisModule" value="surgery">刀表更新</label></fieldset><label>檢查起日<input id="analysisStart" type="date" min="1912-01-01"></label><label>檢查迄日<input id="analysisEnd" type="date" min="1912-01-01"></label><label>資料來源<select id="analysisRefresh"><option value="cache">使用快取、補抓缺漏</option><option value="refresh">更新索引與缺少的報告</option><option value="force">強制重新抓取</option></select></label><button id="startAnalysis" type="button" class="primary">執行分析</button></div>',
   '<p class="small muted analysis-hint">日期留白：歷年資料。分析範圍與門診篩選日期分開。</p><div id="analysisRuns" aria-live="polite"></div>',
-  '<div class="analysis-step-heading"><h3><span>3</span> 檢閱分析結果</h3></div><div class="analysis-view-toolbar"><label>查看病人<select id="analysisPatient"></select></label><label>模組<select id="analysisView"><option value="retina">視網膜</option><option value="cataract">白內障</option><option value="surgery">刀表更新</option></select></label><button id="reloadAnalysis" type="button">檢閱本機資料</button><button id="analysisJSON" type="button">JSON ↓</button><button id="deleteAnalysisData" type="button" class="quiet-button danger">刪除此病人分析資料</button></div>',
-  '<div id="analysisCoverage" class="small muted"></div><div id="analysisResults"><p class="empty-result">輸入病歷號，或從門診清單、病歷資料庫選取病人</p></div>',
+  '<div class="analysis-step-heading"><h3><span>3</span> 檢閱分析結果</h3></div><div class="analysis-view-toolbar"><label>查看病人<select id="analysisPatient"></select></label><label>模組<select id="analysisView"><option value="retina">視網膜</option><option value="cataract">白內障</option><option value="surgery">刀表更新</option></select></label><button id="reloadAnalysis" type="button">檢閱本機資料</button><button id="analysisScans" type="button" hidden>歷年掃描病歷</button><button id="analysisJSON" type="button">JSON ↓</button><button id="deleteAnalysisData" type="button" class="quiet-button danger">刪除此病人分析資料</button></div>',
+  '<div id="analysisCoverage" class="small muted"></div><div id="analysisResults"><p class="empty-result">從門診清單或病歷資料庫選取病人</p></div>',
   '<div id="comparisonBar" class="comparison-bar" hidden><span id="comparisonCount"></span><button id="showComparison" type="button" class="primary">並排比較</button><button id="clearComparison" type="button">清除選取</button></div>',
   '<div id="surgeryWorkspace" hidden><div class="section-heading"><h3>手術候選</h3><div class="actions"><button id="reloadSurgery" type="button">重新整理候選</button><button id="previewSheet" type="button" class="primary">產生刀表差異預覽</button></div></div><div id="surgeryCandidates"></div><div id="sheetPreview"></div></div>'
 ].join("");
 document.body.insertAdjacentHTML("beforeend", [
-  '<dialog id="cohortDialog" aria-labelledby="cohortDialogTitle"><form id="createCohortForm" method="post"><div class="dialog-heading"><h2 id="cohortDialogTitle">建立分析清單</h2><button type="button" data-analysis-close="cohortDialog" aria-label="關閉">×</button></div><div class="record-body"><fieldset id="manualCohortFields" hidden disabled><legend class="sr-only">直接輸入病歷號</legend><label>病歷號（可貼多筆）<textarea id="manualMRNs" name="mrns" rows="4" maxlength="20000" required autocomplete="off" spellcheck="false" aria-describedby="manualMRNHelp"></textarea></label><p id="manualMRNHelp" class="small muted">每行一筆，或用空白、逗號分隔；最多 500 位，保留前導零。</p><label>抓取帳號<select id="manualAccount" name="account_id" required></select></label><button id="manualAccountSettings" type="button" class="quiet-button">設定登入帳號</button></fieldset><label>清單名稱<input id="newCohortName" name="name" required maxlength="100"></label><p id="newCohortInfo" class="small muted"></p><p id="cohortError" class="form-error" role="alert" hidden></p><div class="dialog-actions"><button type="submit" class="primary">保存清單並選擇模組</button></div></div></form></dialog>',
+  '<dialog id="cohortDialog" aria-labelledby="cohortDialogTitle"><form id="createCohortForm" method="post"><div class="dialog-heading"><h2 id="cohortDialogTitle">建立分析清單</h2><button type="button" data-analysis-close="cohortDialog" aria-label="關閉">×</button></div><div class="record-body"><fieldset id="cohortAccountFields" hidden disabled><legend class="sr-only">選擇抓取帳號</legend><label>抓取帳號<select id="manualAccount" name="account_id" required></select></label><button id="manualAccountSettings" type="button" class="quiet-button">設定登入帳號</button></fieldset><label>清單名稱<input id="newCohortName" name="name" required maxlength="100"></label><p id="newCohortInfo" class="small muted"></p><p id="cohortError" class="form-error" role="alert" hidden></p><div class="dialog-actions"><button type="submit" class="primary">保存清單並選擇模組</button></div></div></form></dialog>',
   '<dialog id="comparisonDialog" class="wide-dialog" aria-labelledby="comparisonTitle"><div class="dialog-heading"><h2 id="comparisonTitle">歷次檢查比較</h2><button type="button" data-analysis-close="comparisonDialog" aria-label="關閉">×</button></div><div id="comparisonContent" class="comparison-columns"></div></dialog>',
   '<dialog id="googleDialog" aria-labelledby="googleTitle"><form id="googleForm" method="post"><div class="dialog-heading"><h2 id="googleTitle">刀表連線設定</h2><button type="button" data-analysis-close="googleDialog" aria-label="關閉">×</button></div><div class="record-body"><ol class="google-setup-steps"><li>在 Google Cloud 啟用 Sheets API，建立服務帳戶及 JSON 金鑰。<a href="https://developers.google.com/identity/protocols/oauth2/service-account#creatinganaccount" target="_blank" rel="noopener">設定說明 ↗</a></li><li>將刀表共用給金鑰中的 client_email，權限選「編輯者」。</li><li>匯入金鑰、儲存並測試讀取；之後在刀表差異預覽按「套用更新」。</li></ol><label>Google Sheets 網址或代碼<input id="googleSheetId" name="spreadsheet_id" required></label><label>服務帳戶 JSON 金鑰<input id="googleKeyFile" name="key_file" type="file" accept=".json,application/json"></label><p id="googleStatus" class="small muted"></p><p class="small muted">金鑰隨此帳號資料庫保存，換電腦不需重新匯入。</p><p id="googleConnectionResult" role="status" class="small"></p><div class="dialog-actions"><button id="removeGoogleKey" type="button" class="danger">移除本機金鑰</button><button type="submit">儲存連線設定</button><button id="testGoogleConnection" type="button" class="primary">儲存並測試讀取</button></div></div></form></dialog>',
   '<dialog id="sheetHistoryDialog" class="wide-dialog" aria-labelledby="sheetHistoryTitle"><div class="dialog-heading"><h2 id="sheetHistoryTitle">刀表更新紀錄</h2><button type="button" data-analysis-close="sheetHistoryDialog" aria-label="關閉">×</button></div><div id="sheetHistoryContent" class="record-body"></div></dialog>',
@@ -25,7 +25,6 @@ const analysisNav = button("分析工作區", () => action(async () => { showPan
 analysisNav.dataset.pane = "analysis"; analysisNav.setAttribute("aria-pressed", "false");
 $('.workspace-nav [data-pane="history"]').before(analysisNav);
 $("#listToAnalysis").addEventListener("click",()=>action(()=>beginCohort("list")));
-for(const id of ["quickMRN","manualCohort"])$("#"+id).addEventListener("click",()=>action(()=>beginCohort("manual")));
 $("#analysisFromList").addEventListener("click",()=>action(async()=>{showPane("list");await loadList();}));
 $("#analysisFromLibrary").addEventListener("click",()=>action(async()=>{showPane("library");await loadLibrary();}));
 $("#manualAccountSettings").addEventListener("click",()=>{
@@ -64,27 +63,26 @@ let analysisState = {cohorts:[], runs:[], modules:{}}, currentCohort = null, ana
 let cohortSeed = null, resultRequest = 0, analysisRunSignature = "";
 const compared = new Map(), surgeryEditors = new Map();
 const ap = (path, body = {}) => api("/api/analysis/" + path, body);
+$("#analysisScans").replaceChildren(window.ScanBrowser.image("歷年掃描病歷",true));
+$("#analysisScans").setAttribute("aria-label","歷年掃描病歷");
+const compareMember = () => currentCohort?.members.find(member => member.mrn === $("#analysisPatient").value);
+let scanPatient = "";
 const dayText = value => value || "日期未註明";
 const localTime = value => (value || "").slice(0,19).replace("T"," ");
 const measureLabel = cell => [...new Set([cell.side||"側別未註明",cell.metric])].join(" · ");
 
 async function beginCohort(source) {
-  const manual=source==="manual", fromTags=source==="tags"||source==="tags-all", chooseAccount=manual||fromTags;
-  $("#manualCohortFields").hidden=!chooseAccount;$("#manualCohortFields").disabled=!chooseAccount;
-  $("#manualCohortFields legend").textContent=manual?"直接輸入病歷號":"選擇抓取帳號";
-  $("#manualMRNs").disabled=!manual;$("#manualMRNs").closest("label").hidden=!manual;$("#manualMRNHelp").hidden=!manual;
+  const fromTags=source==="tags"||source==="tags-all";
+  $("#cohortAccountFields").hidden=!fromTags;$("#cohortAccountFields").disabled=!fromTags;
   $("#cohortError").hidden=true;
-  $("#cohortDialogTitle").textContent=manual?"直接輸入病歷號":"建立分析清單";
-  if(chooseAccount) {
+  $("#cohortDialogTitle").textContent="建立分析清單";
+  if(fromTags) {
     const select=$("#manualAccount");
     select.replaceChildren(new Option("選擇登入帳號",""),...$$(".account-card").map(f=>new Option(
       f.elements.label.value||f.elements.username.value||"尚未設定帳號",f.dataset.id)));
     select.value=$("#listAccount").value||$$(".account-card")[0]?.dataset.id||"";
   }
-  if (manual) {
-    cohortSeed={source:"manual"};
-    $("#newCohortInfo").textContent="不需門診掛號或 SOAP，即可抓取此帳號可讀取的歷年檢查。刀表候選仍需已保存的 # Arrange SOAP。";
-  } else if(fromTags) {
+  if(fromTags) {
     if(!tagGroupData?.total)throw new Error("此群組尚無符合的病人。");
     if(source==="tags"&&!tagSelected.size)throw new Error("請先勾選病人。");
     cohortSeed={source:"tags",all:source==="tags-all",filters:tagGroupFilters(),mrns:[...tagSelected].join("\n")};
@@ -103,14 +101,13 @@ async function beginCohort(source) {
   }
   $("#newCohortName").value = "分析清單 " + config.today;
   $("#cohortDialog").showModal();
-  if(manual)$("#manualMRNs").focus();
 }
 
 async function loadAnalysis(preferred) {
   analysisState = await ap("cohorts");
   const chosen = preferred || $("#cohortSelect").value;
   $("#cohortSelect").replaceChildren(...analysisState.cohorts.map(c=>new Option(c.name+" · "+c.members.length+" 位",c.id)));
-  if (!analysisState.cohorts.length) $("#cohortSelect").append(new Option("輸入病歷號或從清單選取病人",""));
+  if (!analysisState.cohorts.length) $("#cohortSelect").append(new Option("從門診清單或病歷資料庫選取病人",""));
   if (analysisState.cohorts.some(c=>c.id===chosen)) $("#cohortSelect").value=chosen;
   $("#analysisStart").max = $("#analysisEnd").max = config.today;
   selectCohort();
@@ -166,9 +163,9 @@ function renderAnalysisRuns() {
     node.dataset.transient=String(run.status==="completed");
     node.append(el("span",(statusLabels[run.status]||run.status)+" · "+run.counts.patients_done+"/"+run.counts.patients_total+" 位 · "+run.message),
       el("span","快取 "+(run.counts.analysis_cached||0)+" · 抓取 "+(run.counts.analysis_fetched||0),"muted"));
-    node.append(JobProgress.create(run));
     if(active.has(run.status)) node.append(button("停止",()=>action(async()=>{await api("/api/stop",{id:run.id});await refreshAnalysisRuns();})));
     else if (["partial","interrupted","cancelled","failed"].includes(run.status)) node.append(button("續跑",()=>action(async()=>{await saveAnalysisAccounts();await ap("start",{resume:run.id});analysisRunSignature="";await refreshAnalysisRuns();})));
+    node.append(JobProgress.create(run));
     if(run.issues?.length) {
       const detail=el("details"), issues=el("div"); detail.append(el("summary",run.issues.length+" 項未完成"));
       for(const i of run.issues) issues.append(el("p",i.mrn+" · "+i.stage+" · "+i.message+" "+i.code,"small"));
@@ -224,25 +221,33 @@ function examCard(row,type,exam,comparing=false) {
     }
     card.append(dl);
     const original=el("details",undefined,"exam-original");original.open=comparing||!row.cells.length;
-    original.append(el("summary","原始表格"),rawTable(row));card.append(original);
+    original.append(el("summary","原始表格"),rawTable(row));
+    if(row.header_rows?.length)original.append(el("p","來源表頭："+row.header_rows.map(parts=>parts.join(" / ")).join("；"),"small muted"));
+    if(row.parsing_issues?.length)original.append(el("p","來源解析提示："+row.parsing_issues.join("、"),"small muted"));
+    card.append(original);
     if(row.unparsed)card.append(el("p","部分欄位無法對應日期；保留原始資料。","small muted"));
   } else {
     card.append(el("h4",row.name));
     const labels={complete:"已保存",partial:"部分未完成",not_executed:"醫囑未執行",no_data:"尚無報告內容",no_links:"無可用報告連結"};
     card.append(el("span",labels[row.status]||row.status,"exam-status "+row.status));
-    for(const text of row.texts||[]) {
-      const detail=el("details",undefined,"exam-original");detail.open=comparing;
-      detail.append(el("summary","報告文字"),el("pre",text.text||Object.entries(text.fields||{}).map(([k,v])=>k+": "+v).join("\n")));
-      card.append(detail);
-    }
     const assets=el("div",undefined,"asset-grid");
     for(const [i,asset] of (row.assets||[]).entries()) {
       const link=el("a");link.href=scopedPath("/api/analysis/asset?id="+encodeURIComponent(asset.digest));link.target="_blank";link.rel="noopener";
       if(asset.mime==="application/pdf"){link.className="pdf-link";link.textContent="開啟 PDF "+(i+1)+" ↗";}
       else {const img=el("img");img.src=link.href;img.alt=dayText(row.date)+" "+exam+" 影像 "+(i+1);img.loading="lazy";img.width=360;img.height=240;link.append(img);link.setAttribute("aria-label","開啟原始影像 "+(i+1));}
       assets.append(link);
+      const member=compareMember();
+      if(member?.account_id && (!embeddedAccount || member.account_id===embeddedAccount))assets.append(button("加入比較",()=>action(()=>window.FileCompare.add({
+        account:member.account_id,mrn:member.mrn,digest:asset.digest,mime:asset.mime,
+        name:(row.name||exam||"醫囑附件")+" "+(i+1),source:"醫囑報告",date:row.date||""
+      })),"quiet-button"));
     }
     card.append(assets);
+    for(const text of row.texts||[]) {
+      const detail=el("details",undefined,"exam-original");detail.open=comparing;
+      detail.append(el("summary","報告文字"),el("pre",text.text||Object.entries(text.fields||{}).map(([k,v])=>k+": "+v).join("\n")));
+      card.append(detail);
+    }
   }
   card.append(el("p","保存 "+localTime(row.saved_at),"small muted"));
   return card;
@@ -285,11 +290,18 @@ function renderExamSection(exam,rows,type) {
 }
 async function loadAnalysisResult() {
   const request=++resultRequest, module=$("#analysisView").value;
+  const member=compareMember();
+  const identity=member?.account_id+":"+member?.mrn;
+  if(identity!==scanPatient){window.ScanBrowser?.reset();scanPatient=identity;}
+  if(member?.account_id)window.FileCompare?.context(member.account_id,member.mrn);
+  const scanButton=$("#analysisScans");scanButton.hidden=module!=="cataract"||!embeddedAccount;
+  scanButton.disabled=!member||member.account_id!==embeddedAccount;
+  scanButton.title=scanButton.disabled?"請將病人抓取帳號設為目前登入帳號":"查看此病人的歷年掃描病歷";
   analysisResult=null; $("#analysisJSON").disabled=module==="surgery";
   compared.clear();updateComparison();
   $("#surgeryWorkspace").hidden=module!=="surgery";$("#analysisResults").hidden=module==="surgery";
   $("#analysisCoverage").replaceChildren();
-  if(!currentCohort) {$("#analysisResults").replaceChildren(el("p","輸入病歷號，或從門診清單、病歷資料庫選取病人","empty-result"));return;}
+  if(!currentCohort) {$("#analysisResults").replaceChildren(el("p","從門診清單或病歷資料庫選取病人","empty-result"));return;}
   if(module==="surgery"){await loadSurgery();return;}
   const data=await ap("results",{cohort_id:currentCohort.id,mrn:$("#analysisPatient").value,module,start:$("#analysisStart").value,end:$("#analysisEnd").value});
   if(request!==resultRequest)return;analysisResult=data;
@@ -447,14 +459,14 @@ $("#createCohortForm").addEventListener("submit",async event=>{
   $("#cohortError").hidden=true;
   try {
     let values={...cohortSeed,name:$("#newCohortName").value};
-    if(cohortSeed.source==="manual"||cohortSeed.source==="tags") {
+    if(cohortSeed.source==="tags") {
       const key=$("#manualAccount").value,form=$$(".account-card").find(f=>f.dataset.id===key);
       if(!form)throw new Error("請先設定登入帳號。");
       await saveRows([form],{credentialsOnly:true});
-      values={...values,account_id:key,...(cohortSeed.source==="manual"?{mrns:$("#manualMRNs").value}:{})};
+      values={...values,account_id:key};
     }
     const saved=await ap("cohorts/save",values);
-    $("#manualMRNs").value="";$("#cohortDialog").close();$("#accountsDetails").open=false;
+    $("#cohortDialog").close();$("#accountsDetails").open=false;
     $("#analysisView").value=$('input[name="analysisModule"]:checked')?.value||"retina";
     showPane("analysis");await loadAnalysis(saved.id);
     $("#analysisTitle").scrollIntoView({block:"start"});
@@ -468,6 +480,7 @@ $("#deleteCohort").addEventListener("click",()=>action(async()=>{
 }));
 $("#startAnalysis").addEventListener("click",()=>action(async()=>{
   const control=$("#startAnalysis");control.disabled=true;
+  const pending=JobProgress.pending("#analysisRuns","歷年檢查分析","正在準備抓取帳號與任務…");
   try {
     await saveAnalysisAccounts();
     const modules=$$('input[name="analysisModule"]:checked').map(n=>n.value), mode=$("#analysisRefresh").value;
@@ -475,9 +488,15 @@ $("#startAnalysis").addEventListener("click",()=>action(async()=>{
     if(embeddedAccount)parent.postMessage({type:"bot:task-started"},location.origin);
     if(modules.length===1)$("#analysisView").value=modules[0];
     await refresh();await loadAnalysisResult();
-  } finally {control.disabled=false;}
+  } finally {pending?.remove();control.disabled=false;}
 }));
 for(const id of ["analysisPatient","analysisView"])$("#"+id).addEventListener("change",()=>action(()=>loadAnalysisResult()));
+$("#analysisScans").addEventListener("click",()=>action(async()=>{
+  const member=compareMember();
+  if(!member||!currentCohort||member.account_id!==embeddedAccount)throw new Error("請先選擇由目前帳號抓取的病人。");
+  await window.ScanBrowser.open({account:embeddedAccount,mrn:member.mrn,patient_name:member.name,cohort_id:currentCohort.id,resource:"scans",
+    request:(path,body)=>api("/api"+path,body),allowFetch:()=>!config?.read_only});
+}));
 $("#reloadAnalysis").addEventListener("click",()=>action(()=>loadAnalysisResult()));
 $("#reloadSurgery").addEventListener("click",()=>action(()=>loadSurgery()));
 $("#previewSheet").addEventListener("click",()=>action(()=>createSheetPreview()));

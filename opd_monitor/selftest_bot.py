@@ -20,6 +20,7 @@ from vghks_sdk.models import (
     PatientDemographics,
     RegistrationRecord,
     SurgeryRecord,
+    SurgeryScheduleProcedure,
 )
 from vghks_sdk.models.documents import EarningsReportContext, FormSnapshot, HtmlDocument, HtmlTable
 from vghks_sdk.models.review import ReviewCase, ReviewCasePart, ReviewCaseRef
@@ -59,17 +60,22 @@ class BotSyntheticSDK:
             open_bonus=lambda c: self.earnings_open(c, "payroll"), get_report=self.earnings_report)
 
     def surgery_schedule(self, card, start, end, **filters):
-        assert card == self.card
         self.calls.append((self.card, "surgery-schedule", card, start.isoformat(), end.isoformat(), filters))
         rows = []
         for index, offset in enumerate((-3, 0, 1, 14)):
             day = today() + timedelta(days=offset)
             if start <= day <= end:
                 rows.append(SurgeryRecord(patient_mrn=filters.get("mrn") or f"0000000{index+1}",
-                    case_no=f"SYNTH-{index}", surgery_date=day.isoformat(), start_time="0830", end_time="0930",
-                    room="OP-01", doctor_card=card, doctor_name=self.card+" 合成醫師",
+                    case_no=f"SYNTH-{index}", surgery_date=day.isoformat(),
+                    start_time="" if index == 3 else "0830", end_time="" if index == 3 else "0930",
+                    room="OP-01", doctor_card=card, doctor_name=card+" 合成醫師",
                     procedure="Phaco-IOL OD" if index % 2 else "VT OS", status="已取消" if offset < 0 else "已排程",
-                    extra={"orpatnam": f"合成病人{index+1}"}))
+                    patient_name=f"合成病人{index+1}", patient_sex="女", ward="OPD", department="OPH",
+                    anesthesia="GA", category="常規", schedule_time="TF1" if index == 3 else "0830",
+                    time_status="UNCONFIRMED" if index == 3 else "CLOCK_TIME",
+                    request_no=f"REQ-{index}", sequence_no=str(index), case_type="O",
+                    procedures=(SurgeryScheduleProcedure(1, "SYNTH-OP", "Phaco-IOL OD" if index % 2 else "VT OS"),),
+                    diagnosis_codes=("H26",), diagnosis_text="合成資料", extra={"orpatnam": "舊欄位姓名"}))
         return rows
 
     def earnings_open(self, credentials, kind):
@@ -113,7 +119,10 @@ class BotSyntheticSDK:
 
     def review_part(self, ref, kind):
         self.calls.append((self.card, "review-" + kind, ref.apply_seq))
-        return ReviewCasePart(ref, kind, ({"ApplySeq": ref.apply_seq, "項目": "合成 " + kind},), 1)
+        row = {"ApplySeq": ref.apply_seq, "項目": "合成 " + kind}
+        if kind == "orders":
+            row["OrderName"] = "合成醫囑 " + ref.apply_seq
+        return ReviewCasePart(ref, kind, (row,), 1)
 
     def review_options(self):
         self.calls.append((self.card, "review-options"))
@@ -134,7 +143,8 @@ class BotSyntheticSDK:
 
     def listing(self, card, day):
         self.calls.append((self.card, "list", day.isoformat()))
-        return [OutpatientPatient(f"TEST{i:03}", f"合成病人{i}", day, "女", "68歲", "70", "02", doctor, True)
+        return [OutpatientPatient(f"TEST{i:03}", f"合成病人{i}", day, "女", "68歲", "70", "02", doctor, True,
+                                  sequence_no=f"{i:03}")
                 for i, doctor in ((1, card), (2, card), (3, "OTHER"), (4, ""))]
 
     def demographics(self, mrn):
@@ -160,7 +170,7 @@ class BotSyntheticSDK:
                                              (1, "TWO", "眼科下午"), (2, "OLD", "眼科"), (0, "OTHER", "內科"))]
 
     def soap(self, case):
-        if self.context != case.mrn:
+        if self.context != case.patient_mrn:
             raise AssertionError("wrong patient context")
         self.calls.append((self.card, "soap", case.mrn, case.case_no))
         if type(self).on_soap:
@@ -172,7 +182,7 @@ class BotSyntheticSDK:
         return synthetic_soap(case, f"{self.card} {self.revision} {case.case_no}")
 
     def numeric(self, case):
-        assert self.context == case.mrn
+        assert self.context == case.patient_mrn
         self.calls.append((self.card, "numeric", case.mrn))
         return NumericReport(case, (NumericTable("Va", ("OD", "OS"), (("0.4", "HM"),)),))
 
@@ -228,7 +238,7 @@ def self_test(report_path: Path) -> int:
                 assert wait_task(workspace, resolve)["status"] == "completed"
                 group = workspace.review.save_set({"mrns": "TEST001,TEST002,TEST001"})
                 assert len(group["members"]) == 2
-                review = workspace.review.start({"set_id": group["id"], "department_confirmed": True})["task_id"]
+                review = workspace.review.start({"set_id": group["id"]})["task_id"]
                 task = wait_task(workspace, review)
                 assert task["status"] == "completed", task
                 assert all(len(p["records"]) == 2 and p["fallback"] for p in task["items"])
@@ -271,9 +281,9 @@ def self_test(report_path: Path) -> int:
                 people = wait_task(workspace, auto)["items"]
                 assert {p["mrn"] for p in people} == {"00012345", "NEW000"}
                 all_group = workspace.review.save_set({"mrns": "00012345"})
-                unrestricted = wait_task(workspace, workspace.review.start({"set_id": all_group["id"], "department_filter": "all"})["task_id"])
-                assert [r["case_no"] for r in unrestricted["items"][0]["records"]] == ["OTHER"]
-                result["checks"].append("automatic identifier routing and latest outpatient SOAP across departments")
+                internal = wait_task(workspace, workspace.review.start({"set_id": all_group["id"], "department_keyword": "內科"})["task_id"])
+                assert [r["case_no"] for r in internal["items"][0]["records"]] == ["OTHER"]
+                result["checks"].append("automatic identifier routing and latest outpatient SOAP by department substring")
                 schedule = wait_task(workspace, workspace.review.start({"kind": "surgery_schedule",
                     "start": (today()-timedelta(days=7)).isoformat()})["task_id"])
                 assert schedule["status"] == "completed" and schedule["progress"]["done"] == 1
@@ -286,7 +296,8 @@ def self_test(report_path: Path) -> int:
                 result["checks"].append("account surgery schedule, date buckets, original status, durable snapshots and offline reads")
                 sync = wait_task(workspace, workspace.review.start({"kind": "approval_sync"})["task_id"])
                 assert sync["status"] == "completed" and sync["finished_at"]
-                assert all(i.get("version") and "case" not in i for i in sync["items"])
+                assert sum(bool(i.get("version")) and "case" not in i for i in sync["items"]) == 3
+                assert sum(bool(i.get("order_names")) for i in sync["items"]) == 3
                 assert workspace.approvals.cases()["total"] == 3
                 from vghks_sdk.parsing.documents import parse_document
                 for table_id in ("first", "second"):

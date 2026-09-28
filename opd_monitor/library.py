@@ -20,6 +20,8 @@ def encoded(value):
 
 def registration_id(row):
     fields = (row.get("visit_date"), row.get("mrn"), row.get("section_code"), row.get("room"), row.get("doctor_card"))
+    if row.get("sequence_no"):
+        fields += (row["sequence_no"],)
     return hashlib.sha256(encoded(fields).encode()).hexdigest()[:24]
 
 

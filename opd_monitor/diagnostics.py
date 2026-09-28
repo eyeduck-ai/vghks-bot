@@ -37,12 +37,13 @@ class Diagnostics:
                           "error": failure_details(exc), **values})
 
     def query(self, values):
-        mrn, task_id = values.get("mrn", ""), values.get("task_id", "")
-        if not isinstance(mrn, str) or not isinstance(task_id, str) or not (mrn or task_id):
-            raise ValueError("請指定病歷號或任務。")
+        mrn, task_id, session_id = (values.get(key, "") for key in ("mrn", "task_id", "session_id"))
+        if any(not isinstance(value, str) or len(value) > 100 for value in (mrn, task_id, session_id)) or not (mrn or task_id or session_id):
+            raise ValueError("請指定病歷號、任務或 SDK 工作階段。")
         rows = [r for r in self.db.all("patient_diagnostic")
                 if (not mrn or r.get("mrn") == mrn)
-                and (not task_id or r.get("task_id") == task_id or mrn and not r.get("task_id"))]
+                and (not task_id or r.get("task_id") == task_id or mrn and not r.get("task_id"))
+                and (not session_id or r.get("session_id") == session_id)]
         task = self.db.get("task", task_id, required=False) if task_id else None
         attempts = []
         if task:
@@ -53,7 +54,18 @@ class Diagnostics:
                     if entry.get("code") or entry.get("status") in {"error", "forbidden", "empty", "missing"}:
                         attempts.append({"mrn": item.get("mrn", ""), **{k: entry[k] for k in
                             ("date", "case_no", "status", "message", "code") if k in entry}})
+        elif task_id:
+            try:
+                run = self.app.store.load(task_id)
+            except ValueError:
+                run = None
+            if run:
+                task = run
+                attempts = [{k: issue[k] for k in ("mrn", "date", "stage", "message", "code") if k in issue}
+                            for issue in run.get("issues", []) if not mrn or issue.get("mrn") == mrn]
+        events = self.db.sdk_events(task_id=task_id, session_id=session_id) if task_id or session_id else []
         return {"items": rows[:100], "total": len(rows), "saved_attempts": attempts,
+                "sdk_events": events,
                 "task": {k: task[k] for k in ("id", "kind", "status", "created_at", "finished_at", "message", "error_code")
                          if k in task} if task else None,
                 "storage": f"accounts/{self.app.account_id}/clinical.sqlite3",

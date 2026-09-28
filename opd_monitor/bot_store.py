@@ -95,6 +95,12 @@ class WorkbenchStore:
                 CREATE TABLE IF NOT EXISTS bot_task_items (
                     task_id TEXT NOT NULL, key TEXT NOT NULL, payload TEXT NOT NULL,
                     PRIMARY KEY(task_id,key));
+                CREATE TABLE IF NOT EXISTS bot_sdk_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT NOT NULL, task_id TEXT NOT NULL,
+                    occurred_at TEXT NOT NULL, service TEXT NOT NULL, method TEXT NOT NULL,
+                    status TEXT NOT NULL, error_code TEXT NOT NULL, message TEXT NOT NULL);
+                CREATE INDEX IF NOT EXISTS bot_sdk_events_task ON bot_sdk_events(task_id,id);
                 CREATE TABLE IF NOT EXISTS bot_deleted_records (id TEXT PRIMARY KEY, deleted_at TEXT NOT NULL);
             """)
         for task in self.all("task"):
@@ -143,6 +149,33 @@ class WorkbenchStore:
     def items(self, task):
         with self.library.connect() as db:
             return [json.loads(r[0]) for r in db.execute("SELECT payload FROM bot_task_items WHERE task_id=? ORDER BY rowid", (task,))]
+
+    def sdk_event(self, *, session_id, task_id, service, method, status, error_code="", message=""):
+        # Persist only operation names and safe error summaries; SDK arguments and
+        # response bodies can contain credentials or clinical data.
+        with self.library.connect() as db:
+            db.execute("INSERT INTO bot_sdk_events(session_id,task_id,occurred_at,service,method,status,error_code,message) "
+                       "VALUES(?,?,?,?,?,?,?,?)", (session_id, task_id, timestamp(), service, method,
+                       status, error_code, message))
+
+    def sdk_events(self, *, task_id="", session_id="", limit=200):
+        if not task_id and not session_id:
+            return []
+        column, key = ("task_id", task_id) if task_id else ("session_id", session_id)
+        with self.library.connect() as db:
+            rows = db.execute(f"SELECT occurred_at,service,method,status,error_code,message "
+                              f"FROM bot_sdk_events WHERE {column}=? ORDER BY id DESC LIMIT ?", (key, limit))
+            return [dict(row) for row in rows]
+
+    def sdk_sessions(self):
+        with self.library.connect() as db:
+            rows = db.execute("SELECT session_id, MIN(occurred_at) AS created_at, MAX(occurred_at) AS updated_at, "
+                              "MAX(CASE WHEN status='error' THEN 1 ELSE 0 END) AS has_error "
+                              "FROM bot_sdk_events WHERE task_id='' AND service='auth' AND method='login' "
+                              "GROUP BY session_id ORDER BY created_at DESC")
+            return [{"id": row["session_id"], "kind": "sdk_session", "name": "SDK 工作階段", "created_at": row["created_at"],
+                     "updated_at": row["updated_at"], "status": "failed" if row["has_error"] else "completed"}
+                    for row in rows]
 
     def deleted_since(self, key, created):
         with self.library.connect() as db:

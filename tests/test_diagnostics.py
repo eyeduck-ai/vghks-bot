@@ -13,7 +13,7 @@ from opd_monitor.bot import BotApplication
 from opd_monitor.databases import copy_database
 from opd_monitor.scanner import create_sdk
 from opd_monitor.selftest_bot import BotSyntheticSDK, wait_task
-from opd_monitor.settings import Settings
+from opd_monitor.settings import Settings, today
 
 
 class DiagnosticTests(unittest.TestCase):
@@ -34,7 +34,7 @@ class DiagnosticTests(unittest.TestCase):
     def review(self, **values):
         self.task(kind="resolve", identifiers="TEST001")
         group = self.work.review.save_set({"mrns": "TEST001"})
-        return self.task(kind="review", set_id=group["id"], department_confirmed=True, **values)
+        return self.task(kind="review", set_id=group["id"], **values)
 
     def test_soap_errors_have_task_visit_and_safe_stack_surviving_retry(self):
         with patch.object(self.work.gateway.connection.records, "get_soap", side_effect=ParseError(
@@ -74,6 +74,22 @@ class DiagnosticTests(unittest.TestCase):
         self.assertEqual(saved["items"][0]["phase"], "records.get_numeric_report")
         self.assertEqual(saved["task"]["error_code"], "PRQ_NUMERIC_STRUCTURE_MISSING")
         self.assertFalse(self.work.diagnostics.query({"task_id": reviewed["id"]})["items"])
+
+    def test_sdk_activity_covers_each_system_without_credentials_or_response_bodies(self):
+        login = self.work.review.db.sdk_sessions()[0]
+        self.assertEqual(login["status"], "completed")
+        self.assertEqual(self.work.diagnostics.query({"session_id": login["id"]})["sdk_events"][0]["method"], "login")
+        reviewed = self.review()
+        surgery = self.task(kind="surgery_schedule", start=today().isoformat(), end=today().isoformat(), department="OPH")
+        approval = self.task(kind="approval_sync")
+        self.work.earnings.save_credentials({"national_id": "A123456789", "password": "secret-salary", "remember": False})
+        earnings = self.task(kind="earnings_options")
+        for task, service in ((reviewed, "records"), (surgery, "surgery"),
+                              (approval, "reviews"), (earnings, "earnings")):
+            events = self.work.diagnostics.query({"task_id": task["id"]})["sdk_events"]
+            self.assertTrue(any(event["service"] == service for event in events), task["kind"])
+            self.assertNotIn("secret-salary", json.dumps(events))
+            self.assertNotIn("sensitive-context", json.dumps(events))
 
     def test_national_id_failure_is_logged_without_recording_input_or_password(self):
         with patch.object(self.work.gateway.connection.patients, "resolve_identity", side_effect=LoginRejectedError(

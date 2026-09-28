@@ -35,7 +35,7 @@ def check_databases(path):
         resolve = work.review.start({"kind": "resolve", "identifiers": "TEST001"})["task_id"]
         assert wait_task(work, resolve)["status"] == "completed"
         group = work.review.save_set({"mrns": "TEST001"})
-        review = work.review.start({"set_id": group["id"], "department_confirmed": True})["task_id"]
+        review = work.review.start({"set_id": group["id"]})["task_id"]
         assert wait_task(work, review)["status"] == "completed"
         tracking = work.review.start({"kind": "approval_refresh"})["task_id"]
         follow_up = wait_task(work, tracking)

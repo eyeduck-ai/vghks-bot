@@ -4,20 +4,39 @@ window.SOAPView = (() => {
   const make = (tag, text, cls) => {const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n;};
   function marked(text, ranges=[], tag="pre", cls="soap") {
     const output=make(tag,undefined,cls), chars=Array.from(text||""), merged=[];
-    for(const [start,end] of ranges.filter(([s,e])=>Number.isInteger(s)&&Number.isInteger(e)&&s>=0&&e>s&&e<=chars.length).sort((a,b)=>a[0]-b[0])){
+    for(const [start,end,category,kind] of ranges.filter(([s,e])=>Number.isInteger(s)&&Number.isInteger(e)&&s>=0&&e>s&&e<=chars.length).sort((a,b)=>a[0]-b[0])){
       const previous=merged.at(-1);
-      if(previous&&start<=previous[1])previous[1]=Math.max(previous[1],end);else merged.push([start,end]);
+      if(previous&&start<=previous.end){
+        previous.end=Math.max(previous.end,end);
+        if(category)previous.categories.add(category);
+        if(kind==="search")previous.search=true;
+      }else merged.push({start,end,categories:new Set(category?[category]:[]),search:kind==="search"});
     }
     let offset=0;
-    for(const [start,end] of merged){
+    for(const {start,end,categories,search} of merged){
       const mark=make("mark",chars.slice(start,end).join(""));mark.tabIndex=-1;
+      if(categories.size)mark.dataset.tagCategories=JSON.stringify([...categories]);
+      if(search)mark.dataset.searchHit="true";
       output.append(document.createTextNode(chars.slice(offset,start).join("")),mark);offset=end;
     }
     output.append(document.createTextNode(chars.slice(offset).join("")));return output;
   }
-  function fullRanges(record){return record.highlights?.length?record.highlights:(record.matches||[]).filter(m=>!record.soap_structure||!m.source_field||m.source_field==="soap").map(m=>[m.start,m.keyword_end]);}
-  function fieldRanges(record,field){
-    return record.highlights?.length?[]:(record.matches||[]).filter(m=>m.source_field===field&&m.source_index===null).map(m=>[m.source_start,m.source_keyword_end]);
+  function fullRanges(record){return [...(record.matches||[]).map(m=>[m.start,m.keyword_end,m.category]),...(record.highlights||[]).map(([start,end])=>[start,end,null,"search"])];}
+  function searchRanges(record,text){
+    if(!record.highlights?.length||!text)return [];
+    const source=Array.from(record.soap||""),terms=new Set(record.highlights.map(([start,end])=>source.slice(start,end).join("")).filter(term=>term.trim()));
+    const ranges=[];
+    for(const term of terms){
+      const pattern=term.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
+      for(const match of text.matchAll(new RegExp(pattern,"giu"))){
+        const start=Array.from(text.slice(0,match.index)).length;
+        ranges.push([start,start+Array.from(match[0]).length,null,"search"]);
+      }
+    }
+    return ranges;
+  }
+  function fieldRanges(record,field,text){
+    return [...(record.matches||[]).filter(m=>m.source_field===field&&m.source_index===null).map(m=>[m.source_start,m.source_keyword_end,m.category]),...searchRanges(record,text)];
   }
   function issueNote(record){
     const issues=record.tag_scope_issues||[];
@@ -31,7 +50,8 @@ window.SOAPView = (() => {
     if(!identified.length)out.append(make("p","未辨識此區塊","caption"));
     for(const field of identified){
       if(field==="assessment"||field==="plan")out.append(make("span",field==="assessment"?"A":"P","soap-subheading"));
-      out.append(data[field].trim()?marked(data[field],fieldRanges(record,field)):make("p","此區塊內容空白","caption"));
+      const value=data[field].trim();
+      out.append(value?marked(value,fieldRanges(record,field,value)):make("p","此區塊內容空白","caption"));
     }
     return out;
   }
@@ -58,9 +78,9 @@ window.SOAPView = (() => {
     const wrap=make("div",undefined,"table-wrap"),table=make("table",undefined,"soap-table"),head=make("thead"),hr=make("tr"),body=make("tbody");
     for(const [,label] of columns){const th=make("th",label);th.scope="col";hr.append(th);}head.append(hr);
     rows.forEach((row,index)=>{
-      const tr=make("tr"),hits=record.highlights?.length?[]:(record.matches||[]).filter(m=>m.source_field===field&&m.source_index===index);
-      if(hits.length)tr.className="soap-tag-row";
-      for(const [key] of columns){const td=make("td"),value=String(row[key]??"");td.append(marked(value,cellRanges(value,hits),"span","soap-cell"));tr.append(td);}
+      const tr=make("tr"),hits=(record.matches||[]).filter(m=>m.source_field===field&&m.source_index===index);
+      if(hits.length){tr.className="soap-tag-row";tr.tabIndex=-1;tr.dataset.tagCategories=JSON.stringify([...new Set(hits.map(hit=>hit.category))]);}
+      for(const [key] of columns){const td=make("td"),value=String(row[key]??"");td.append(marked(value,[...cellRanges(value,hits),...searchRanges(record,value)],"span","soap-cell"));tr.append(td);}
       if(hits.length&&!tr.querySelector("mark")){const badge=make("mark","tag","soap-row-hit");badge.tabIndex=-1;badge.title="tag 命中於此原始資料列";tr.firstElementChild.prepend(badge);}
       body.append(tr);
     });
@@ -77,7 +97,7 @@ window.SOAPView = (() => {
     if(data.parsing_issues?.length){
       const issue=make("details",undefined,"soap-issues");issue.append(make("summary","部分資料尚未完整解析，請核對原文"),make("p",data.parsing_issues.join(" · "),"caption"));out.append(issue);
     }
-    out.append(textSection(record,"S · 主訴",["subjective"]),textSection(record,"O · 客觀資料",["objective"]),textSection(record,"A+P · 評估與計畫",["assessment_plan","assessment","plan"]));
+    out.append(textSection(record,"A+P · 評估與計畫",["assessment_plan","assessment","plan"]),textSection(record,"O · 客觀資料",["objective"]),textSection(record,"S · 主訴",["subjective"]));
     out.append(summaryTable(record,"diagnoses","診斷",[["coding_system","分類"],["code","代碼"],["name","診斷名稱"]],"DIAGNOSES"));
     out.append(summaryTable(record,"medications","藥囑",[["name","藥名"],["dose","劑量"],["unit","單位"],["route","途徑"],["frequency","頻次"],["days","天數"],["total_quantity","總發藥量"]],"MEDICATIONS"));
     out.append(summaryTable(record,"orders","醫囑",[["name","醫囑名稱"],["quantity","數量"]],"ORDERS"));

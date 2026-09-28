@@ -26,11 +26,22 @@
 .schedule-unconfirmed>summary{background:#f6efdb}
 .schedule-warning{display:block;color:#826424;margin-top:3px}
 .schedule-group .empty{padding:18px}
-.board-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:14px 0 10px}
-.board-actions .button-link{display:inline-flex;align-items:center;gap:6px;min-height:32px;padding:5px 10px;border:1px solid var(--green);border-radius:6px;background:var(--green);color:white;text-decoration:none;font-size:13px}
-.board-actions .button-link:hover{filter:brightness(.9)}
 .board-placeholder{display:grid;place-items:center;min-height:320px;border:1px dashed #bacbb2;border-radius:8px;background:#f5f7f1}
-#operatingRoomFrame{width:100%;height:calc(100dvh - 240px);min-height:420px;border:1px solid var(--line);border-radius:6px;background:white}
+#operatingRoomFrame{display:block;width:100%;height:clamp(320px,60dvh,650px);margin-top:10px;border:1px solid var(--line);border-radius:6px;background:white}
 #surgeryConnection:empty{display:none}
 .sidebar .surgery-nav{border-top:1px solid #ccd7c5;padding-top:6px;margin-top:7px}
-@media(max-width:700px){.surgery-query .actions{margin-left:0}.surgery-query label{min-width:0}.surgery-query input[type=date]{width:145px}.surgery-heading h1{font-size:21px}.schedule-group .patient-table{min-width:850px}.board-placeholder{min-height:180px}#operatingRoomFrame{height:70dvh;min-height:300px}}
+@media(max-width:700px){.surgery-query .actions{margin-left:0}.surgery-query label{min-width:0}.surgery-query input[type=date]{width:145px}.surgery-heading h1{font-size:21px}.schedule-group .patient-table{min-width:850px}.board-placeholder{min-height:180px}#operatingRoomFrame{height:clamp(260px,56dvh,500px)}}
+.surgery-heading{margin-bottom:7px}
+#surgeryForm{align-items:center;gap:7px;padding:7px 9px;margin-bottom:7px}
+#surgeryForm>label{display:flex;align-items:center;gap:5px;min-width:0;width:auto;font-size:11px;white-space:nowrap}
+#surgeryForm>label>input{min-height:30px;height:30px;margin:0;padding:3px 6px;font-size:12px}
+#surgeryForm .surgery-doctor input{width:118px}
+#surgeryForm input[type=date]{width:134px}
+#surgeryForm .surgery-department input{width:62px}
+#surgeryForm>button,#surgeryForm .actions button{min-height:30px;padding:3px 8px;font-size:12px}
+#surgeryForm .actions{margin-left:auto}
+.schedule-meta{padding:5px 0 7px}
+.schedule-search{gap:6px;margin:7px 0}
+.schedule-search input{width:min(100%,270px);min-height:30px;padding:4px 7px;font-size:12px}
+@media(max-width:700px){#surgeryForm>label{flex:1 1 150px;display:block}#surgeryForm>label>input,#surgeryForm input[type=date],#surgeryForm .surgery-department input{width:100%;margin-top:3px}#surgeryForm .surgery-doctor{flex-basis:100%}#surgeryForm .actions{margin-left:0}}
+@media(pointer:coarse){#surgeryForm>label>input{min-height:44px;height:44px}#surgeryForm>button,#surgeryForm .actions button,.schedule-search input{min-height:44px}}

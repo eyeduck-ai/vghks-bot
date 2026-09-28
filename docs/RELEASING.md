@@ -1,6 +1,6 @@
 # CI 與版本發布
 
-Windows EXE 可以由 GitHub Actions 自動建置，不需要把 EXE 提交進 Git。
+Windows EXE 可先在本機執行 `./build.ps1` 建置與離線自測，再帶入內網驗收；推送 GitHub 不是取得測試 EXE 的前提。GitHub Actions 會重新驗證推送的來源碼，不需要把 EXE 提交進 Git。
 
 ## 已設定的流程
 
@@ -18,15 +18,16 @@ Windows EXE 可以由 GitHub Actions 自動建置，不需要把 EXE 提交進 G
 
 1. 同步更新 `pyproject.toml` 的版本及 `opd_monitor/__init__.py` 的 `__version__`。
 2. 在 `CHANGELOG.md` 最上方加入 `## <版本>` 與該次變更。
-3. 提交並推送 `main`，等待 Windows build 成功。
-4. 在該 commit 建立版本標籤並推送。以下是命令格式，請換成新的版本號：
+3. 在本機完成 EXE 自測及必要的院內驗收，再提交並推送 `main`，等待 Windows build 成功；只推送 `main` 會得到測試 Artifact，不會建立 Release。
+4. 需要正式 Release 時，才在已驗證的同一 commit 建立版本標籤並推送：
 
 ```powershell
-git tag -a v6.6.2 -m 'VGHKS-bot v6.6.2'
-git push origin v6.6.2
+$releaseVersion = (.venv/Scripts/python.exe -c "from opd_monitor import __version__; print(__version__)").Trim()
+git tag -a "v$releaseVersion" -m "VGHKS-bot v$releaseVersion"
+git push origin "v$releaseVersion"
 ```
 
-標籤必須等於兩處程式版本，例如 `v6.6.2`；版本不符會停止。發布只接受已存在標籤，檢查失敗不會建立 Release。既有 Release 不會被此流程覆蓋；修正版本應新增標籤。
+標籤必須等於兩處程式版本；版本不符會停止。發布只接受已存在標籤，檢查失敗不會建立 Release。既有 Release 不會被此流程覆蓋；修正版本應新增標籤。
 
 ## 下載與驗證
 

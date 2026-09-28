@@ -216,7 +216,8 @@ def _collect(sdk, state, settings, start, end):
             continue
         for row in rows:
             state.check_cancel()
-            identity = (day, row.mrn, row.name, row.visit_date, row.section_code, row.room, row.doctor_card)
+            identity = (day, row.mrn, row.name, row.visit_date, row.section_code, row.room,
+                        row.doctor_card, row.sequence_no)
             if identity in seen:
                 continue
             seen.add(identity)
@@ -253,7 +254,7 @@ def _read_patients(sdk, state, settings, grouped, *, library=None, force=False):
         state.update(stage="soap", message=f"正在核對就診與 SOAP：{patient_index} / {len(grouped)} 位病人…")
         try:
             cases = _checked_list(sdk.records.get_visit_cases(mrn), VisitCase)
-            if any(case.mrn != mrn for case in cases):
+            if any(case.patient_mrn != mrn for case in cases):
                 raise ParseError("visit patient mismatch", code="VISIT_PATIENT_MISMATCH")
         except Exception as exc:
             message, code = safe_failure(exc)
@@ -265,11 +266,11 @@ def _read_patients(sdk, state, settings, grouped, *, library=None, force=False):
         selected = select_registration_visits(rows, cases, doctor_card=settings.username)
         for case in cases:
             # detail_params can contain session context; never persist them.
-            state.archive("visits", {"mrn": case.mrn, "date": case.visit_date.isoformat() if case.visit_date else "", "case_type": case.case_type, "case_no": case.case_no, "section_code": case.section_code, "section_name": case.section_name, "doctor_name": case.doctor_name, "doctor_card": case.doctor_card, "selected": case in selected})
+            state.archive("visits", {"mrn": case.mrn, "lookup_mrn": case.patient_mrn, "date": case.visit_date.isoformat() if case.visit_date else "", "case_type": case.case_type, "case_no": case.case_no, "section_code": case.section_code, "section_name": case.section_name, "doctor_name": case.doctor_name, "doctor_card": case.doctor_card, "selected": case in selected})
         for row in rows:
             matching = select_registration_visits([row], selected, doctor_card=settings.username)
             ambiguous = any(
-                case.mrn == mrn and case.case_type.strip().upper() == "O"
+                case.patient_mrn == mrn and case.case_type.strip().upper() == "O"
                 and case.section_code.strip() in {row.section_code.strip(), ""}
                 and (case.visit_date is None or (case.visit_date == row.visit_date and not case.section_code.strip()))
                 for case in cases
@@ -299,7 +300,8 @@ def _read_patients(sdk, state, settings, grouped, *, library=None, force=False):
                     state.count(soap_cached=1)
                     continue
                 soap = sdk.records.get_soap(case)
-                if not isinstance(soap, SoapRecord) or soap.case.identity != case.identity:
+                if (not isinstance(soap, SoapRecord) or soap.case.identity != case.identity
+                        or soap.case.patient_mrn != mrn):
                     raise ParseError("SOAP case mismatch", code="SOAP_CASE_MISMATCH")
                 text = soap.full_text
                 if not text.strip():
@@ -314,6 +316,7 @@ def _read_patients(sdk, state, settings, grouped, *, library=None, force=False):
                         "mrn": mrn, "name": patient.name, "sex": patient.sex, "age": patient.age,
                         "date": case.visit_date.isoformat(), "section": case.section_name or case.section_code,
                         "section_code": case.section_code, "case_no": case.case_no,
+                        "source_mrn": case.mrn, "case_index": case.index,
                         "rooms": sorted({row.room for row in sources if row.room}),
                         "registration_doctor": patient.doctor_card,
                         "doctor": case.doctor_name, "doctor_card": case.doctor_card,

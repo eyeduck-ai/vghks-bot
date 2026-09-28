@@ -7,8 +7,12 @@
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/style.css">
   <link rel="stylesheet" href="/analysis.css">
+  <link rel="stylesheet" href="/file-compare.css">
   <link rel="stylesheet" href="/choices.css">
   <script src="/choices.js" defer></script>
+  <script src="/dialog-dismiss.js" defer></script>
+  <script src="/file-compare.js" defer></script>
+  <script src="/scan-browser.js" defer></script>
   <link rel="stylesheet" href="/progress.css"><script src="/progress.js" defer></script>
   <script src="/app.js" defer></script>
   <script src="/workspace.js" defer></script>
@@ -25,7 +29,7 @@
   <div id="notice" class="notice" role="alert" hidden></div>
   <main id="main">
     <section class="accounts-panel" aria-labelledby="accountsTitle">
-      <div class="section-heading"><div><h1 id="accountsTitle">門診病歷工作台</h1></div><div class="actions"><button id="quickMRN" type="button">直接輸入病歷號 → 分析</button><button id="addAccount" type="button">＋ 新增帳號</button><button id="runSelected" type="button" class="primary">查看已選帳號清單</button></div></div>
+      <div class="section-heading"><div><h1 id="accountsTitle">門診病歷工作台</h1></div><div class="actions"><button id="addAccount" type="button">＋ 新增帳號</button><button id="runSelected" type="button" class="primary">查看已選帳號清單</button></div></div>
       <details id="accountsDetails" open><summary>帳號設定</summary><div id="accounts"></div>
       <p class="small muted panel-foot">多帳號依序查詢 · 密碼僅保留於本次執行</p>
       </details>
@@ -34,10 +38,10 @@
     <div id="activeJobs" aria-live="polite"></div>
     <section id="listPane" aria-labelledby="listTitle" class="workspace-pane">
       <div class="section-heading"><div><h2 id="listTitle">門診清單</h2><p id="listContext" class="muted small">選擇帳號與日期</p></div><div class="actions"><button id="refreshList" type="button">重新整理清單</button><button id="clearList" type="button" class="quiet-button">刪除清單快取</button></div></div>
-      <div class="list-toolbar"><label>帳號<select id="listAccount"></select></label><div class="date-switch"><button id="previousDay" type="button" aria-label="前一天">←</button><label>門診日期<input id="listDate" type="date" min="1912-01-01"></label><button id="nextDay" type="button" aria-label="後一天">→</button></div><button id="accountRange" type="button">帳號設定的區間</button><label class="list-search">搜尋清單<input id="listSearch" type="search" placeholder="姓名、病歷號、科別"></label></div>
+      <div class="list-toolbar"><label>帳號<select id="listAccount"></select></label><div class="date-switch"><button id="previousDay" type="button" aria-label="前一天">←</button><label>門診日期<input id="listDate" type="date" min="1912-01-01"></label><button id="nextDay" type="button" aria-label="後一天">→</button></div><button id="accountRange" type="button">帳號設定的區間</button><label class="list-search">搜尋清單<input id="listSearch" type="search" placeholder="姓名、病歷號、科別、掛號序號"></label></div>
       <div class="selection-bar"><label class="check-label"><input id="selectAllPatients" type="checkbox" checked>全選目前顯示</label><span id="patientSelection" class="muted small">0 筆</span><button id="listToAnalysis" type="button" class="primary" disabled>勾選病人 → 分析</button><label class="check-label"><input id="forceSoap" type="checkbox">重新抓取已保存 SOAP</label><button id="fetchPatients" type="button">抓取並保存 SOAP</button></div>
       <p id="futureListHint" class="small future-list-hint" hidden>未來掛號可用來分析歷年檢查；SOAP 僅抓取截至今天已實際就診的紀錄。掛號清單可能變動，可重新整理。</p>
-      <div class="table-wrap"><table class="patient-table"><caption class="sr-only">可勾選的門診病人清單</caption><thead><tr><th scope="col">選取</th><th scope="col">日期</th><th scope="col">病人／病歷號</th><th scope="col">性別／年齡</th><th scope="col">科別／診間</th><th scope="col">本機病歷</th></tr></thead><tbody id="patientRows"></tbody></table></div>
+      <div class="table-wrap"><table class="patient-table"><caption class="sr-only">可勾選的門診病人清單</caption><thead><tr><th scope="col">選取</th><th scope="col">日期</th><th scope="col">掛號序號</th><th scope="col">病人／病歷號</th><th scope="col">性別／年齡</th><th scope="col">科別／診間</th><th scope="col">本機病歷</th></tr></thead><tbody id="patientRows"></tbody></table></div>
       <p id="listEmpty" class="empty-result">選擇帳號查看門診清單</p>
     </section>
     <section id="libraryPane" aria-labelledby="libraryTitle" class="workspace-pane" hidden>

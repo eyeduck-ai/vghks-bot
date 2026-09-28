@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" fill="none">
+  <title>該次數值類報告</title>
+  <defs>
+    <linearGradient id="report-current-ink" x1="54" y1="44" x2="199" y2="217" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#284D60" />
+      <stop offset="1" stop-color="#1F4154" />
+    </linearGradient>
+    <linearGradient id="report-current-paper" x1="65" y1="48" x2="191" y2="216" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF" />
+      <stop offset="1" stop-color="#FAFBFC" />
+    </linearGradient>
+    <linearGradient id="report-current-accent" x1="84" y1="69" x2="166" y2="194" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#45A0EB" />
+      <stop offset="1" stop-color="#348EDD" />
+    </linearGradient>
+    <linearGradient id="report-current-muted" x1="85" y1="148" x2="177" y2="196" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#B8C3C8" />
+      <stop offset="1" stop-color="#ADB9BF" />
+    </linearGradient>
+  </defs>
+  <g stroke="url(#report-current-ink)" stroke-width="8.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M72 47H158L196 85V206A10 10 0 0 1 186 216H72A10 10 0 0 1 62 206V57A10 10 0 0 1 72 47Z" fill="url(#report-current-paper)" />
+    <path d="M158 48V79A6 6 0 0 0 164 85H194" />
+  </g>
+  <g fill="url(#report-current-accent)">
+    <rect x="90" y="134" width="21" height="25" rx="2.5" />
+    <rect x="118" y="117" width="21" height="42" rx="2.5" />
+    <rect x="146" y="98" width="21" height="61" rx="2.5" />
+  </g>
+  <g fill="url(#report-current-muted)">
+    <rect x="86" y="168" width="89" height="9.5" rx="3" />
+    <rect x="86" y="187" width="62" height="9.5" rx="3" />
+  </g>
+</svg>

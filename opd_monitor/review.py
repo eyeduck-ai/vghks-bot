@@ -1,4 +1,4 @@
-"""Saved patient sets and task-scoped, latest-specialty SOAP review."""
+"""Saved patient sets and task-scoped SOAP review."""
 from __future__ import annotations
 
 import copy
@@ -27,9 +27,7 @@ from .storage import StorageError
 from .surgery_schedule import KIND as SURGERY_KIND
 from .tags import classification
 
-DEFAULT_DEPARTMENTS = [{"id": "oph", "name": "眼科", "codes": [], "names": [
-    "眼科上午", "眼科下午", "眼科", "眼科約診", "眼科約診上午", "眼科約診下午"]}]
-FOREGROUND_KINDS = {"numeric", "registrations", "resolve", "earnings_options"} | (APPROVAL_KINDS - {"approval_refresh", "approval_sync"})
+FOREGROUND_KINDS = {"numeric", "registrations", "resolve", "history", "earnings_options"} | (APPROVAL_KINDS - {"approval_refresh", "approval_sync"})
 
 
 def case_key(case):
@@ -40,55 +38,65 @@ def failure_status(exc):
     return "forbidden" if error_info(exc).http_status == 403 else "error"
 
 
+def checked_department_keyword(value):
+    if not isinstance(value, str) or not 1 <= len(value.strip()) <= 100 or "\n" in value or "\r" in value:
+        raise ValueError("科別篩選字串需為 1–100 字，且只能輸入一行。")
+    return value.strip()
+
+
+def checked_department_keywords(value):
+    if not isinstance(value, list):
+        raise ValueError("科別關鍵字格式不正確。")
+    keywords, seen = [], set()
+    for item in value:
+        if not isinstance(item, str):
+            raise ValueError("科別關鍵字格式不正確。")
+        if not item.strip():
+            continue
+        keyword = checked_department_keyword(item)
+        if keyword.casefold() not in seen:
+            keywords.append(keyword)
+            seen.add(keyword.casefold())
+            if len(keywords) > 10:
+                raise ValueError("科別關鍵字最多十個。")
+    if not keywords:
+        raise ValueError("請輸入至少一個科別關鍵字。")
+    return keywords
+
+
 class Review:
     def __init__(self, app):
         self.app = app
         self.db = WorkbenchStore(app.store.library)
+        from .review_history import ReviewHistory
+        self.history = ReviewHistory(self)
         self.foreground = {}
         self.threads = {}
         self.lock = threading.RLock()
         self.db.get("preferences", "review", required=False) or self.db.save("preferences", {
-            "id": "review", "departments": DEFAULT_DEPARTMENTS, "default_department": "oph"})
+            "id": "review", "review_options": {"department_keyword": "眼科"}})
 
     def preferences(self, values=None):
         current = self.db.get("preferences", "review")
         if values is None:
             return current
-        groups = values.get("departments")
-        if not isinstance(groups, list) or not 1 <= len(groups) <= 30:
-            raise ValueError("請設定 1–30 個科別群組。")
-        seen = set()
-        for group in groups:
-            if not isinstance(group, dict) or any(not isinstance(group.get(k), str) or not 1 <= len(group[k]) <= 60 for k in ("id", "name")):
-                raise ValueError("科別名稱或代碼不正確。")
-            if group["id"] in seen:
-                raise ValueError("科別群組代碼重複。")
-            seen.add(group["id"])
-            for key in ("codes", "names"):
-                values_ = group.get(key)
-                if not isinstance(values_, list) or len(values_) > 100 or any(not isinstance(v, str) or not v.strip() or len(v) > 100 for v in values_):
-                    raise ValueError("科別代碼與名稱請每行一項。")
-                group[key] = list(dict.fromkeys(v.strip() for v in values_))
-            if not group["codes"] and not group["names"]:
-                raise ValueError("每個科別至少填一個代碼或名稱。")
-        if values.get("default_department") not in seen:
-            raise ValueError("請選擇預設科別。")
         options = copy.deepcopy(values.get("review_options", current.get("review_options", {})))
         if not isinstance(options, dict):
             raise ValueError("檢閱設定格式不正確。")
-        enums = {"department_filter": {"same", "all"}, "mode": {"latest", "registration"},
+        enums = {"mode": {"latest", "registration"},
                  "cutoff_mode": {"today", "date"}, "retrieval": {"cache", "refresh", "force"}}
-        if set(options) - set(enums) - {"department", "cutoff"}:
+        if set(options) - set(enums) - {"department_keyword", "department_keywords", "cutoff"}:
             raise ValueError("檢閱設定欄位不正確。")
         for key, allowed in enums.items():
             if key in options and (not isinstance(options[key], str) or options[key] not in allowed):
                 raise ValueError("檢閱設定選項不正確。")
-        if options.get("department") not in seen:
-            options["department"] = values["default_department"]
+        if "department_keywords" in options:
+            options["department_keywords"] = checked_department_keywords(options["department_keywords"])
+        else:
+            options["department_keyword"] = checked_department_keyword(options.get("department_keyword", "眼科"))
         if options.get("cutoff_mode") == "date":
             parse_range({"start": options.get("cutoff"), "end": options.get("cutoff")})
-        return self.db.save("preferences", {"id": "review", "departments": groups,
-            "default_department": values["default_department"], "review_options": options})
+        return self.db.save("preferences", {"id": "review", "review_options": options})
 
     def save_set(self, values):
         if values.get("id"):
@@ -98,6 +106,16 @@ class Review:
                 raise ValueError("集合名稱需為 1–100 字。")
             return self.db.save("set", {**old, "name": name})
         members = {}
+        requested_mrns = parse_mrns(values["mrns"], limit=20000) if values.get("mrns") else []
+        source_set_id = values.get("source_set_id")
+        if source_set_id:
+            if not isinstance(source_set_id, str):
+                raise ValueError("來源集合識別碼不正確。")
+            source_set = self.db.get("set", source_set_id)
+            requested = set(requested_mrns)
+            for member in source_set["members"]:
+                if member["mrn"] in requested:
+                    members[member["mrn"]] = copy.deepcopy(member)
 
         def add(mrn, name="", registration=None, record=None, origin="manual"):
             mrn = normalize_mrn(mrn)
@@ -127,7 +145,9 @@ class Review:
             if not row:
                 raise ValueError("門診清單已變動，請重新載入。")
             add(row["mrn"], row.get("name", ""), registration=row, origin="registration")
-        for mrn in parse_mrns(values["mrns"], limit=20000) if values.get("mrns") else []:
+        for mrn in requested_mrns:
+            if mrn in members:
+                continue
             profile = self.db.get("profile", mrn, required=False)
             if not profile or profile.get("status") != "resolved":
                 raise ValueError("手動病人須先取得基本資料並核對。")
@@ -170,30 +190,6 @@ class Review:
         with self.app.root.lock:
             return self._start(values, foreground=foreground)
 
-    def scope(self, values):
-        """Check the chosen specialty against saved sources without hospital requests."""
-        group = self.db.get("set", values.get("set_id"))
-        department_filter = values.get("department_filter", "same")
-        if not isinstance(department_filter, str) or department_filter not in {"same", "all"}:
-            raise ValueError("科別篩選須為同科別或不限科別。")
-        if department_filter == "all":
-            return {"department": {"id": "__all__", "name": "不限科別", "codes": [], "names": []},
-                    "unmatched": [], "needs_confirmation": False, "confirmation_key": ""}
-        preferences = self.preferences()
-        department = next((g for g in preferences["departments"]
-            if g["id"] == values.get("department", preferences["default_department"])), None)
-        if not department:
-            raise ValueError("請先設定本次科別。")
-        sources = {(str(r.get("section_code") or "").strip(), str(r.get("section_name") or "").strip())
-            for member in group["members"] for r in member.get("registrations", [])}
-        unmatched = [{"code": code, "name": name} for code, name in sorted(sources)
-            if code not in department["codes"] and name not in department["names"]]
-        # Registration mode selects the exact source visit, not a specialty group.
-        needed = values.get("mode", "latest") != "registration" and bool(unmatched)
-        return {"department": copy.deepcopy(department), "unmatched": unmatched,
-                "needs_confirmation": needed, "confirmation_key": digest({
-                    "set_id": group["id"], "department": department, "unmatched": unmatched}) if needed else ""}
-
     def _start(self, values, *, foreground=False):
         if self.app.root.read_only:
             raise ValueError("唯讀資料庫不能啟動網路任務。")
@@ -222,25 +218,28 @@ class Review:
                 task["retry_only"] = retry
         else:
             kind = values.get("kind", "review")
-            if kind not in {"review", "resolve", "numeric", "registrations", SURGERY_KIND} | APPROVAL_KINDS | EARNINGS_KINDS:
+            if kind not in {"review", "resolve", "numeric", "registrations", "history", SURGERY_KIND} | APPROVAL_KINDS | EARNINGS_KINDS:
                 raise ValueError("工具類型不正確。")
             task = {"id": uuid.uuid4().hex, "kind": kind, "created_at": timestamp(), "account_id": self.app.account_id,
                     "force": values.get("force") is True, "refresh": values.get("refresh") is True}
             if kind == "review":
                 group = self.db.get("set", values.get("set_id"))
-                scope = self.scope(values)
-                department = scope["department"]
                 mode = values.get("mode", "latest")
                 if mode not in {"latest", "registration"}:
                     raise ValueError("SOAP 模式不正確。")
                 cutoff = values.get("cutoff") or today().isoformat()
                 parse_range({"start": cutoff, "end": cutoff})
-                if scope["needs_confirmation"] and (values.get("department_confirmed") is not True
-                        or values.get("department_confirmation") != scope["confirmation_key"]):
-                    raise ValueError("來源含尚未對應至本次科別的掛號，請確認科別範圍後再開始。")
+                preferred = self.preferences().get("review_options", {})
+                if "department_keywords" in values:
+                    department = {"department_keywords": checked_department_keywords(values["department_keywords"])}
+                elif "department_keyword" in values:
+                    department = {"department_keyword": checked_department_keyword(values["department_keyword"])}
+                elif "department_keywords" in preferred:
+                    department = {"department_keywords": checked_department_keywords(preferred["department_keywords"])}
+                else:
+                    department = {"department_keyword": checked_department_keyword(preferred.get("department_keyword", "眼科"))}
                 task.update(name=group["name"], members=copy.deepcopy(group["members"]), set_id=group["id"],
-                    department=copy.deepcopy(department), department_scope=scope,
-                    department_filter=values.get("department_filter", "same"), mode=mode, cutoff=cutoff,
+                    **department, mode=mode, cutoff=cutoff,
                     categories=self.app.settings.public()["categories"])
             elif kind in APPROVAL_KINDS:
                 foreground = kind in FOREGROUND_KINDS
@@ -257,6 +256,9 @@ class Review:
                     raise ValueError("請選擇病歷號或身分證字號。")
                 identifiers = parse_mrns(values.get("identifiers"))
                 task.update(name="病人基本資料", identifier_kind=input_kind, identifiers=identifiers)
+            elif kind == "history":
+                task.update(self.history.prepare(values))
+                foreground = True
             else:
                 mrn = normalize_mrn(values.get("mrn"))
                 task.update(name="本次數值報告" if kind == "numeric" else "掛號紀錄", mrn=mrn)
@@ -328,7 +330,9 @@ class Review:
         elif kind == "approval_refresh":
             total, unit = len(task["references"]), "件"
         elif kind == "approval_sync":
-            total, unit = task.get("case_total"), "件"
+            total = (task["case_total"] + task["order_total"]
+                     if "case_total" in task and "order_total" in task else None)
+            unit = "項作業"
             counted = [i for i in counted if i.get("checked_at") == task.get("sync_checked_at")]
         elif kind == "approval_case":
             total = len(task["parts"])
@@ -340,8 +344,16 @@ class Review:
             if task["all_available"] and set(task.get("discovered", [])) != set(task["report_kinds"]):
                 total = None
             counted = [i for i in items if "period" in i]
+        elif kind == "history" and task.get("resource") == "scans" and task.get("backfill"):
+            unit = "次眼科就診"
+            try:
+                total = len(self.app.scans._eye_cases(task["mrn"]))
+            except (ValueError, TypeError, KeyError):
+                total = None
+            counted = [i for i in items if i.get("reference")]
+        failed_items = counted if kind == "approval_sync" else items
         return progress(len(counted), total, unit=unit,
-                        failed=sum(not i.get("processing") and i.get("status") in {"error", "partial", "forbidden"} for i in items),
+                        failed=sum(not i.get("processing") and i.get("status") in {"error", "partial", "forbidden"} for i in failed_items),
                         stage=task.get("message", "") if stage is None else stage)
 
     def report(self, state, task, *, stage):
@@ -385,7 +397,7 @@ class Review:
                     status = failure_status(exc)
                     result = {**member, "status": status, "message": "此帳號沒有讀取權限" if status == "forbidden" else message, "code": code, "records": []}
                     if code == "PRQ_CASE_PATIENT_MISMATCH":
-                        result["message"] = "就診索引的病人身分不符；重新核對後仍未確認。可單獨重試或查看診斷。"
+                        result["message"] = "就診索引的病人身分不符；重新核對後仍未確認。可單獨重試，或到爬蟲紀錄查看 DEBUG 資訊。"
                 self.db.item(task["id"], member["mrn"], result)
                 self.report(state, task, stage="病歷已處理")
         elif task["kind"] in APPROVAL_KINDS:
@@ -418,6 +430,10 @@ class Review:
                     result = {"status": "error", "message": message, "code": code}
                 self.db.item(task["id"], identifier, {**result, "input": identifier, "identifier_kind": input_kind})
                 self.report(state, task, stage="病人資料已處理")
+        elif task["kind"] == "history":
+            state.check_cancel()
+            result = self.history.execute(task, state)
+            self.db.item(task["id"], task["mrn"], result)
         else:
             state.check_cancel()
             result = self.extension(task)
@@ -447,7 +463,7 @@ class Review:
             return [model(VisitCase, c) for c in cached["cases"]], cached["updated_at"]
         with self.app.sdk_factory(self.app.settings) as sdk:
             cases = sdk.records.get_visit_cases(mrn)
-        if not isinstance(cases, list) or any(not isinstance(c, VisitCase) or c.mrn != mrn for c in cases):
+        if not isinstance(cases, list) or any(not isinstance(c, VisitCase) or c.patient_mrn != mrn for c in cases):
             raise ValueError("就診索引病人不符或格式不正確。")
         saved = self.db.save("visits", {"id": mrn, "cases": clean(cases)})
         return cases, saved["updated_at"]
@@ -456,9 +472,9 @@ class Review:
         mrn = member["mrn"]
         result = {**member, "records": [], "attempts": [], "status": "ready", "message": ""}
         if task["mode"] == "registration" and not member["registrations"]:
-            return {**result, "status": "no_source", "message": "未指定掛號來源，請改用最新同科或從門診清單選取。"}
+            return {**result, "status": "no_source", "message": "未指定掛號來源，請改用最新 SOAP 或從門診清單選取。"}
         if task["mode"] == "registration" and all(r["visit_date"] > today().isoformat() for r in member["registrations"]):
-            return {**result, "status": "future", "message": "尚未到診，可使用最新同科模式。"}
+            return {**result, "status": "future", "message": "尚未到診，可使用最新 SOAP 模式。"}
         checkpoint = self.db.item(task["id"], mrn) or {}
         if "index_cases" in checkpoint:
             cases = [model(VisitCase, c) for c in checkpoint["index_cases"]]
@@ -469,20 +485,32 @@ class Review:
         result["index_checked_at"] = checked
         self.db.item(task["id"], mrn, {**result, "status": "partial", "processing": True})
         adopted = {r["id"]: r for r in checkpoint.get("records", [])}
-        group = task["department"]
-        all_departments = task.get("department_filter", "same") == "all"
+        keyword = task.get("department_keyword")
+        keywords = task.get("department_keywords")
+        needles = keywords if keywords is not None else [keyword] if keyword is not None else []
+        legacy_all = not needles and task.get("department_filter", "same") == "all"
         def same_section(case):
+            if needles:
+                name, code = case.section_name.casefold(), case.section_code.casefold()
+                return any(needle.casefold() in name or needle.casefold() in code for needle in needles)
+            if legacy_all:
+                return True
+            group = task["department"]
             return case.section_code.strip() in group["codes"] or case.section_name.strip() in group["names"]
         eligible = [c for c in cases if c.case_type == "O" and c.visit_date and c.visit_date.isoformat() <= task["cutoff"]]
-        ambiguous = any(c.case_type == "O" and (not c.visit_date or not all_departments and not c.section_code and not c.section_name) for c in cases)
+        ambiguous = any(c.case_type == "O" and (not c.visit_date or not legacy_all and not c.section_code and not c.section_name) for c in cases)
         if task["mode"] == "registration":
             keys = {(r["visit_date"], r["section_code"]) for r in member["registrations"] if r["visit_date"] <= today().isoformat()}
             eligible = [c for c in eligible if (c.visit_date.isoformat(), c.section_code) in keys]
-        elif not all_departments:
+        if needles or task["mode"] != "registration" and not legacy_all:
             eligible = [c for c in eligible if same_section(c)]
         if not eligible:
-            message = ("索引日期或科別不完整，無法判定" if ambiguous else "查無掛號當次就診" if task["mode"] == "registration"
-                       else "查無門診歷史（可能初診）" if all_departments else "查無同科歷史（可能初診）")
+            message = ("索引日期或科別不完整，無法判定" if ambiguous else
+                "查無符合科別篩選的掛號當次就診" if task["mode"] == "registration" and needles else
+                "查無掛號當次就診" if task["mode"] == "registration" else
+                "查無科別含任一關鍵字（" + "、".join(needles) + "）的門診歷史（可能初診）" if keywords is not None else
+                f"查無科別含「{keyword}」的門診歷史（可能初診）" if keyword is not None else
+                "查無門診歷史（可能初診）" if legacy_all else "查無同科歷史（可能初診）")
             return {**result, "status": "unknown" if ambiguous else "no_visit", "message": message}
         by_day = defaultdict(list)
         for case in {c.identity: c for c in eligible}.values():
@@ -509,7 +537,8 @@ class Review:
                     if not cache_hit:
                         with self.app.sdk_factory(self.app.settings) as sdk:
                             soap = sdk.records.get_soap(case)
-                        if not isinstance(soap, SoapRecord) or soap.case.identity != case.identity:
+                        if (not isinstance(soap, SoapRecord) or soap.case.identity != case.identity
+                                or soap.case.patient_mrn != mrn):
                             from vghks_sdk import ParseError
 
                             raise ParseError("SOAP identity mismatch", code="BOT_SOAP_CASE_MISMATCH")
@@ -518,7 +547,8 @@ class Review:
                             continue
                         record = {"id": key, "mrn": mrn, "name": member.get("name", ""), "sex": member.get("sex", ""),
                             "age": member.get("age", ""), "date": day.isoformat(), "section": case.section_name,
-                            "section_code": case.section_code, "case_no": case.case_no, "doctor": case.doctor_name,
+                            "section_code": case.section_code, "case_no": case.case_no,
+                            "source_mrn": case.mrn, "case_index": case.index, "doctor": case.doctor_name,
                             "doctor_card": case.doctor_card, **soap_snapshot(soap)}
                         self.app.store.library.save_record(record, self.app.username, task["id"])
                         record = self.app.store.library.get_record(key)
@@ -565,9 +595,12 @@ class Review:
             return {**cached, "cached": True}
         with self.app.sdk_factory(self.app.settings) as sdk:
             if kind == "numeric":
-                case = VisitCase(mrn, date.fromisoformat(record["date"]), "O", record["case_no"], record["section_code"], record["section"])
+                source_mrn = record.get("source_mrn") or mrn
+                case = VisitCase(source_mrn, date.fromisoformat(record["date"]), "O",
+                                 record["case_no"], record["section_code"], record["section"],
+                                 index=record.get("case_index"), lookup_mrn=mrn)
                 report = sdk.records.get_numeric_report(case)
-                if report.case.identity != case.identity:
+                if report.case.identity != case.identity or report.case.patient_mrn != mrn:
                     raise ValueError("數值報告就診不符。")
                 payload = clean(report)
             else:
@@ -619,6 +652,75 @@ class Review:
             filtered.append(patient)
         return {"task": task, "patients": filtered, "total": len(filtered), "all_total": len(task["members"]), "tag_counts": dict(counts),
                 "scope_issue_count": sum(bool(record.get("tag_scope_issues")) for record in refs)}
+
+    def _note_task(self, values):
+        task = self.db.get("task", values.get("task_id"))
+        if task["kind"] != "review":
+            raise ValueError("此任務不是病歷檢閱。")
+        return task
+
+    def _registration_sequence(self, member):
+        sources = [row for row in member.get("registrations", []) if isinstance(row, dict) and row.get("visit_date")]
+        if not sources:
+            return ""
+        latest = max(row["visit_date"] for row in sources)
+        sources = [row for row in sources if row["visit_date"] == latest]
+        if len(sources) != 1:
+            return ""
+        source = sources[0]
+        if (source.get("mrn") and source["mrn"] != member["mrn"]) or not source.get("room") or not (
+            source.get("section_code") or source.get("section_name")
+        ):
+            return ""
+        if source.get("sequence_no"):
+            return str(source["sequence_no"])
+        saved = self.db.get("registrations", member["mrn"], required=False) or {}
+        numbers = set()
+        history = saved.get("payload")
+        if not isinstance(history, list):
+            return ""
+        for row in history:
+            if not isinstance(row, dict):
+                continue
+            if row.get("mrn") and row["mrn"] != member["mrn"]:
+                continue
+            if row.get("visit_date") != latest or row.get("room") != source["room"]:
+                continue
+            source_code, row_code = source.get("section_code"), row.get("section_code")
+            if source_code and row_code:
+                same_section = source_code == row_code
+            else:
+                same_section = bool(source.get("section_name") and source["section_name"] == row.get("section_name"))
+            if same_section and row.get("sequence_no"):
+                numbers.add(str(row["sequence_no"]))
+        return next(iter(numbers)) if len(numbers) == 1 else ""
+
+    def read_notes(self, values):
+        task = self._note_task(values)
+        patients = []
+        for member in task["members"]:
+            mrn = member["mrn"]
+            note = self.db.get("review_note", task["id"] + ":" + mrn, required=False) or {}
+            patients.append({"mrn": mrn, "name": member.get("name", ""),
+                "sequence_no": self._registration_sequence(member), "text": note.get("text", ""),
+                "updated_at": note.get("updated_at", "")})
+        return {"task_id": task["id"], "patients": patients}
+
+    def save_note(self, values):
+        task = self._note_task(values)
+        mrn = normalize_mrn(values.get("mrn", ""))
+        if mrn not in {member["mrn"] for member in task["members"]}:
+            raise ValueError("病人不在此檢閱任務中。")
+        text = values.get("text")
+        if not isinstance(text, str) or len(text) > 2000:
+            raise ValueError("備註需為 2,000 字以內的文字。")
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+        key = task["id"] + ":" + mrn
+        if not text.strip():
+            self.db.delete("review_note", key)
+            return {"task_id": task["id"], "mrn": mrn, "text": "", "updated_at": ""}
+        saved = self.db.save("review_note", {"id": key, "text": text})
+        return {"task_id": task["id"], "mrn": mrn, "text": saved["text"], "updated_at": saved["updated_at"]}
 
     def reclassify(self, key):
         task = self.db.get("task", key)

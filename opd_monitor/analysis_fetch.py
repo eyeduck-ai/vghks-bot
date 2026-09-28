@@ -65,6 +65,24 @@ def validate_patient(value, mrn):
             validate_patient(item, mrn)
 
 
+def validate_visits(value, mrn):
+    if not isinstance(value, list):
+        raise ValueError("就診清單格式不正確。")
+    for raw in value:
+        if not isinstance(raw, dict) or model(VisitCase, raw).patient_mrn != mrn:
+            raise ValueError("就診清單病人不符，已略過。")
+
+
+def validate_case_report(value, lookup_mrn, case):
+    validate_patient(value, case.mrn)
+    returned = value.get("case") if isinstance(value, dict) else None
+    if not isinstance(returned, dict):
+        raise ValueError("單次數值報告缺少就診識別。")
+    found = model(VisitCase, returned)
+    if found.identity != case.identity or found.patient_mrn != lookup_mrn:
+        raise ValueError("單次數值報告就診識別不符。")
+
+
 class RunSessions:
     """Lazy login once per account, used serially for all patients in this run."""
     def __init__(self, factory, state):
@@ -116,7 +134,7 @@ class PatientCollector:
             self.ready.add(target)
         return self.connection
 
-    def query(self, key, kind, operation, *, refresh=False, binary=False):
+    def query(self, key, kind, operation, *, refresh=False, binary=False, expected_mrn=None, validator=None):
         self.state.check_cancel()
         if key in self.seen:
             return self.seen[key]
@@ -127,9 +145,15 @@ class PatientCollector:
             except ValueError:
                 cached = None
         if cached and not (refresh or self.options["force"]):
-            self.state.count(analysis_cached=1)
-            self.seen[key] = cached["payload"]
-            return cached["payload"]
+            if not binary:
+                try:
+                    (validator or validate_patient)(cached["payload"], expected_mrn or self.mrn)
+                except (TypeError, ValueError):
+                    cached = None
+            if cached:
+                self.state.count(analysis_cached=1)
+                self.seen[key] = cached["payload"]
+                return cached["payload"]
         try:
             self.state.update(stage="analysis", message=f"{self.member.get('name') or self.mrn} · {kind}")
             value = operation()
@@ -138,7 +162,7 @@ class PatientCollector:
                 value = self.store.save_asset(self.mrn, key, value, self.settings.username)
             else:
                 value = clean(value)
-                validate_patient(value, self.mrn)
+                (validator or validate_patient)(value, expected_mrn or self.mrn)
                 self.store.save_step(self.mrn, key, kind, value, self.settings.username)
             self.state.count(analysis_fetched=1)
             self.seen[key] = value
@@ -178,7 +202,10 @@ class PatientCollector:
                                     self.mrn, OrderHistoryFilter(category=category)), refresh=refresh)
             if result is not None:
                 sources[category] = result
-        visits = self.query("visits", "visits", lambda: self.sdk().records.get_visit_cases(self.mrn), refresh=refresh)
+        visits = self.query("visits", "visits", lambda: self.sdk().records.get_visit_cases(self.mrn),
+                            refresh=refresh, validator=validate_visits)
+        case_sources = {digest(model(VisitCase, raw).identity): raw["mrn"] for raw in visits or []}
+        self.allowed_mrns = {self.mrn, *case_sources.values()}
         numeric_cutoff = (today() - timedelta(days=3650)).isoformat()
         order_cutoff = (today() - timedelta(days=4000)).isoformat()
         older, unsupported, unknown_dates = 0, [], 0
@@ -201,26 +228,31 @@ class PatientCollector:
             if raw.get("case_type") != "O":
                 unsupported.append({"date": day, "case_type": raw.get("case_type"), "case_no": raw.get("case_no")})
                 continue
-            if raw.get("mrn") != self.mrn:
+            if model(VisitCase, raw).patient_mrn != self.mrn:
                 self.state.issue("就診清單", "病歷號不符，已略過。", mrn=self.mrn)
                 continue
             case = model(VisitCase, raw)
             key = digest(case.identity)
             older += 1
             if needs_numeric:
-                self.query("numeric-case:" + key, "numeric", lambda case=case: self.sdk().records.get_numeric_report(case))
+                self.query("numeric-case:" + key, "numeric",
+                           lambda case=case: self.sdk().records.get_numeric_report(case),
+                           expected_mrn=case.mrn,
+                           validator=lambda value, _, case=case: validate_case_report(value, self.mrn, case))
             if needs_orders:
                 result = self.query("orders-case:" + key, "order_index",
-                                    lambda case=case: self.sdk().orders.get_case_orders(case))
+                                    lambda case=case: self.sdk().orders.get_case_orders(case), expected_mrn=case.mrn)
                 if result is not None:
                     sources[key] = result
         # Include already cached per-case indices when a later run reuses history.
         for saved in self.store.steps(self.mrn, "order_index"):
-            sources.setdefault(saved["key"], saved["payload"])
+            if saved["key"] in case_sources:
+                sources.setdefault(saved["key"], saved["payload"])
         groups = defaultdict(list)
         for source, orders in sources.items():
             for order in orders:
-                if order.get("mrn") != self.mrn or not any(term_match(order.get("name", ""), t) for t in terms):
+                expected = self.mrn if source in {"*", "OR"} else case_sources.get(source)
+                if not expected or order.get("mrn") != expected or not any(term_match(order.get("name", ""), t) for t in terms):
                     continue
                 groups[order_identity(order)].append({"source": source, "order": order})
         for key, variants in groups.items():
@@ -271,12 +303,16 @@ class PatientCollector:
         def fetch(cls, method, reference, *, binary=False):
             key = method + ":" + digest(reference)
             def operation():
-                validate_patient(reference, self.mrn)
+                source_mrn = reference.get("mrn", "")
+                if source_mrn not in self.allowed_mrns:
+                    raise ValueError("報告參照病歷號未經就診清單核對。")
+                validate_patient(reference, source_mrn)
                 return getattr(self.sdk().orders, method)(model(cls, reference))
             # Retry metadata-only / empty report branches when explicitly refreshing.
             value = self.query(key, "asset" if binary else "report",
                                operation,
-                               refresh=changed and not binary, binary=binary)
+                               refresh=changed and not binary, binary=binary,
+                               expected_mrn=reference.get("mrn", ""))
             row["branches"].append({"key": key, "status": "ok" if value is not None else "failed"})
             if value is None:
                 row["status"] = "partial"

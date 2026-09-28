@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" fill="none">
+  <title>掛號紀錄</title>
+  <defs>
+    <linearGradient id="registration-records-ink" x1="290" y1="230" x2="1000" y2="1030" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#00716F"/><stop offset="1" stop-color="#006768"/>
+    </linearGradient>
+    <linearGradient id="registration-records-paper" x1="330" y1="280" x2="850" y2="1000" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF"/><stop offset="1" stop-color="#FDFDFE"/>
+    </linearGradient>
+    <linearGradient id="registration-records-light" x1="400" y1="320" x2="970" y2="1040" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#D2F4E7"/><stop offset="1" stop-color="#BEEDDE"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(-13.2413793 -13.2413793) scale(.2206896552)">
+  <rect x="289" y="385" width="660" height="580" rx="59" fill="url(#registration-records-paper)"/>
+  <path d="M348 385H890A59 59 0 0 1 949 444V530H289V444A59 59 0 0 1 348 385Z" fill="url(#registration-records-light)"/>
+  <g stroke="url(#registration-records-ink)" stroke-linejoin="round">
+    <rect x="289" y="385" width="660" height="580" rx="59" stroke-width="42"/>
+    <path d="M291 530H947" stroke-width="40"/>
+    <rect x="398" y="298" width="89" height="155" rx="44.5" fill="url(#registration-records-light)" stroke-width="40"/>
+    <rect x="750" y="298" width="89" height="155" rx="44.5" fill="url(#registration-records-light)" stroke-width="40"/>
+  </g>
+  <g fill="#AFBBC1">
+    <rect x="374" y="617" width="111" height="110" rx="23"/>
+    <rect x="527" y="617" width="112" height="110" rx="23"/>
+    <rect x="374" y="772" width="111" height="110" rx="23"/>
+    <rect x="527" y="772" width="112" height="110" rx="23"/>
+    <rect x="679" y="772" width="112" height="110" rx="23"/>
+  </g>
+  <rect x="680" y="617" width="111" height="110" rx="23" fill="#35B4A1"/>
+  <circle cx="895" cy="875" r="150" fill="url(#registration-records-light)" stroke="url(#registration-records-ink)" stroke-width="40"/>
+  <path d="M830 879L872 921L961 835" stroke="url(#registration-records-ink)" stroke-width="43" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>

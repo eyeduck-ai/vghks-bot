@@ -2,16 +2,18 @@
 from __future__ import annotations
 
 import threading
+import uuid
 from contextlib import contextmanager
 from types import SimpleNamespace
 
-from vghks_sdk import AuthenticationError
+from vghks_sdk import AuthenticationError, RequestError
 from vghks_sdk.core.errors import error_info
 from vghks_sdk.identifiers import normalize_national_id
 from vghks_sdk.parsing.prq import parse_patient_identity, require_patient_context
 
 from .clinical_identity import verified_visit_cases
 from .diagnostics import failure_details
+from .scanner import safe_failure
 from .settings import timestamp
 
 
@@ -52,6 +54,9 @@ class AccountGateway:
         self.context = None
         self.diagnostic = None
         self.recorder_factory = self.recorder = None
+        self.event = None
+        self.session_id = ""
+        self.recovery_count = 0
 
     @contextmanager
     def task_context(self, task_id, kind):
@@ -66,7 +71,7 @@ class AccountGateway:
         self.local.diagnostic_emitted = True
         if self.diagnostic:
             return self.diagnostic({**getattr(self.local, "task", {}),
-                "sdk_run_id": self.recorder.run_id if self.recorder else "", **value})
+                "session_id": self.session_id, "sdk_run_id": self.recorder.run_id if self.recorder else "", **value})
 
     def record_failure(self, exc, service, method, args=()):
         if getattr(self.local, "diagnostic_emitted", False):
@@ -79,6 +84,18 @@ class AccountGateway:
                  if getattr(first, k, None) is not None}
         return self.record_diagnostic({"mrn": mrn, "phase": f"{service}.{method}", "visit": visit,
             "error": failure_details(exc), "recovered": False})
+
+    def record_event(self, service, method, status, exc=None):
+        if not self.event:
+            return
+        message, code = safe_failure(exc) if exc else ("", "")
+        try:
+            self.event(session_id=self.session_id, task_id=getattr(self.local, "task", {}).get("task_id", ""),
+                       service=service, method=method, status=status, error_code=code, message=message)
+        except Exception:
+            # An audit write must not turn a successful hospital response into a
+            # failed clinical task. The task and SDK recorder remain available.
+            pass
 
     @contextmanager
     def foreground(self):
@@ -111,22 +128,70 @@ class AccountGateway:
     def login(self, settings):
         with self.serial():
             self._close()
-            self.settings = settings
+            self.session_id = uuid.uuid4().hex
             self.local.diagnostic_emitted = False
             try:
-                self.manager = self.factory(settings)
-                runtime = getattr(self.manager, "_runtime", None)
-                if runtime is not None and self.recorder_factory:
-                    self.recorder = self.recorder_factory()
-                    runtime.diagnostics = runtime.transport.diagnostics = self.recorder
-                self.connection = self.manager.__enter__()
-                if not self.connection.auth.check(only=("prq",)).ok:
-                    raise ValueError("院內登入失敗，請確認帳號及密碼。")
-                self.online = True
+                self._connect_locked(settings)
+                self.record_event("auth", "login", "ok")
             except Exception as exc:
                 self.record_failure(exc, "auth", "login")
+                self.record_event("auth", "login", "error", exc)
                 self._close(error=exc)
                 raise
+
+    def _connect_locked(self, settings):
+        self.settings = settings
+        self.manager = self.factory(settings)
+        runtime = getattr(self.manager, "_runtime", None)
+        if runtime is not None and self.recorder_factory:
+            self.recorder = self.recorder_factory()
+            runtime.diagnostics = runtime.transport.diagnostics = self.recorder
+        self.connection = self.manager.__enter__()
+        if not self.connection.auth.check(only=("prq",)).ok:
+            raise AuthenticationError("hospital login check failed", code="AUTH_CHECK_FAILED")
+        self.online = True
+
+    def _reconnect_locked(self):
+        settings = self.settings
+        if not settings or not settings.password or not self.online:
+            raise AuthenticationError("active login is unavailable", code="AUTH_RELOGIN_FAILED")
+        self._close()
+        self.session_id = uuid.uuid4().hex
+        try:
+            self._connect_locked(settings)
+            self.recovery_count += 1
+            self.record_event("auth", "reconnect", "ok")
+        except Exception as exc:
+            self.record_failure(exc, "auth", "reconnect")
+            self.record_event("auth", "reconnect", "error", exc)
+            self._close(error=exc)
+            raise
+
+    @staticmethod
+    def _can_recover(service, method, exc, *, sdk_managed_prq=False):
+        # A real SDK runtime retries safe PRQ reads itself. PRQ reads can
+        # conditionally submit an access decision, so an outer gateway retry
+        # could replay a write whose outcome is uncertain. Synthetic SDKs have
+        # no runtime and still need the gateway's one-time reconnect.
+        if sdk_managed_prq and service in {"records", "orders"}:
+            return False
+        if not (method.startswith(("get_", "find_")) or
+                service == "orders" and method in {"download_pdf", "download_pacs_image"} or
+                service == "patients" and method == "resolve_identity" or
+                service == "auth" and method == "check"):
+            return False
+        info = error_info(exc)
+        return info.category == "NETWORK" or info.code in {
+            "AUTH_EXPIRED", "AUTH_RELOGIN_FAILED", "AUTH_CHECK_FAILED",
+            "AUTH_OPERATION_INCOMPLETE", "AUTH_SESSION_REDIRECT",
+            "AUTH_SESSION_LOGIN_PAGE", "AUTH_SESSION_LOGIN_FORM"}
+
+    @staticmethod
+    def _failed_readiness(service, method, value, args, kwargs):
+        if service != "auth" or method != "check" or getattr(value, "ok", True):
+            return False
+        targets = kwargs.get("only", args[0] if args else ())
+        return bool(targets) and "earnings" not in targets
 
     def _close(self, error=None):
         self.online = False
@@ -155,39 +220,56 @@ class AccountGateway:
         with self.serial():
             if not self.online:
                 raise ValueError("帳號已登出；請登入後續跑。")
-            self.local.diagnostic_emitted = False
-            try:
-                # Foreground calls can change PRQ's patient context between two
-                # background steps. Restore it before reading any case/report.
-                mrn = getattr(args[0], "mrn", None) if args else None
-                if mrn and service in {"records", "orders"} and self.context != mrn:
-                    verified_visit_cases(self.connection, mrn, self.record_diagnostic)
-                    self.context = mrn
-                    self.local.diagnostic_emitted = False
-                if service == "records" and method == "get_visit_cases" and args and isinstance(args[0], str):
-                    value = verified_visit_cases(self.connection, args[0], self.record_diagnostic)
-                else:
-                    value = getattr(getattr(self.connection, service), method)(*args, **kwargs)
-                # Stamp inside the serialized SDK call, before another worker
-                # can fetch a newer response. Each caller keeps its own stamp.
-                self.local.response_at = timestamp()
-                if service == "records" and method in {"get_visit_cases", "find_visit_cases"}:
-                    self.context = args[0] if args else None
-                elif service in {"records", "orders"} and args and isinstance(args[0], str):
-                    self.context = args[0]
-                elif service in {"patients", "auth", "opd", "surgery", "reviews", "earnings"}:
+            for attempt in range(2):
+                self.local.diagnostic_emitted = False
+                try:
+                    # Restore PRQ's patient context after another task used it.
+                    subject = args[0] if args else None
+                    mrn = getattr(subject, "patient_mrn", None) or getattr(subject, "mrn", None)
+                    if mrn and service in {"records", "orders"} and self.context != mrn:
+                        verified_visit_cases(self.connection, mrn, self.record_diagnostic)
+                        self.context = mrn
+                    if service == "records" and method == "get_visit_cases" and args and isinstance(args[0], str):
+                        value = verified_visit_cases(self.connection, args[0], self.record_diagnostic)
+                    else:
+                        value = getattr(getattr(self.connection, service), method)(*args, **kwargs)
+                    if self._failed_readiness(service, method, value, args, kwargs):
+                        raise AuthenticationError("hospital application login check failed", code="AUTH_CHECK_FAILED")
+                    self.local.response_at = timestamp()
+                    if service == "records" and method in {"get_visit_cases", "find_visit_cases"}:
+                        self.context = args[0] if args else None
+                    elif service in {"records", "orders"} and args and isinstance(args[0], str):
+                        self.context = args[0]
+                    elif service in {"patients", "auth", "opd", "surgery", "reviews", "earnings"}:
+                        self.context = None
+                    self.record_event(service, method, "ok")
+                    return value
+                except (AuthenticationError, RequestError) as exc:
                     self.context = None
-                return value
-            except AuthenticationError as exc:
-                self.record_failure(exc, service, method, args)
-                if service != "earnings" or not error_info(exc).code.startswith("EARNINGS_"):
-                    self.online = False
-                self.context = None
-                raise
-            except Exception as exc:
-                self.record_failure(exc, service, method, args)
-                self.context = None
-                raise
+                    if (attempt == 0 and self.online and self._can_recover(
+                            service, method, exc,
+                            sdk_managed_prq=getattr(self.connection, "_runtime", None) is not None)):
+                        self.record_event(service, method, "error", exc)
+                        self.record_diagnostic({"phase": f"{service}.{method}", "error": failure_details(exc),
+                                                "recovered": True})
+                        try:
+                            self._reconnect_locked()
+                        except Exception:
+                            raise
+                        continue
+                    self.record_failure(exc, service, method, args)
+                    self.record_event(service, method, "error", exc)
+                    info = error_info(exc)
+                    if (info.category == "NETWORK" or
+                            isinstance(exc, AuthenticationError) and
+                            (service != "earnings" or not info.code.startswith("EARNINGS_"))):
+                        self.online = False
+                    raise
+                except Exception as exc:
+                    self.context = None
+                    self.record_failure(exc, service, method, args)
+                    self.record_event(service, method, "error", exc)
+                    raise
 
     def response_at(self):
         return self.local.response_at
@@ -203,17 +285,27 @@ class AccountGateway:
         with self.serial():
             if not self.online:
                 raise ValueError("請先登入。")
-            self.local.diagnostic_emitted = False
-            try:
-                mrn = self._resolve_identity(identifier)
-                self.context = mrn
-                return mrn
-            except Exception as exc:
-                self.context = None
-                if isinstance(exc, AuthenticationError):
-                    self.online = False
-                self.record_failure(exc, "patients", "resolve_identity")
-                raise
+            for attempt in range(2):
+                self.local.diagnostic_emitted = False
+                try:
+                    mrn = self._resolve_identity(identifier)
+                    self.context = mrn
+                    self.record_event("patients", "resolve_identity", "ok")
+                    return mrn
+                except Exception as exc:
+                    self.context = None
+                    if (attempt == 0 and self.online and isinstance(exc, (AuthenticationError, RequestError))
+                            and self._can_recover("patients", "resolve_identity", exc)):
+                        self.record_event("patients", "resolve_identity", "error", exc)
+                        self.record_diagnostic({"phase": "patients.resolve_identity", "error": failure_details(exc),
+                                                "recovered": True})
+                        self._reconnect_locked()
+                        continue
+                    if isinstance(exc, AuthenticationError) or error_info(exc).category == "NETWORK":
+                        self.online = False
+                    self.record_failure(exc, "patients", "resolve_identity")
+                    self.record_event("patients", "resolve_identity", "error", exc)
+                    raise
 
     def _resolve_identity(self, identifier):
         sdk = self.connection

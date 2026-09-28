@@ -148,7 +148,7 @@ class FollowUpTests(unittest.TestCase):
                 entered.set()
                 release.wait(4)
         with patch.object(BotSyntheticSDK, "on_soap", block):
-            key = self.work.review.start({"set_id": group["id"], "department_confirmed": True})["task_id"]
+            key = self.work.review.start({"set_id": group["id"]})["task_id"]
             try:
                 self.assertTrue(entered.wait(3))
                 live = self.work.review.task(key)

@@ -45,11 +45,11 @@ def schedule_rows(records, card, day):
         physician = text(record.get("doctor_card"))
         mismatch = bool(physician and doctor_identity(physician) != doctor_identity(card))
         group = "unconfirmed" if mismatch or not scheduled else "past" if scheduled < day else "upcoming"
-        name = next((text(extra.get(k)) for k in (
+        name = text(record.get("patient_name")) or next((text(extra.get(k)) for k in (
             "orpatnam", "orpatnm", "orname", "hnamec", "patient_name", "name", "姓名") if text(extra.get(k))), "")
         rows.append({**record, "row_id": str(index), "name": name, "raw_date": raw_date,
                      "date": scheduled, "group": group,
-                     "note": "回傳醫師與登入帳號不符" if mismatch else "日期待辨識" if not scheduled else ""})
+                     "note": "回傳醫師與查詢醫師不符" if mismatch else "日期待辨識" if not scheduled else ""})
     return rows
 
 
@@ -68,12 +68,13 @@ class SurgerySchedule:
         department = values.get("department", "OPH")
         if not isinstance(department, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,16}", department.strip()):
             raise ValueError("請輸入院內手術科別代碼，例如眼科 OPH。")
-        if values.get("doctor_card", self.app.username) != self.app.username:
-            raise ValueError("手術排程僅查詢目前登入帳號。")
+        doctor_card = values.get("doctor_card", self.app.username)
+        if not isinstance(doctor_card, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,32}", doctor_card.strip()):
+            raise ValueError("請輸入有效的醫師卡號。")
         query = {"start": start.isoformat(), "end": end.isoformat(), "department": department.strip().upper(),
-                 "doctor_card": self.app.username}
+                 "doctor_card": doctor_card.strip()}
         self.db.save("preferences", {"id": KIND, "query": query})
-        return {**task, **query, "name": f"手術排程 · {query['start']} ～ {query['end']}"}
+        return {**task, **query, "name": f"手術排程 · {query['doctor_card']} · {query['start']} ～ {query['end']}"}
 
     def execute(self, state, task):
         state.check_cancel()
@@ -82,10 +83,10 @@ class SurgerySchedule:
         old = self.db.item(task["id"], "schedule")
         if old and old.get("status") == "ready":
             return
-        self.app.review.report(state, task, stage="正在查詢登入帳號的手術排程")
+        self.app.review.report(state, task, stage=f"正在查詢 {task['doctor_card']} 的手術排程")
         with self.app.sdk_factory(self.app.settings) as sdk:
             records = clean(sdk.surgery.get_schedule(
-                self.app.username, date.fromisoformat(task["start"]), date.fromisoformat(task["end"]),
+                task["doctor_card"], date.fromisoformat(task["start"]), date.fromisoformat(task["end"]),
                 department=task["department"]))
         state.check_cancel()
         if not isinstance(records, list) or any(not isinstance(r, dict) or
@@ -122,4 +123,5 @@ class SurgerySchedule:
             result = {**result, "rows": schedule_rows(snapshot["records"], result["doctor_card"], day)}
         preferences = self.db.get("preferences", KIND, required=False)
         return {"today": day, "defaults": default_range(), "doctor_card": self.app.username,
-                "query": preferences["query"] if preferences else default_range(), "result": result, "tasks": tasks}
+                "query": {"doctor_card": self.app.username, **(preferences["query"] if preferences else default_range())},
+                "result": result, "tasks": tasks}

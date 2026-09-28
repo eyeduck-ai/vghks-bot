@@ -7,12 +7,15 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from vghks_sdk import LoginRejectedError, ParseError
+from vghks_sdk import LoginRejectedError, ParseError, RequestError
+from vghks_sdk.adapters.prq import PrqAdapter
 from vghks_sdk.core.errors import error_info
 from vghks_sdk.parsing.documents import parse_document
+from vghks_sdk.services.records import RecordsService
 
 from opd_monitor.analysis_fetch import clean
 from opd_monitor.bot import BotApplication
+from opd_monitor.bot_gateway import AccountGateway
 from opd_monitor.clinical_identity import doctor_identity, verified_visit_cases
 from opd_monitor.monitoring import interval
 from opd_monitor.selftest_bot import BotSyntheticSDK, wait_task
@@ -26,20 +29,35 @@ class ContextTests(unittest.TestCase):
             self.assertEqual(doctor_identity(original), expected)
         self.assertNotEqual(doctor_identity("AB42B"), doctor_identity("AB420"))
 
-    def runtime(self, headers, indices):
+    def runtime(self, headers, indices, context_html="", review_response=None):
         calls = []
         headers, indices = iter(headers), iter(indices)
         def request(spec, url, **kwargs):
             calls.append(url.rsplit("/", 1)[-1])
             if url.endswith("QueryPatientRecord.do"):
-                return '<frameset><frame src="/Page/JSP/KS_Patient.jsp"><frame src="/QueryCaseList.do"></frameset>'
+                return context_html or '<frameset><frame src="/Page/JSP/KS_Patient.jsp"><frame src="/QueryCaseList.do"></frameset>'
+            if url.endswith("EMRProcess.do"):
+                runtime.operation_write_attempted = True
+                runtime.review_payload = kwargs["data"]
+                return (review_response if review_response is not None else
+                    '<frameset><frame src="/Page/JSP/KS_Patient.jsp"><frame src="/QueryCaseList.do"></frameset>')
             if url.endswith("KS_Patient.jsp"):
                 return '<span id="pHistno">' + next(headers) + '</span>'
             return next(indices)
         runtime = SimpleNamespace(settings=SimpleNamespace(prq_base_url="https://synthetic.invalid/prq"),
             auth=SimpleNamespace(hid_for=lambda _: "SECRET_AUTH"), request_text=request,
-            execute=lambda spec, operation, **kw: operation())
-        return SimpleNamespace(_runtime=runtime), calls
+            execute=lambda spec, operation, **kw: operation(), operation_write_attempted=False)
+        return SimpleNamespace(_runtime=runtime, records=RecordsService(PrqAdapter(runtime))), calls
+
+    def review_form(self):
+        hidden = {"reqCode": "saveAccessCause", "value(status)": "01",
+            "value(smr_hid)": "SECRET_AUTH", "value(smr_hhisnum)": "TEST001",
+            "value(smr_Flg)": "Case1", "value(inCaseFlg)": "N",
+            "value(bgnDt)": "2026-01-01", "value(endDt)": "2026-12-31",
+            "value(causeOther1)": ""}
+        return ('<form id="addForm" method="post" action="../../../EMRProcess.do">'
+            + ''.join(f'<input type="hidden" name="{key}" value="{value}">' for key, value in hidden.items())
+            + '<input type="checkbox" name="valueA(cause)" value="1A">了解病情</form>')
 
     def index(self, mrn):
         return '<div id="typeO"></div><script>var url="QueryCaseDetail.do?hhisnum=' + mrn + '&amp;caseDT=2026-09-21&amp;caseType=O&amp;caseNo=1&amp;caseSec=70";</script>'
@@ -54,6 +72,45 @@ class ContextTests(unittest.TestCase):
         self.assertEqual(records[0]["attempts"][0]["phase"], "visit_index")
         self.assertEqual(records[0]["attempts"][0]["returned_mrns"], ["TEST002"])
         self.assertNotIn("SECRET_AUTH", json.dumps(records))
+
+    def test_visit_context_uses_sdk_review_once_before_patient_check(self):
+        sdk, calls = self.runtime(["TEST001"], [self.index("TEST001")], self.review_form())
+        cases = verified_visit_cases(sdk, "TEST001")
+        self.assertEqual(len(cases), 1)
+        self.assertEqual(calls, ["QueryPatientRecord.do", "EMRProcess.do", "KS_Patient.jsp", "QueryCaseList.do"])
+        self.assertEqual(dict(sdk._runtime.review_payload)["valueA(cause)"], "1A")
+
+    def test_visit_patient_mismatch_after_review_never_submits_again(self):
+        sdk, calls = self.runtime(["TEST002"], [], self.review_form())
+        with self.assertRaises(ParseError):
+            verified_visit_cases(sdk, "TEST001")
+        self.assertEqual(calls.count("QueryPatientRecord.do"), 1)
+        self.assertEqual(calls.count("EMRProcess.do"), 1)
+        self.assertNotIn("QueryCaseList.do", calls)
+
+    def test_visit_review_without_medical_reason_stops_before_submission(self):
+        form = self.review_form().replace('value="1A"', 'value="2B"')
+        sdk, calls = self.runtime([], [], form)
+        with self.assertRaises(Exception) as error:
+            verified_visit_cases(sdk, "TEST001")
+        self.assertEqual(error_info(error.exception).code, "PRQ_ACCESS_REVIEW_REQUIRED")
+        self.assertEqual(calls, ["QueryPatientRecord.do"])
+
+    def test_visit_review_uncertain_response_never_submits_twice(self):
+        sdk, calls = self.runtime([], [], self.review_form(), review_response="<html>unknown</html>")
+        with self.assertRaises(Exception) as error:
+            verified_visit_cases(sdk, "TEST001")
+        self.assertEqual(error_info(error.exception).code, "PRQ_ACCESS_REVIEW_NOT_ACCEPTED")
+        self.assertEqual(calls, ["QueryPatientRecord.do", "EMRProcess.do"])
+
+    def test_gateway_does_not_replay_prq_calls_with_conditional_review(self):
+        failure = RequestError("synthetic connection loss")
+        self.assertFalse(AccountGateway._can_recover("records", "get_visit_cases", failure,
+                                                      sdk_managed_prq=True))
+        self.assertFalse(AccountGateway._can_recover("orders", "get_order_history", failure,
+                                                      sdk_managed_prq=True))
+        self.assertTrue(AccountGateway._can_recover("records", "get_visit_cases", failure))
+        self.assertTrue(AccountGateway._can_recover("patients", "get_registration_history", failure))
 
     def test_wrong_header_never_reads_index_and_stops_after_two_attempts(self):
         sdk, calls = self.runtime(["TEST002", "TEST002"], [])
@@ -83,6 +140,15 @@ class ContextTests(unittest.TestCase):
         self.assertEqual(cases[0].doctor_name, "測試醫師")
         self.assertEqual(calls.count("QueryPatientRecord.do"), 1)
         self.assertFalse(diagnostics)
+
+    def test_verified_patient_header_accepts_active_linked_old_mrn(self):
+        page = ('<div id="typeO"></div><script>new KSCase('
+            '"QueryCaseDetail.do?hhisnum=OLD001&caseDT=2026-09-21&caseType=O&caseNo=1&caseSec=70",'
+            '"2026-09-21", type, section, "測試醫師");</script>')
+        sdk, calls = self.runtime(["TEST001"], [page])
+        cases = verified_visit_cases(sdk, "TEST001")
+        self.assertEqual([(c.mrn, c.patient_mrn) for c in cases], [("OLD001", "TEST001")])
+        self.assertEqual(calls.count("QueryPatientRecord.do"), 1)
 
     def test_sdk_unknown_branch_remains_an_error_not_an_empty_history(self):
         page = ('<div id="typeO"></div><script>if (runtimeFlag) {new KSCase('
@@ -142,7 +208,10 @@ class WorkspaceRegressions(unittest.TestCase):
         self.assertFalse(requested.mrn or requested.start_date or requested.verify_code)
         self.assertEqual(self.work.approvals.cases()["total"], 3)
         self.assertFalse(any(c[1] == "review-detail" for c in BotSyntheticSDK.calls))
-        self.assertTrue(all("case" not in i and i["version"] for i in task["items"]))
+        list_items = [i for i in task["items"] if "version" in i]
+        self.assertEqual(len(list_items), 3)
+        self.assertTrue(all("case" not in i and i["version"] for i in list_items))
+        self.assertEqual(len([i for i in task["items"] if "order_names" in i]), 3)
         before = list(BotSyntheticSDK.calls)
         self.assertEqual(self.work.approvals.cases({"decision": "1"})["total"], 1)
         self.assertEqual(BotSyntheticSDK.calls, before)
@@ -227,7 +296,7 @@ class WorkspaceRegressions(unittest.TestCase):
                 return original("TEST002")
             return original(mrn)
         with patch.object(records, "get_visit_cases", wrong):
-            failed = self.task(set_id=group["id"], department_confirmed=True)
+            failed = self.task(set_id=group["id"])
         self.assertEqual(failed["status"], "partial")
         item = next(i for i in failed["items"] if i["mrn"] == "TEST001")
         self.assertEqual(item["code"], "PRQ_CASE_PATIENT_MISMATCH")

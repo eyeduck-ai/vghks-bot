@@ -62,9 +62,16 @@ class BotHandler(Handler):
         url = urlsplit(self.path)
         assets = {"/": ("bot.html", "text/html; charset=utf-8"),
                   "/bot.js": ("bot.js", "text/javascript; charset=utf-8"),
+                  "/review-history.js": ("review-history.js", "text/javascript; charset=utf-8"),
+                  "/scan-browser.js": ("scan-browser.js", "text/javascript; charset=utf-8"),
+                  "/file-compare.js": ("file-compare.js", "text/javascript; charset=utf-8"),
+                  "/file-compare.css": ("file-compare.css", "text/css; charset=utf-8"),
+                  "/adaptive-identifiers.js": ("adaptive-identifiers.js", "text/javascript; charset=utf-8"),
+                  "/review-notes.js": ("review-notes.js", "text/javascript; charset=utf-8"),
                   "/soap-view.js": ("soap-view.js", "text/javascript; charset=utf-8"),
                   "/bot.css": ("bot.css", "text/css; charset=utf-8"),
                   "/choices.js": ("choices.js", "text/javascript; charset=utf-8"),
+                  "/dialog-dismiss.js": ("dialog-dismiss.js", "text/javascript; charset=utf-8"),
                   "/choices.css": ("choices.css", "text/css; charset=utf-8"),
                   "/databases.js": ("databases.js", "text/javascript; charset=utf-8"),
                   "/approvals.js": ("approvals.js", "text/javascript; charset=utf-8"),
@@ -77,6 +84,11 @@ class BotHandler(Handler):
                   "/progress.css": ("progress.css", "text/css; charset=utf-8"),
                   "/tool-bridge.js": ("tool-bridge.js", "text/javascript; charset=utf-8"),
                   "/tools": ("index.html", "text/html; charset=utf-8")}
+        assets.update({
+            f"/review-{name}.svg": (f"review-{name}.svg", "image/svg+xml")
+            for name in ("report-current", "report-history", "orders-current", "orders-history",
+                         "visits-history", "registration-records", "tag-add", "note-add", "scan-current")
+        })
         if url.path in assets:
             name, mime = assets[url.path]
             self.reply(200, (STATIC / name).read_bytes(), mime=mime)
@@ -102,10 +114,12 @@ class BotHandler(Handler):
             params = {k: v[0] for k, v in parse_qs(url.query).items()}
             if path == "/api/workbench":
                 self.reply(200, {"sets": workspace.review.db.all("set"), "tasks": workspace.review.db.all("task"),
+                    "sdk_sessions": workspace.review.db.sdk_sessions(),
                     "preferences": workspace.review.preferences(), "categories": workspace.settings.public()["categories"],
                     "approval_counts": workspace.approvals.tracker.overview()["counts"],
                     "approval_monitor_enabled": workspace.approvals.tracker.preferences().get("enabled", True),
-                    "draft": workspace.review.db.get("draft", "current", required=False), "online": workspace.gateway.online})
+                    "draft": workspace.review.db.get("draft", "current", required=False), "online": workspace.gateway.online,
+                    "offline_mode": workspace.offline_mode, "recovery_count": workspace.gateway.recovery_count})
             elif path == "/api/tasks/detail":
                 self.reply(200, workspace.review.task(params.get("id")))
             else:
@@ -151,12 +165,12 @@ class BotHandler(Handler):
                 if self.server.database_manager and self.headers.get("X-Database-Context") != root.context_token:
                     raise ValueError("資料庫已切換，請重新載入頁面。")
                 readonly_routes = {"/api/lists", "/api/library/search", "/api/library/record", "/api/patient-tags/search",
-                    "/api/reviews/results", "/api/extensions/read", "/api/analysis/results", "/api/analysis/raw",
+                    "/api/reviews/results", "/api/reviews/history/read", "/api/reviews/notes/read", "/api/extensions/read", "/api/analysis/results", "/api/analysis/raw",
                     "/api/analysis/google", "/api/analysis/surgery/candidates", "/api/analysis/surgery/history",
                     "/api/approvals/overview", "/api/approvals/results", "/api/approvals/detail", "/api/approvals/tracking",
                     "/api/earnings/overview", "/api/earnings/detail", "/api/earnings/export",
                     "/api/approvals/cases", "/api/approvals/sync-history", "/api/approvals/history",
-                    "/api/reviews/diagnostics", "/api/reviews/scope", "/api/tools/state", "/api/surgery/overview"}
+                    "/api/reviews/diagnostics", "/api/tools/state", "/api/surgery/overview"}
                 if root.read_only and local not in readonly_routes:
                     raise ValueError("目前是唯讀檢閱；請建立可編輯副本後操作。")
                 if local == "/api/surgery/overview":
@@ -189,9 +203,10 @@ class BotHandler(Handler):
                              "/api/analysis/surgery/apply", "/api/analysis/surgery/check"} and not workspace.gateway.online:
                     raise ValueError("請先登入此帳號，再使用網路功能。")
                 custom = {"/api/sets/save", "/api/sets/delete", "/api/sets/cohort", "/api/draft/save",
-                          "/api/tasks/start", "/api/tasks/stop", "/api/reviews/results", "/api/reviews/reclassify",
+                          "/api/tasks/start", "/api/tasks/stop", "/api/reviews/results", "/api/reviews/history/read",
+                          "/api/reviews/notes/read", "/api/reviews/notes/save", "/api/reviews/reclassify",
                           "/api/reviews/preferences", "/api/accounts/save", "/api/extensions/read"}
-                custom |= {"/api/reviews/diagnostics", "/api/reviews/scope", "/api/tools/state", "/api/tools/state/save"}
+                custom |= {"/api/reviews/diagnostics", "/api/tools/state", "/api/tools/state/save"}
                 if local in {"/api/accounts/delete", "/api/shutdown", "/api/session"}:
                     raise ValueError("此操作需使用帳號入口。")
                 if local not in custom:
@@ -201,8 +216,6 @@ class BotHandler(Handler):
                 review = workspace.review
                 if local == "/api/reviews/diagnostics":
                     result = workspace.diagnostics.query(values)
-                elif local == "/api/reviews/scope":
-                    result = review.scope(values)
                 elif local == "/api/tools/state":
                     result = review.db.get("draft", "tools", required=False) or {"modules": {}}
                 elif local == "/api/tools/state/save":
@@ -227,6 +240,12 @@ class BotHandler(Handler):
                     result = review.stop(values.get("id"))
                 elif local == "/api/reviews/results":
                     result = review.results(values)
+                elif local == "/api/reviews/history/read":
+                    result = review.history.read(values)
+                elif local == "/api/reviews/notes/read":
+                    result = review.read_notes(values)
+                elif local == "/api/reviews/notes/save":
+                    result = review.save_note(values)
                 elif local == "/api/reviews/reclassify":
                     result = review.reclassify(values.get("id"))
                 elif local == "/api/reviews/preferences":
@@ -249,7 +268,7 @@ class BotHandler(Handler):
                 self.reply(200, result)
                 return
             values = self.read_json()
-            if root.read_only and path not in {"/api/session", "/api/accounts/offline", "/api/shutdown"}:
+            if root.read_only and path not in {"/api/session", "/api/accounts/activate", "/api/accounts/offline", "/api/shutdown"}:
                 raise ValueError("目前是唯讀檢閱；請建立可編輯副本後操作。")
             if path == "/api/session":
                 token = values.get("token")
@@ -259,6 +278,8 @@ class BotHandler(Handler):
                 self.reply(200, {"ok": True}, cookie=f"opd_session={root.session_token}; HttpOnly; SameSite=Strict; Path=/")
             elif path == "/api/accounts/login":
                 self.reply(200, root.login(values))
+            elif path == "/api/accounts/activate":
+                self.reply(200, root.activate(values.get("id")))
             elif path == "/api/accounts/offline":
                 self.reply(200, root.offline(values.get("id")))
             elif path == "/api/accounts/logout":

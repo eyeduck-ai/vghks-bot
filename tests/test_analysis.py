@@ -1,6 +1,7 @@
 import copy
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -199,6 +200,16 @@ class AnalysisTests(unittest.TestCase):
             run = self.run_analysis(force=True)
             self.assertEqual(run["status"], "partial")
         self.assertFalse(any("FOREIGN" in call for call in ExamSDK.calls))
+
+    def test_linked_old_mrn_is_backfilled_under_the_queried_patient(self):
+        original = ExamSDK.visits
+        def linked(sdk, mrn):
+            return [replace(case, mrn="OLD0001", lookup_mrn=mrn) if case.case_no == "OLD" else case
+                    for case in original(sdk, mrn)]
+        with patch.object(ExamSDK, "visits", linked):
+            run = self.run_analysis()
+        self.assertEqual(run["status"], "completed", run["issues"])
+        self.assertIn(("case_numeric", "OLD0001", "2010-01-01"), ExamSDK.calls)
 
     def test_account_change_on_resume_reuses_successful_downloads(self):
         ExamSDK.fail_pdf = True
@@ -427,6 +438,24 @@ class SheetPlannerTests(unittest.TestCase):
 
 
 class NumericTests(unittest.TestCase):
+    def test_sdk_column_paths_keep_eye_order_and_unaligned_tables_raw(self):
+        report = {"case": {"visit_date": "2026-09-01"}, "tables": [{
+            "title": "Va", "headers": ["日期", "Va", "OS", "OD"],
+            "header_rows": [["日期", "Va"], ["OS", "OD"]],
+            "column_paths": [["日期"], ["Va", "OS"], ["Va", "OD"]],
+            "rows": [["115/9/1", "error", "0.7"], ["115/9/1", "", "0.8"]],
+            "parsing_issues": ["NUMERIC_HEADER_SPAN_MISMATCH"],
+        }]}
+        rows = extract_tables(report, "case")
+        self.assertEqual(rows[0]["headers"], ["日期", "Va / OS", "Va / OD"])
+        self.assertEqual([(c["side"], c["raw"]) for c in rows[0]["cells"]],
+                         [("OS", "error"), ("OD", "0.7")])
+        self.assertEqual([(c["side"], c["raw"]) for c in rows[1]["cells"]], [("OD", "0.8")])
+        report["tables"][0]["column_paths"] = []
+        unaligned = extract_tables(report, "case")
+        self.assertTrue(all(row["unparsed"] and not row["cells"] for row in unaligned))
+        self.assertEqual(unaligned[0]["values"], ["115/9/1", "error", "0.7"])
+
     def test_explicit_units_eye_date_and_unparseable_values(self):
         report = {
             "tables": [

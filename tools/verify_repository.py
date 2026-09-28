@@ -38,7 +38,7 @@ def check_paths(paths):
     for name in paths:
         path = PurePosixPath(name.lower())
         if (any(part in forbidden for part in path.parts) or path.suffix in
-                {".sqlite", ".sqlite3", ".db", ".exe", ".pem", ".key", ".p12", ".pfx", ".log"}
+                {".sqlite", ".sqlite3", ".db", ".exe", ".pem", ".key", ".p12", ".pfx", ".log", ".har", ".jsonl", ".zip"}
                 or re.search(r"\.(?:db|sqlite3?)-", path.name)
                 or path.name == ".env" or path.name.startswith(".env.") and path.name != ".env.example"
                 or re.match(r"(?:credentials|service[-_]account|client_secret).*\.json$", path.name)):

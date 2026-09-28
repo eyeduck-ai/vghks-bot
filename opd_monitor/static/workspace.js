@@ -64,7 +64,7 @@ let knownPatientRows = new Set();
 
 function visiblePatients() {
   const query = $("#listSearch").value.trim().toLocaleLowerCase();
-  return (listing?.days.flatMap(day => day.rows) || []).filter(row => !query || [row.name,row.mrn,row.sex,row.age,row.section_code,row.room,row.day].join(" ").toLocaleLowerCase().includes(query));
+  return (listing?.days.flatMap(day => day.rows) || []).filter(row => !query || [row.name,row.mrn,row.sequence_no,row.sex,row.age,row.section_code,row.room,row.day].join(" ").toLocaleLowerCase().includes(query));
 }
 
 function renderPatientList() {
@@ -72,7 +72,7 @@ function renderPatientList() {
   const nodes = rows.map(row => {
     const tr = el("tr"), selectCell = el("td"), checkbox = el("input");
     checkbox.type = "checkbox"; checkbox.checked = selectedPatients.has(rowKey(row)); checkbox.disabled = !row.eligible;
-    checkbox.setAttribute("aria-label", `選取 ${row.name || row.mrn} ${row.day}`);
+    checkbox.setAttribute("aria-label", `選取 ${row.name || row.mrn} ${row.day} 掛號序號 ${row.sequence_no || "未提供"}`);
     checkbox.addEventListener("change", () => {
       if (checkbox.checked) selectedPatients.add(rowKey(row)); else selectedPatients.delete(rowKey(row));
       updatePatientSelection();
@@ -83,7 +83,7 @@ function renderPatientList() {
     const saved = el("td");
     if (row.record_ids.length) saved.append(button(`${row.status} · ${row.record_ids.length} 筆`, () => action(() => openSavedRecord(row.record_ids[0])), "quiet-button"));
     else saved.append(el("span", row.status, row.saved ? "muted" : ""));
-    tr.append(selectCell,el("td",row.day),patient,el("td",[row.sex,row.age].filter(Boolean).join(" / ")),el("td",[row.section_code,row.room].filter(Boolean).join(" / ")),saved);
+    tr.append(selectCell,el("td",row.day),el("td",row.sequence_no || "—"),patient,el("td",[row.sex,row.age].filter(Boolean).join(" / ")),el("td",[row.section_code,row.room].filter(Boolean).join(" / ")),saved);
     return tr;
   });
   $("#patientRows").replaceChildren(...nodes);
@@ -265,7 +265,8 @@ async function refreshWorkspace() {
   const busy = history.filter(r => active.has(r.status));
   $("#activeJobs").replaceChildren(...busy.map(run => {
     const node = el("div", undefined, "running-job");
-    node.append(el("span", `${accountLabel(run)} · ${run.kind === "list" ? "門診清單" : "SOAP"} · ${run.message}`),button("明細", () => action(() => selectRun(run.id))),button("停止", () => action(async () => { await api("/api/stop",{id:run.id}); await refresh(); })));
+    const summary=el("span", `${accountLabel(run)} · ${run.kind === "list" ? "門診清單" : "SOAP"} · ${run.message}`);summary.title=summary.textContent;
+    node.append(summary,button("明細", () => action(() => selectRun(run.id))),button("停止", () => action(async () => { await api("/api/stop",{id:run.id}); await refresh(); })));
     node.append(JobProgress.create(run));return node;
   }));
   updatePatientSelection(); updateRecordSelection();

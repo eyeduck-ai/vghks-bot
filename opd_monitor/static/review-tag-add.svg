@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" fill="none">
+  <title>加入 Tag</title>
+  <defs>
+    <linearGradient id="tag-add-ink" x1="290" y1="230" x2="1000" y2="1030" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FAA314"/><stop offset="1" stop-color="#F59C0A"/>
+    </linearGradient>
+    <linearGradient id="tag-add-paper" x1="330" y1="280" x2="850" y2="1000" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF"/><stop offset="1" stop-color="#FDFDFE"/>
+    </linearGradient>
+    <linearGradient id="tag-add-light" x1="400" y1="320" x2="970" y2="1040" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFF1C9"/><stop offset="1" stop-color="#FFE7AB"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(-13.2413793 -13.2413793) scale(.2206896552)">
+  <g stroke="url(#tag-add-ink)" stroke-linejoin="round">
+    <path d="M319 243H608Q634 243 653 262L982 591Q1014 623 982 654L653 978Q622 1008 592 978L261 646Q243 628 243 602V319Q243 243 319 243Z" fill="url(#tag-add-paper)" stroke-width="61"/>
+    <circle cx="420" cy="423" r="70" fill="url(#tag-add-paper)" stroke-width="54"/>
+    <circle cx="831" cy="827" r="211" fill="url(#tag-add-paper)" stroke-width="50"/>
+  </g>
+  <path d="M821 706H844Q870 706 870 732V791H931Q957 791 957 817V838Q957 865 931 865H870V922Q870 949 844 949H821Q795 949 795 923V865H734Q707 865 707 839V817Q707 791 734 791H795V732Q795 706 821 706Z" fill="url(#tag-add-ink)"/>
+  </g>
+</svg>

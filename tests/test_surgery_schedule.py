@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from vghks_sdk import ParseError
-from vghks_sdk.models import SurgeryRecord
+from vghks_sdk.models import SurgeryRecord, SurgeryScheduleProcedure
 
 from opd_monitor.bot import BotApplication
 from opd_monitor.bot_server import BotServer
@@ -53,6 +53,7 @@ class SurgeryScheduleTests(unittest.TestCase):
         self.assertEqual(view["result"]["rows"][0]["name"], "合成病人2")
         self.assertEqual(BotSyntheticSDK.calls[0][2], "AB42")
         self.assertEqual(BotSyntheticSDK.calls[0][-1], {"department": "OPH"})
+        self.assertEqual(view["query"]["doctor_card"], "AB42")
         self.app.close()
         self.app = BotApplication(Settings(), self.path, BotSyntheticSDK)
         self.app.offline(self.key)
@@ -61,6 +62,26 @@ class SurgeryScheduleTests(unittest.TestCase):
         self.assertEqual(len(BotSyntheticSDK.calls), 1)
         with self.assertRaises(ValueError):
             self.work.review.start({"kind": "surgery_schedule"})
+
+    def test_other_physician_card_is_queried_and_saved_under_current_account(self):
+        task = self.fetch(doctor_card=" CD99 ")
+        self.assertEqual(task["status"], "completed")
+        self.assertEqual(task["doctor_card"], "CD99")
+        self.assertEqual(BotSyntheticSDK.calls[0][:3], ("AB42", "surgery-schedule", "CD99"))
+        view = self.work.surgery_schedule.overview()
+        self.assertEqual(view["query"]["doctor_card"], "CD99")
+        self.assertEqual(view["result"]["doctor_card"], "CD99")
+        self.assertEqual({row["doctor_card"] for row in view["result"]["rows"]}, {"CD99"})
+        self.assertEqual({row["group"] for row in view["result"]["rows"]}, {"upcoming"})
+        other = self.app.login({"username": "SECOND", "password": "synthetic"})["account"]["id"]
+        self.assertIsNone(self.app.workspace(other).surgery_schedule.overview()["result"])
+        self.app.close()
+        self.app = BotApplication(Settings(), self.path, BotSyntheticSDK)
+        self.app.offline(self.key)
+        self.work = self.app.workspace(self.key)
+        self.assertEqual(self.work.surgery_schedule.overview()["result"], view["result"])
+        self.assertEqual(self.work.surgery_schedule.overview()["query"]["doctor_card"], "CD99")
+        self.assertEqual(len([call for call in BotSyntheticSDK.calls if call[1] == "surgery-schedule"]), 1)
 
     def test_past_and_cancelled_rows_are_retained_and_same_content_is_shared(self):
         start, end = (today()-timedelta(days=10)).isoformat(), (today()+timedelta(days=15)).isoformat()
@@ -107,7 +128,8 @@ class SurgeryScheduleTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             other_work.surgery_schedule.overview({"task_id": task["id"]})
         for options in ({"start": "bad"}, {"start": "2026-11-02", "end": "2026-10-01"},
-                        {"department": "<script>"}, {"department": None}, {"doctor_card": "OTHER"}):
+                        {"department": "<script>"}, {"department": None}, {"doctor_card": ""},
+                        {"doctor_card": None}, {"doctor_card": "<script>"}, {"doctor_card": "X"*33}):
             with self.assertRaises(ValueError):
                 self.work.review.start({"kind": "surgery_schedule", **options})
         self.app.read_only = True
@@ -142,6 +164,25 @@ class SurgeryScheduleTests(unittest.TestCase):
         self.assertEqual([r["group"] for r in rows], ["upcoming", "past", "unconfirmed", "unconfirmed", "upcoming"])
         self.assertEqual(len(rows), 5)
         self.assertEqual(rows[0]["raw_date"], "1150924")
+
+    def test_new_sdk_schedule_fields_survive_fetch_and_typed_name_takes_priority(self):
+        record = SurgeryRecord(patient_mrn="00000001", case_no="CASE", surgery_date=today().isoformat(),
+            room="OR-2", doctor_card="AB42", doctor_name="合成醫師", procedure="第一術式", status="31",
+            extra={"orpatnam": "舊欄位姓名"}, patient_name="正式姓名", patient_sex="女", ward="OPD",
+            department="OPH", anesthesia="GA", category="常規", schedule_time="TF1",
+            time_status="UNCONFIRMED", request_no="REQ-1", sequence_no="2", case_type="O",
+            internal_room_code="INNER-2", procedures=(SurgeryScheduleProcedure(1, "P1", "第一術式"),),
+            diagnosis_codes=("H26",), diagnosis_text="來源診斷")
+        with patch.object(self.work.gateway.connection.surgery, "get_schedule", return_value=[record]):
+            self.assertEqual(self.fetch()["status"], "completed")
+        row = self.work.surgery_schedule.overview()["result"]["rows"][0]
+        self.assertEqual(row["name"], "正式姓名")
+        self.assertEqual(row["schedule_time"], "TF1")
+        self.assertEqual(row["time_status"], "UNCONFIRMED")
+        self.assertEqual(row["start_time"], "")
+        self.assertEqual(row["request_no"], "REQ-1")
+        self.assertEqual(row["procedures"][0]["code"], "P1")
+        self.assertEqual(row["diagnosis_codes"], ["H26"])
 
     def test_http_guards_local_overview_and_scoped_iframe_policy(self):
         with BotServer(0, self.app) as server:

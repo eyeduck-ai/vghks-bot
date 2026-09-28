@@ -1,4 +1,4 @@
-"""Patient input routing and explicit all-specialty review behavior."""
+"""Patient input routing and simple SOAP department filtering."""
 import tempfile
 import unittest
 from dataclasses import replace
@@ -55,19 +55,49 @@ class ToolExperienceTests(unittest.TestCase):
         self.assertEqual(retried["status"], "completed")
         self.assertEqual(BotSyntheticSDK.calls.count(("TEST", "profile", "00012345")), before)
 
-    def test_all_departments_uses_newest_outpatient_without_confirmation(self):
+    def test_manual_batch_can_review_without_registration_source(self):
+        resolved = self.resolve("000101 000102")
+        self.assertEqual(resolved["status"], "completed")
+        group = self.work.review.save_set({"mrns": "000101\n000102"})
+        self.assertEqual([member["mrn"] for member in group["members"]], ["000101", "000102"])
+        self.assertTrue(all(not member["registrations"] for member in group["members"]))
+        task = wait_task(self.work, self.work.review.start({
+            "set_id": group["id"], "mode": "latest", "department_keywords": ["眼科"],
+        })["task_id"])
+        self.assertEqual(task["status"], "completed")
+        self.assertEqual([item["mrn"] for item in task["items"]], ["000101", "000102"])
+        self.assertTrue(all(item["records"] for item in task["items"]))
+
+    def test_edited_selection_preserves_source_members_without_changing_saved_set(self):
+        group = self.group()
+        member = group["members"][0]
+        member["registrations"] = [{"visit_date": today().isoformat(), "section_name": "眼科", "sequence_no": "007"}]
+        member["source_records"] = ["saved-record"]
+        self.work.review.db.save("set", group)
+        self.resolve("000101")
+        edited = self.work.review.save_set({
+            "source_set_id": group["id"], "mrns": "00012345\n000101", "name": "本次選取",
+        })
+        self.assertNotEqual(edited["id"], group["id"])
+        self.assertEqual([row["mrn"] for row in edited["members"]], ["00012345", "000101"])
+        self.assertEqual(edited["members"][0]["registrations"][0]["sequence_no"], "007")
+        self.assertEqual(edited["members"][0]["source_records"], ["saved-record"])
+        self.assertEqual(len(self.work.review.db.get("set", group["id"])["members"]), 1)
+        other = self.app.login({"username": "SECOND", "password": "synthetic"})["account"]["id"]
+        with self.assertRaises(ValueError):
+            self.app.workspace(other).review.save_set({"source_set_id": group["id"], "mrns": "00012345"})
+
+    def test_custom_keyword_uses_newest_matching_outpatient_without_confirmation(self):
         group = self.group()
         group["members"][0]["registrations"] = [{"visit_date": today().isoformat(), "section_code": "", "section_name": "unknown"}]
         self.work.review.db.save("set", group)
-        self.assertTrue(self.work.review.scope({"set_id": group["id"]})["needs_confirmation"])
-        options = {"set_id": group["id"], "department_filter": "all"}
-        self.assertFalse(self.work.review.scope(options)["needs_confirmation"])
+        options = {"set_id": group["id"], "department_keyword": "內科"}
         task = wait_task(self.work, self.work.review.start(options)["task_id"])
-        self.assertEqual(task["department_filter"], "all")
+        self.assertEqual(task["department_keyword"], "內科")
         self.assertEqual([r["case_no"] for r in task["items"][0]["records"]], ["OTHER"])
         self.assertEqual(task["items"][0]["records"][0]["section"], "內科")
 
-    def test_all_departments_keeps_same_day_records_but_excludes_inpatient_and_future(self):
+    def test_keyword_excludes_missing_department_inpatient_and_future(self):
         group = self.group()
         original = self.work.gateway.connection.records.get_visit_cases
 
@@ -79,34 +109,52 @@ class ToolExperienceTests(unittest.TestCase):
                     replace(other, case_no="FUTURE", visit_date=today()+timedelta(days=1))]
 
         with patch.object(self.work.gateway.connection.records, "get_visit_cases", side_effect=visits):
-            task = wait_task(self.work, self.work.review.start({"set_id": group["id"], "department_filter": "all"})["task_id"])
-        self.assertEqual({r["case_no"] for r in task["items"][0]["records"]}, {"OTHER", "NO_SECTION"})
+            task = wait_task(self.work, self.work.review.start({"set_id": group["id"], "department_keyword": "內科"})["task_id"])
+        self.assertEqual({r["case_no"] for r in task["items"][0]["records"]}, {"OTHER"})
 
-    def test_all_departments_registration_still_obeys_exact_registration_source(self):
+    def test_registration_obeys_exact_source_and_department_keyword(self):
         group = self.group()
         group["members"][0]["registrations"] = [{"visit_date": (today()-timedelta(days=1)).isoformat(), "section_code": "70", "section_name": "眼科"}]
         self.work.review.db.save("set", group)
-        task = wait_task(self.work, self.work.review.start({"set_id": group["id"], "mode": "registration", "department_filter": "all"})["task_id"])
+        task = wait_task(self.work, self.work.review.start({"set_id": group["id"], "mode": "registration", "department_keyword": "眼科"})["task_id"])
         self.assertEqual({r["case_no"] for r in task["items"][0]["records"]}, {"ONE", "TWO"})
+        other = wait_task(self.work, self.work.review.start({"set_id": group["id"], "mode": "registration", "department_keyword": "內科"})["task_id"])
+        self.assertEqual(other["items"][0]["records"], [])
 
-    def test_invalid_scope_is_rejected_and_another_account_cannot_use_the_set(self):
+    def test_legacy_group_task_resumes_with_its_saved_department_scope(self):
         group = self.group()
-        for value in ("unknown", None, True, [], {}):
+        BotSyntheticSDK.fail_case = "ONE"
+        partial = wait_task(self.work, self.work.review.start({"set_id": group["id"]})["task_id"])
+        self.assertEqual(partial["status"], "partial")
+        saved = self.work.review.db.get("task", partial["id"])
+        saved.pop("department_keyword")
+        saved.update(department_filter="same", department={"id": "oph", "name": "眼科", "codes": [],
+            "names": ["眼科上午", "眼科下午", "眼科約診", "眼科"]})
+        self.work.review.db.save("task", saved)
+        self.work.review.preferences({"review_options": {"department_keyword": "內科"}})
+        BotSyntheticSDK.fail_case = ""
+        resumed = wait_task(self.work, self.work.review.start({"resume": partial["id"]})["task_id"])
+        self.assertEqual(resumed["status"], "completed")
+        self.assertEqual({r["case_no"] for r in resumed["items"][0]["records"]}, {"ONE", "TWO"})
+
+    def test_invalid_keyword_is_rejected_and_another_account_cannot_use_the_set(self):
+        group = self.group()
+        for value in ("", " ", None, True, [], {}, "眼科\n內科", "x"*101):
             with self.subTest(value=value), self.assertRaises(ValueError):
-                self.work.review.start({"set_id": group["id"], "department_filter": value})
+                self.work.review.start({"set_id": group["id"], "department_keyword": value})
         other = self.app.login({"username": "SECOND", "password": "synthetic"})["account"]["id"]
         with self.assertRaises(ValueError):
-            self.app.workspace(other).review.start({"set_id": group["id"], "department_filter": "all"})
+            self.app.workspace(other).review.start({"set_id": group["id"], "department_keyword": "眼科"})
 
     def test_review_options_are_saved_per_account_and_validated(self):
         prefs = self.work.review.preferences()
-        options = {"department_filter": "all", "department": "oph", "mode": "latest",
+        options = {"department_keyword": " 內科 ", "mode": "latest",
                    "cutoff_mode": "today", "cutoff": today().isoformat(), "retrieval": "refresh"}
         self.work.review.preferences({**prefs, "review_options": options})
-        self.assertEqual(self.work.review.preferences()["review_options"], options)
-        for invalid in ({"department_filter": []}, {"mode": "unknown"}, {"cutoff_mode": "date", "cutoff": "bad"}):
+        self.assertEqual(self.work.review.preferences()["review_options"], {**options, "department_keyword": "內科"})
+        for invalid in ({"department_keyword": []}, {"mode": "unknown"}, {"cutoff_mode": "date", "cutoff": "bad"}):
             with self.subTest(invalid=invalid), self.assertRaises(ValueError):
                 self.work.review.preferences({**prefs, "review_options": invalid})
         other = self.app.login({"username": "SECOND", "password": "synthetic"})["account"]["id"]
-        self.assertNotIn("review_options", self.app.workspace(other).review.preferences())
-        self.assertEqual(self.work.review.preferences()["review_options"], options)
+        self.assertEqual(self.app.workspace(other).review.preferences()["review_options"]["department_keyword"], "眼科")
+        self.assertEqual(self.work.review.preferences()["review_options"]["department_keyword"], "內科")

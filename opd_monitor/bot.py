@@ -8,6 +8,8 @@ import uuid
 from dataclasses import replace
 from pathlib import Path
 
+from vghks_sdk import LoginRejectedError
+
 from . import __version__
 from .approvals import Approvals
 from .bot_gateway import AccountGateway, NetworkGate
@@ -17,6 +19,7 @@ from .diagnostics import Diagnostics
 from .earnings import Earnings
 from .jobs import Application, BusyError
 from .review import Review
+from .scanned_records import ScanArchive
 from .scanner import create_sdk, safe_failure
 from .settings import Account, credentials, today
 from .storage import StorageError
@@ -33,13 +36,16 @@ class Workspace(Application):
         self.launch_token, self.session_token, self.csrf_token = root.launch_token, root.session_token, root.csrf_token
         self.analysis.sheet_lock = root.sheet_lock
         self.review = Review(self)
+        self.scans = ScanArchive(self)
         self.diagnostics = Diagnostics(self)
         self.gateway.diagnostic = self.diagnostics.save
+        self.gateway.event = self.review.db.sdk_event
         self.gateway.recorder_factory = self.diagnostics.recorder
         self.approvals = Approvals(self)
         self.earnings = Earnings(self)
         self.surgery_schedule = SurgerySchedule(self)
         self.entered = False
+        self.offline_mode = False
 
     def bootstrap(self):
         return {**super().bootstrap(), "context": self.root.context_token, "read_only": self.root.read_only}
@@ -54,6 +60,7 @@ class Workspace(Application):
         account = self.accounts[self.account_id]
         self.accounts[self.account_id] = replace(account, password=password, label=info["label"])
         self.entered = True
+        self.offline_mode = False
 
     def logout(self):
         self.gateway.online = False
@@ -66,6 +73,7 @@ class Workspace(Application):
         self.gateway.close()
         self.accounts[self.account_id] = replace(self.accounts[self.account_id], password="")
         self.entered = False
+        self.offline_mode = False
 
     def delete_records(self, values):
         with self.lock, self.review.lock:
@@ -210,7 +218,8 @@ class BotApplication:
         if old and old["username"] != username:
             raise ValueError("請以新增帳號方式建立其他登入帳號。")
         if not password and key:
-            password = self.registry.password(key)
+            workspace = self.workspaces.get(key)
+            password = (workspace.accounts[key].password if workspace and workspace.entered else "") or self.registry.password(key)
         if not password:
             raise ValueError("請輸入此帳號的院內密碼。")
         label, campus = values.get("label", old["label"] if old else ""), values.get("campus", old["campus"] if old else "高榮")
@@ -239,9 +248,35 @@ class BotApplication:
             raise
         return {"account": {**self.registry.account(key), "online": True}}
 
+    def activate(self, key):
+        """Select an account and restore only its own SDK session when needed."""
+        workspace = self.workspace(key, require_entered=False)
+        if self.read_only:
+            return {**self.offline(key), "status": "offline"}
+        if workspace.gateway.online:
+            workspace.entered = True
+            workspace.offline_mode = False
+            self.registry.preference("last_account", key)
+            return {"account": self.registry.account(key), "online": True, "status": "ready"}
+        password = workspace.accounts[key].password or self.registry.password(key)
+        if not password:
+            return {"account": self.registry.account(key), "online": False, "status": "needs_password"}
+        try:
+            workspace.login(password, self.registry.account(key))
+        except Exception as exc:
+            message, code = safe_failure(exc)
+            status = "needs_password" if isinstance(exc, LoginRejectedError) or code == "PORTAL_LOGIN_HTTP_DENIED" else "unavailable"
+            return {"account": self.registry.account(key), "online": False, "status": status,
+                    "message": message, "error_code": code}
+        self.registry.preference("last_account", key)
+        return {"account": self.registry.account(key), "online": True, "status": "ready"}
+
     def offline(self, key):
         workspace = self.workspace(key, require_entered=False)
+        if workspace.gateway.online:
+            workspace.logout()
         workspace.entered = True
+        workspace.offline_mode = True
         self.registry.preference("last_account", key)
         return {"account": self.registry.account(key), "online": workspace.gateway.online}
 

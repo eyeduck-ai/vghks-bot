@@ -20,6 +20,7 @@ class EncodingTests(unittest.TestCase):
         patients = parse_opd_patients(decoded,visit_date=date(2026,9,19),doctor_card="DOC1")
         self.assertEqual(len(patients),1)
         self.assertEqual((patients[0].name,patients[0].sex,patients[0].age),("測試姓名","女","68歲"))
+        self.assertEqual(patients[0].sequence_no, "1")
 
     def test_utf8_big5_headers_meta_and_overrides(self):
         for header in ("","text/html; charset=iso-8859-1","text/html; charset=utf-8","text/html; charset=big5"):

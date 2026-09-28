@@ -21,6 +21,8 @@ VGHKS-bot-data/
 *.db
 *.db-*
 *.log
+*.har
+*.jsonl
 *.pem
 *.p12
 *.pfx

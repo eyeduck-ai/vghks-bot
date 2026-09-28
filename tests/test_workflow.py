@@ -6,10 +6,10 @@ from datetime import date, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
-from vghks_sdk import SoapRecord
+from vghks_sdk import OutpatientPatient, SoapRecord
 
 from opd_monitor.jobs import Application, BusyError
-from opd_monitor.library import current_cache
+from opd_monitor.library import current_cache, registration_id
 from opd_monitor.selftest import SyntheticSDK
 from opd_monitor.settings import Settings, today
 from opd_monitor.storage import Journal, StorageError
@@ -76,6 +76,23 @@ class WorkflowTests(unittest.TestCase):
         cached = self.browse()
         self.assertEqual(cached["counts"]["days_cached"], 1)
         self.assertEqual(CountingSDK.calls, [])
+
+    def test_outpatient_sequence_is_cached_and_distinguishes_same_patient_registrations(self):
+        def two_registrations(_, card, day):
+            CountingSDK.calls.append(("list", card, str(day)))
+            return [OutpatientPatient("TEST001", "測試病人", day, section_code="70", room="02",
+                doctor_card=card, doctor_label_present=True, sequence_no=number)
+                for number in ("003", "004")]
+
+        with patch.object(CountingSDK, "patients", two_registrations):
+            self.browse()
+        rows = self.rows()
+        self.assertEqual([row["sequence_no"] for row in rows], ["003", "004"])
+        self.assertEqual(len({row["id"] for row in rows}), 2)
+        self.assertEqual([call[0] for call in CountingSDK.calls], ["login", "list"])
+        legacy = dict(rows[0])
+        legacy.pop("sequence_no")
+        self.assertEqual(registration_id(legacy), registration_id({**legacy, "sequence_no": ""}))
 
     def test_future_list_can_select_historical_analysis_but_cannot_fetch_future_soap(self):
         from analysis_fixtures import ExamSDK
