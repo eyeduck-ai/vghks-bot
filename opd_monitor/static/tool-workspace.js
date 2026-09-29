@@ -4,7 +4,9 @@ window.ToolWorkspace=(()=>{
   const retrieval={cache:"重用已存病歷",refresh:"檢查新紀錄",force:"重新下載病歷"};
   let kind="review",states={},drafts={},loaded=false,group=null,generation=0;
   let soapSetup=false,soapTask="",soapSetId="";
-  const lookupErrors=new Map();
+  const lookupErrors=window.PatientTokens.createErrors({
+    container:"toolLookupErrors",onOpen:taskId=>act(()=>openLookupDiagnostics(taskId)),
+  });
   let setupOpen=true,activeTask=null,resultKind="",starting=false;
   let settingsDraft=null;
   const settingValues=()=>({departmentKeyword:$("#departmentKeyword").value,soapMode:$("#soapMode").value,forceReview:$("#forceReview").checked});
@@ -23,7 +25,7 @@ window.ToolWorkspace=(()=>{
   function cancelSettings(){if(settingsDraft){$("#departmentKeyword").value=settingsDraft.departmentKeyword;$("#soapMode").value=settingsDraft.soapMode;$("#forceReview").checked=settingsDraft.forceReview;settingsDraft=null;render();}}
   function reset(){
     generation++;soapSetup=false;soapTask=soapSetId="";$("#toolSoapProgress").replaceChildren();$("#toolLaunchProgress").replaceChildren();
-    kind="review";states={};drafts={};loaded=false;group=null;lookup.reset();lookupErrors.clear();renderLookupErrors();
+    kind="review";states={};drafts={};loaded=false;group=null;lookup.reset();lookupErrors.clear();
     setupOpen=true;activeTask=null;resultKind="";starting=false;
     settingsDraft=null;$("#departmentKeyword").value="眼科";$("#soapMode").value="latest";$("#forceReview").checked=false;
     visibility("patients");
@@ -49,19 +51,10 @@ window.ToolWorkspace=(()=>{
   }
   function addResolved(patient){
     if(!patient.mrn)return;
-    lookupErrors.delete("auto:"+patient.input);renderLookupErrors();
+    lookupErrors.remove("auto:"+patient.input);
     if(group?.members.some(member=>member.mrn===patient.mrn))return;
     editMembers([...(group?.members||[]),{mrn:patient.mrn,name:patient.name||"",sex:patient.sex||"",
       age:patient.age||"",birthday:patient.birthday||"",registrations:[],source_records:[],origins:["manual"]}]);
-  }
-  function renderLookupErrors(){
-    $("#toolLookupErrors").replaceChildren(...[...lookupErrors].map(([key,error])=>{
-      const row=node("div",undefined,"patient-lookup-error");
-      row.append(node("span",error.token+"："+error.message),btn("重試",()=>{
-        lookupErrors.delete(key);renderLookupErrors();lookup.add([error.token],"auto");
-      },"quiet"));
-      return row;
-    }));
   }
   async function ensureSavedGroup(){
     if(!group?.members.length)throw new Error("請先選擇病人。");
@@ -105,7 +98,7 @@ window.ToolWorkspace=(()=>{
     activeTask=null;resultKind="";setupOpen=true;
     group=selectedGroup||drafts[value]||(work.sets||[]).find(s=>s.id===states[value]?.set_id)||null;selectedSet=group;
     if(selectedGroup)delete drafts[value];
-    lookupErrors.clear();renderLookupErrors();$("#toolLaunchProgress").replaceChildren();
+    lookupErrors.clear();$("#toolLaunchProgress").replaceChildren();
     loadOptions();
     if(selectedGroup)await save();if(revision!==generation)return;$("#moduleFrame").removeAttribute("src");showPage("tool");render();
   }
@@ -162,7 +155,7 @@ window.ToolWorkspace=(()=>{
   function renderSaved(){
     const query=$("#toolSavedQuery").value.trim().toLocaleLowerCase(),area=$("#toolSavedSets");
     const groups=(work?.sets||[]).filter(s=>[s.name,...s.members.map(p=>p.mrn)].join(" ").toLocaleLowerCase().includes(query));
-    area.replaceChildren(...groups.map(s=>{const button=btn(s.name,async()=>{generation++;lookup.reset();lookupErrors.clear();renderLookupErrors();await choose(s);$("#toolSavedDialog").close();},"saved-set-option");button.replaceChildren(node("strong",s.name),node("span",s.members.length+" 位 · "+s.members.slice(0,3).map(p=>p.name||p.mrn).join("、"),"caption"));return button;}));
+    area.replaceChildren(...groups.map(s=>{const button=btn(s.name,async()=>{generation++;lookup.reset();lookupErrors.clear();await choose(s);$("#toolSavedDialog").close();},"saved-set-option");button.replaceChildren(node("strong",s.name),node("span",s.members.length+" 位 · "+s.members.slice(0,3).map(p=>p.name||p.mrn).join("、"),"caption"));return button;}));
     if(!groups.length)area.append(node("p","沒有符合的已保存清單","empty"));
   }
   const lookup=window.PatientTokens.create({
@@ -170,7 +163,7 @@ window.ToolWorkspace=(()=>{
     idleLookupMs:700,
     canLookup:()=>!!account&&!!work?.online&&!root.read_only,status:"toolResolveResult",
     onResolved:addResolved,
-    onFailed:(token,message)=>{lookupErrors.set("auto:"+token,{token,message});renderLookupErrors();},
+    onFailed:(token,message,mode,taskId)=>lookupErrors.add(token,message,mode,taskId),
   });
   for(const button of $$("[data-tool]"))button.addEventListener("click",()=>act(()=>button.dataset.tool==="review"?resumeReview():open(button.dataset.tool),button));
   for(const button of $$("[data-use-tool]"))button.addEventListener("click",()=>act(async()=>{await open(button.dataset.useTool,await saveCurrentSet());}));

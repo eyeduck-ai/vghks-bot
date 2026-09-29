@@ -150,12 +150,11 @@ button.review-icon-button.icon-button{width:40px;min-width:40px;min-height:40px;
 .tool-heading-actions{margin-left:auto;display:flex;gap:5px;flex-shrink:0}
 .tool-heading>#toolRunSummary{min-width:0;flex:1;font-size:11px}
 .tool-source #toolSetupBody{margin-top:10px}
-.patient-source-row{display:flex;align-items:end;gap:6px;max-width:640px}
-.patient-identity{flex:1;min-width:0}
+.patient-source-row{display:flex;align-items:end;gap:6px;max-width:760px;flex-wrap:wrap}
+.patient-identity{flex:1 1 250px;min-width:min(100%,230px)}
 .patient-identity>label{font-size:11px;margin:0 0 4px;color:var(--muted)}
 .patient-input{display:flex;position:relative;align-items:center}
-.patient-input input{width:100%;padding-right:40px!important;margin:0;font-size:13px}
-.patient-input #toolResolve{position:absolute;right:2px;top:1px;bottom:1px;border:0;background:transparent;min-height:0}
+.patient-input input{width:100%;padding-right:10px!important;margin:0;font-size:13px}
 .tool-source #toolSelectionSummary{font-size:12px;margin:8px 0;color:var(--green)}
 .tool-source #toolSelectionSummary:empty{display:none}
 .tool-source #toolResolveResult{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12px}
@@ -190,7 +189,7 @@ dialog.saved-sets-dialog{width:min(540px,94vw);padding:20px 22px}
 .saved-set-option:hover{background:#eaf0e6}
 .saved-set-option .caption{font-size:11px}
 @media(max-width:600px){.tool-launch{align-items:start;flex-direction:column}.tool-launch .actions{align-self:end}.tool-heading{gap:7px}.tool-heading>#toolRunSummary{order:4;flex-basis:100%}.patient-source-row{max-width:100%}dialog.review-settings-dialog,dialog.saved-sets-dialog{padding:16px}.review-settings-dialog .review-settings-row{gap:8px 14px}.rule-row{grid-template-columns:1fr auto}.rule-row>label{grid-column:1}.rule-row>.icon-button{grid-column:2;grid-row:1}.settings-section>summary .caption{display:inline-block}}
-@media(pointer:coarse){button.icon-button{width:44px;min-width:44px;min-height:44px;flex-basis:44px}.patient-input input{min-height:46px;padding-right:48px!important}}
+@media(pointer:coarse){button.icon-button{width:44px;min-width:44px;min-height:44px;flex-basis:44px}.patient-input input{min-height:46px}}
 #approvalForm .choice-field{flex-basis:100%}
 #approvalSummary{margin:0}
 @media(min-width:781px) and (max-width:1150px){.shell{grid-template-columns:190px minmax(0,1fr)}}
@@ -418,7 +417,6 @@ body.review-result-compact footer{flex:none;padding-block:5px}
 /* The history marker stays inside its icon button. */
 .scan-history-button{position:relative}
 .scan-history-button .scan-clock{position:absolute;right:0;bottom:0;background:#fff;color:#225666;border-radius:50%;font-size:18px;line-height:17px;font-weight:700}
-.patient-source-hint{margin:4px 0 0;font-size:11px}
 #manualDialog #identifiers{width:100%}
 #manualDialog #manualIdentifierHelp{margin:3px 0 12px}
 .patient-input input{padding-right:10px!important}
@@ -430,7 +428,7 @@ button.patient-chip:hover{background:#dcebd7;border-color:#6e9a73}
 .patient-lookup-error{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:4px 0;padding:5px 8px;border:1px solid #e5c8b8;border-radius:4px;background:#fff5ee;color:#884c36;font-size:12px}
 .patient-lookup-error span{min-width:0;overflow-wrap:anywhere}
 .patient-lookup-error button{min-height:28px;padding:3px 8px}
-@media(max-width:680px){.patient-source-row{flex-wrap:wrap}.patient-identity,.patient-source-hint{flex:1 1 100%}.patient-chip-list{max-height:108px}}
+@media(max-width:680px){.patient-identity{flex:1 1 100%}.patient-chip-list{max-height:108px}}
 .dialog-title-group{min-width:0}
 .dialog-patient{margin:4px 0 0!important;color:var(--muted);font-size:12px;font-weight:600;line-height:1.4;overflow-wrap:anywhere}
 #dataDialog>.dialog-heading,#patientTagDialog .dialog-heading{align-items:flex-start;gap:12px}

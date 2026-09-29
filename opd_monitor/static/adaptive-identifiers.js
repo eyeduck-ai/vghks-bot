@@ -5,6 +5,44 @@ window.PatientTokens = (() => {
   const separator = /[\s,;，；、]/u;
   const split = /[\s,;，；、]+/u;
 
+  function createErrors({container, onOpen}) {
+    const host = document.getElementById(container), errors = new Map(), timers = new Map();
+    function render() {
+      host.replaceChildren(...[...errors].map(([key, error]) => {
+        const row = document.createElement("div"), message = document.createElement("span");
+        row.className = "patient-lookup-error";
+        message.textContent = error.token + "：" + error.message;
+        const action = document.createElement("button");
+        action.type = "button";
+        action.className = "quiet";
+        action.textContent = error.taskId ? "查看 DEBUG" : "爬蟲紀錄";
+        action.addEventListener("click", () => onOpen(error.taskId));
+        row.append(message, action);
+        return row;
+      }));
+    }
+    function remove(key) {
+      clearTimeout(timers.get(key));
+      timers.delete(key);
+      errors.delete(key);
+      render();
+    }
+    return {
+      add(token, message, mode, taskId = "") {
+        const key = mode + ":" + token;
+        clearTimeout(timers.get(key));
+        errors.set(key, {token, message, taskId});
+        timers.set(key, setTimeout(() => remove(key), 15000));
+        render();
+      },
+      remove,
+      clear() {
+        for (const timer of timers.values()) clearTimeout(timer);
+        timers.clear(); errors.clear(); render();
+      },
+    };
+  }
+
   function create({input, kind, request, canLookup, status, onResolved, onFailed, idleLookupMs = 0}) {
     const field = document.getElementById(input);
     const progress = document.getElementById(status);
@@ -45,12 +83,14 @@ window.PatientTokens = (() => {
       const revision = generation, mode = queue[0].mode, batch = [];
       while (queue.length && queue[0].mode === mode && batch.length < 100) batch.push(queue.shift());
       const received = new Set();
+      let taskId = "";
       JobProgress.pending(progress, "病人基本資料", "正在核對 " + batch.length + " 位病人…");
       try {
         if (!canLookup()) throw new Error("此帳號目前無法查詢，請連線後重試。");
         const started = await request("/tasks/start", {
           kind:"resolve", identifier_kind:mode, identifiers:batch.map(row => row.token).join("\n"),
         });
+        taskId = started.task_id;
         if (revision !== generation) return;
         for (;;) {
           const task = await request("/tasks/detail?id=" + encodeURIComponent(started.task_id));
@@ -68,10 +108,14 @@ window.PatientTokens = (() => {
               const key = (item.input || item.mrn || "").normalize("NFKC").toLocaleUpperCase();
               if (item.status !== "resolved") {
                 received.add(key);
-                onFailed(item.input || item.mrn, item.message || task.message || "病人資料未取得。", mode);
+                onFailed(item.input || item.mrn, item.message || task.message || "病人資料未取得。", mode, taskId);
               }
             }
-            for (const row of batch) if (!received.has(row.token.toLocaleUpperCase())) onFailed(row.token, task.message || "病人資料未取得。", mode);
+            for (const row of batch) if (!received.has(row.token.toLocaleUpperCase())) onFailed(row.token, task.message || "病人資料未取得。", mode, taskId);
+            if (task.status !== "completed") {
+              const terminal = progress.firstElementChild;
+              setTimeout(() => {if (progress.firstElementChild === terminal) progress.replaceChildren();}, 15000);
+            }
             break;
           }
           await new Promise(resolve => setTimeout(resolve, 700));
@@ -79,7 +123,7 @@ window.PatientTokens = (() => {
       } catch (error) {
         if (revision === generation) {
           progress.replaceChildren();
-          for (const row of batch) if (!received.has(row.token.toLocaleUpperCase())) onFailed(row.token, error.message || "查詢失敗。", mode);
+          for (const row of batch) if (!received.has(row.token.toLocaleUpperCase())) onFailed(row.token, error.message || "查詢失敗。", mode, taskId);
         }
       } finally {
         if (revision === generation) {
@@ -124,5 +168,5 @@ window.PatientTokens = (() => {
     };
   }
 
-  return {create};
+  return {create, createErrors};
 })();

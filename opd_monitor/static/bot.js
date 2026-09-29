@@ -89,7 +89,7 @@ function loginFields(key=""){
 }
 function showEntry(key=""){
  if(account&&work&&!root.read_only){clearTimeout(draftTimer);api("/draft/save",draftValue()).catch(()=>{});}
- clearTimeout(draftTimer);manualLookup.reset();manualErrors.clear();renderManualErrors();window.ToolWorkspace?.reset();window.SurgerySystem?.reset();window.ReviewNotesUI?.reset();epoch++;account="";$("#moduleFrame").removeAttribute("src");for(const d of $$("dialog[open]"))d.close();$("#shell").hidden=true;$("#entry").hidden=false;loginFields(key);
+ clearTimeout(draftTimer);manualLookup.reset();manualErrors.clear();window.ToolWorkspace?.reset();window.SurgerySystem?.reset();window.ReviewNotesUI?.reset();epoch++;account="";$("#moduleFrame").removeAttribute("src");for(const d of $$("dialog[open]"))d.close();$("#shell").hidden=true;$("#entry").hidden=false;loginFields(key);
  window.FileCompare?.context("", "");window.CataractExpanded?.clear();
 }
 async function login(key, automatic=false){
@@ -111,7 +111,7 @@ function openReconnect(taskId="",target=account,reason=""){
  dialog("reconnectDialog");$("#reconnectPassword").focus();
 }
 async function enter(key){
- collapsedDays.clear();manualLookup.reset();manualErrors.clear();renderManualErrors();
+ collapsedDays.clear();manualLookup.reset();manualErrors.clear();
  window.ReviewHistoryUI?.reset();window.ReviewNotesUI?.reset();reconnectTask="";reconnectTarget="";
  epoch++;account=key;window.FileCompare?.context(key, "");window.Approvals?.reset();window.ToolWorkspace?.reset();window.Earnings?.reset();window.SurgerySystem?.reset();work=null;listing=null;selected=new Set();manual=[];libraryPage=tagPage=0;listTab="own";selectedSet=null;currentReview="";reviewData=null;reviewPatient="";reviewSignature="";extensionTask=activeListRun="";librarySelected.clear();
  $("#moduleFrame").removeAttribute("src");for(const d of $$("dialog[open]"))d.close();
@@ -184,10 +184,10 @@ async function openModule(cohort,module="retina"){window.ToolWorkspace?.activate
 function renderTasks(history){
  const container=$("#taskList");container.replaceChildren();const tasks=[...(work.tasks||[]).map(t=>({...t,bot:true})),...(work.sdk_sessions||[]).map(t=>({...t,session:true})),...(history?.runs||[]).filter(r=>r.kind!=="bot")].sort((a,b)=>(b.created_at||"").localeCompare(a.created_at||""));
  $("#taskCount").textContent=tasks.filter(t=>inProgress.has(t.status)).length||"";
- for(const task of tasks){const row=node("div",undefined,"task-row"),desc=node("div"),actions=node("div",undefined,"actions");const source=task.kind.startsWith("approval_")?"審查查詢":task.kind.startsWith("earnings_")?"薪資業績":task.kind==="surgery_schedule"?"手術系統":task.session?"SDK":task.kind==="analysis"?"比較工具":"門診系統";desc.append(node("p",source,"task-source"),node("h3",task.name||(task.kind==="analysis"?"歷年檢查比較":"門診清單")),node("p",`${labels[task.status]||task.status} · ${time(task.created_at)} · ${task.message||""}`));
+ for(const task of tasks){const row=node("div",undefined,"task-row"),desc=node("div"),actions=node("div",undefined,"actions");row.dataset.taskId=task.id;const source=task.kind.startsWith("approval_")?"審查查詢":task.kind.startsWith("earnings_")?"薪資業績":task.kind==="surgery_schedule"?"手術系統":task.session?"SDK":task.kind==="analysis"?"比較工具":"門診系統";desc.append(node("p",source,"task-source"),node("h3",task.name||(task.kind==="analysis"?"歷年檢查比較":"門診清單")),node("p",`${labels[task.status]||task.status} · ${time(task.created_at)} · ${task.message||""}`));
   if(task.bot&&task.kind==="review")actions.append(btn("檢閱",()=>openReview(task.id)));
   else if(task.bot&&task.kind==="surgery_schedule")actions.append(btn("查看排程",async()=>{showPage("surgery");await window.SurgerySystem.open(task.id);}));
-  else if(task.bot&&task.kind==="resolve")actions.append(btn("加入已核對病人",async()=>{const detail=await api("/tasks/detail?id="+encodeURIComponent(task.id));for(const patient of detail.items.filter(item=>item.status==="resolved"))addManualPatient(patient);dialog("manualDialog");manualLookup.focus();}));
+  else if(task.bot&&task.kind==="resolve"){const add=btn("加入選擇病人清單",async()=>{const detail=await api("/tasks/detail?id="+encodeURIComponent(task.id)),patients=detail.items.filter(item=>item.status==="resolved");if(!patients.length){say("此任務沒有成功核對的病人。",true);return;}for(const patient of patients)addManualPatient(patient);await navigate("patients");$("#manualMembersSection").scrollIntoView({block:"nearest"});say(`已將 ${patients.length} 位病人加入選擇清單。`);});add.title="將這次查詢成功核對的病人加入選擇病人清單";actions.append(add);}
   else if(task.bot&&task.kind==="history")actions.append(btn("查看",()=>window.ReviewHistoryUI.openTask(task)));
   else if(task.bot&&["numeric","registrations"].includes(task.kind))actions.append(btn("查看",()=>showExtensionTask(task.id,task.kind)));
   else if(task.bot)actions.append(btn("查看摘要",()=>showTaskSummary(task.id)));
@@ -197,6 +197,14 @@ function renderTasks(history){
   const debug=btn("DEBUG 資訊",()=>showDiagnostics(task.session?{session_id:task.id}:{task_id:task.id}));setIcon(debug,"help","DEBUG 資訊",false);actions.append(debug);
   if(!task.session)desc.append(JobProgress.create(task));row.append(desc,actions);container.append(row);
  }if(!tasks.length)container.append(empty("尚無 SDK 抓取紀錄。"));
+}
+async function openLookupDiagnostics(taskId=""){
+ if($("#manualDialog").open)$("#manualDialog").close();
+ await navigate("tasks");
+ if(!taskId)return;
+ const row=$$("#taskList .task-row").find(item=>item.dataset.taskId===taskId);
+ if(row){row.tabIndex=-1;row.focus({preventScroll:true});row.scrollIntoView({block:"center"});}
+ await showDiagnostics({task_id:taskId});
 }
 async function showTaskSummary(id){const task=await api("/tasks/detail?id="+encodeURIComponent(id));$("#dataTitle").textContent=task.name||"抓取任務";const content=$("#dataContent");content.replaceChildren(table(["欄位","內容"],[["狀態",labels[task.status]||task.status],["開始",time(task.created_at)],["完成",time(task.finished_at)||"—"],["進度",`${task.done??0} / ${task.total??"—"}`],["說明",task.message||"—"]]));const all=task.items||[],items=all.slice(0,200);if(items.length){content.append(node("h3","處理項目"),table(["項目","狀態","說明／錯誤代碼"],items.map(item=>[item.mrn||item.apply_seq||[item.kind,item.period].filter(Boolean).join(" · ")||item.part||"—",labels[item.status]||item.status||"—",[item.message,item.code].filter(Boolean).join(" · ")||"—"])));if(all.length>items.length)content.append(node("p",`只顯示前 ${items.length} / ${all.length} 項。`,"caption"));}dialog("dataDialog");}
 async function refresh(){
@@ -483,22 +491,14 @@ for(const [id,n] of [["previousDay",-1],["nextDay",1]])$("#"+id).addEventListene
 for(const [id,tab] of [["ownTab","own"],["sharedTab","shared"]])$("#"+id).addEventListener("click",()=>{listTab=tab;renderList();draftSave();});
 $("#selectAll").addEventListener("change",e=>{for(const r of visibleRows()){if(e.target.checked)selected.add(r.id);else selected.delete(r.id);}renderList();draftSave();});
 $("#listQuery").addEventListener("input",renderList);
-const manualErrors=new Map();
-function renderManualErrors(){
- const area=$("#manualLookupErrors");
- area.replaceChildren(...[...manualErrors].map(([key,error])=>{
-  const row=node("div",undefined,"patient-lookup-error");
-  row.append(node("span",error.token+"："+error.message),btn("重試",()=>{
-   manualErrors.delete(key);renderManualErrors();manualLookup.add([error.token],error.mode);
-  },"quiet"));
-  return row;
- }));
-}
+const manualErrors=window.PatientTokens.createErrors({
+ container:"manualLookupErrors",onOpen:taskId=>act(()=>openLookupDiagnostics(taskId)),
+});
 const manualLookup=window.PatientTokens.create({
  input:"identifiers",kind:()=>$("#identifierKind").value,request:api,
  canLookup:()=>!!account&&!!work?.online&&!root.read_only,status:"resolveStatus",
- onResolved:(patient,mode)=>{manualErrors.delete(mode+":"+(patient.input||patient.mrn));renderManualErrors();addManualPatient(patient);},
- onFailed:(token,message,mode)=>{manualErrors.set(mode+":"+token,{token,message,mode});renderManualErrors();},
+ onResolved:(patient,mode)=>{manualErrors.remove(mode+":"+(patient.input||patient.mrn));addManualPatient(patient);},
+ onFailed:(token,message,mode,taskId)=>manualErrors.add(token,message,mode,taskId),
 });
 $("#manualOpen").addEventListener("click",()=>{dialog("manualDialog");manualLookup.focus();});
 $("#saveCollection").addEventListener("click",()=>act(async()=>{await saveCurrentSet();await refresh();say("病人集合已保存。");}));
