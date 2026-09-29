@@ -59,12 +59,61 @@ html[data-density=compact] .tool-embedded .analysis-run-controls{padding:12px;ga
 .cataract-soap .soap-table :is(th,td){border-bottom:1px solid var(--line);padding:5px;text-align:left;vertical-align:top}
 .cataract-soap .soap-original{border-top:1px solid var(--line);padding-top:7px}
 .cataract-soap .soap-original summary{cursor:pointer;font-size:11px}
-#cataractOrderDialog{width:min(95vw,1100px)}
-#cataractOrderDialog .record-body{max-height:calc(90dvh - 95px);overflow:auto}
-#cataractOrderDialog .cataract-asset{margin:9px 0 15px;border:1px solid var(--line);padding:8px;background:#f8faf7}
-#cataractOrderDialog .cataract-asset :is(iframe,img){display:block;width:100%;height:min(50vh,520px);object-fit:contain;border:0;background:#fff}
-#cataractOrderDialog .cataract-asset label{margin-top:8px}
-#cataractOrderDialog pre{white-space:pre-wrap;overflow-wrap:anywhere}
+.cataract-result-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding:2px 0 9px;margin-bottom:10px}
+.cataract-result-heading .cataract-identity{margin:0}
+.cataract-view-nav{display:flex;align-items:center;gap:5px;flex-wrap:wrap}
+.cataract-view-nav button{min-height:32px;padding:5px 10px;font-size:12px}
+.cataract-view-nav button[aria-pressed=true]{background:#e2eee5;border-color:#92b69b;color:var(--green);font-weight:700}
+.cataract-compare-count{margin-left:5px;color:var(--muted);font-size:11px;white-space:nowrap}
+.cataract-view[hidden]{display:none}
+.cataract-soap-view{max-width:1020px}.cataract-soap-view>.primary{margin:10px 0 25px}
+.cataract-workspace{display:grid;grid-template-columns:minmax(230px,28%) minmax(210px,25%) minmax(0,1fr);gap:8px;align-items:start;min-height:calc(100dvh - 210px)}
+.cataract-workspace>.cataract-section,.cataract-comparison>.cataract-section{margin:0;padding:9px;border:1px solid var(--line);border-radius:7px;background:#fff;min-width:0}
+.cataract-workspace>.cataract-section>h3,.cataract-comparison>.cataract-section>h3{margin:0 0 4px;font-size:13px}
+.cataract-workspace>.cataract-section>p,.cataract-comparison>.cataract-section>p{font-size:10px;line-height:1.4;margin-bottom:8px}
+.cataract-numeric,.cataract-orders{position:sticky;top:5px;max-height:calc(100dvh - 25px);overflow:auto;scrollbar-gutter:stable}
+.cataract-numeric-group,.cataract-order-group{border-top:1px solid var(--line);font-size:11px}
+.cataract-numeric-group>summary,.cataract-order-group>summary{cursor:pointer;padding:8px 4px;overflow-wrap:anywhere}
+.cataract-numeric-group>summary{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 5px;align-items:center}
+.cataract-numeric-group>summary::marker{content:""}.cataract-numeric-group>summary::-webkit-details-marker{display:none}
+.cataract-numeric-group>summary>strong::before{content:"▸ ";color:var(--green)}
+.cataract-numeric-group[open]>summary>strong::before{content:"▾ "}
+.cataract-numeric-count{color:var(--green);white-space:nowrap}
+.cataract-numeric-latest{grid-column:1/-1;color:var(--muted);font-size:10px}
+.cataract-reading-list{display:grid;gap:5px;margin:1px 0 9px}
+.cataract-reading{padding:6px;border:1px solid var(--line);border-radius:5px;background:#fbfcf9;min-width:0}
+.cataract-reading-line{display:grid;grid-template-columns:minmax(80px,1fr) auto auto;align-items:baseline;gap:6px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.cataract-reading-line strong{font-size:12px;color:var(--green)}
+.cataract-reading-metric{display:block;color:var(--muted);font-size:10px;overflow-wrap:anywhere}
+.cataract-reading>details{font-size:10px;margin-top:3px}.cataract-reading>details>summary{cursor:pointer;color:var(--green)}
+.cataract-reading .table-wrap{max-height:none;margin:4px 0 0;overflow:auto}
+.cataract-reading .source-table{font-size:10px;min-width:250px}
+.cataract-reading .source-table :is(th,td){padding:4px 5px}
+.cataract-order-group>summary{font-weight:600;color:var(--green)}
+.cataract-order-row{display:flex;justify-content:space-between;align-items:center;gap:5px;width:100%;white-space:normal;text-align:left;font-size:11px;min-height:30px;padding:5px 6px;margin:2px 0}
+.cataract-order-row[aria-current=true]{background:#e4f1e7;border-color:#8db399}.cataract-order-row .small{white-space:nowrap;font-size:10px}
+.cataract-report-preview{min-height:65dvh;overflow:hidden}.cataract-report-preview>.empty-result{margin:30px 0}
+.cataract-preview-actions{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}.cataract-preview-actions button{font-size:11px;min-height:30px;padding:5px 8px}
+.cataract-report-preview .cataract-asset{margin:9px 0 15px;border:1px solid var(--line);padding:8px;background:#f8faf7}
+.cataract-report-preview .cataract-asset :is(iframe,img){display:block;width:100%;height:min(65dvh,700px);object-fit:contain;border:0;background:#fff}
+.cataract-report-preview .cataract-asset label{display:flex;gap:7px;align-items:center;margin-top:8px}
+.cataract-report-preview pre{white-space:pre-wrap;overflow-wrap:anywhere}
+.cataract-compare-heading{display:flex;align-items:center;gap:8px;margin:8px 0}.cataract-compare-heading h3{margin:0 auto 0 0}
+.cataract-compare-heading button{min-height:30px;padding:5px 9px;font-size:11px}
+.cataract-comparison{display:grid;grid-template-columns:minmax(230px,28%) minmax(0,1fr);gap:8px;align-items:start;min-height:calc(100dvh - 210px)}
+.cataract-comparison.numeric-closed{grid-template-columns:minmax(0,1fr)}
+.cataract-comparison.numeric-closed>.cataract-numeric{display:none}
+.cataract-comparison>.cataract-orders{display:none}
+.cataract-files{min-width:0;min-height:65dvh}
+.cataract-mobile-switch{display:none}
 @media(max-width:1150px) and (min-width:781px){.cataract-layout.active{grid-template-columns:156px minmax(0,1fr)}}
-@media(max-width:780px){.cataract-layout.active{grid-template-columns:minmax(0,1fr)}.cataract-patients{position:static;display:flex;gap:5px;overflow:auto;max-height:none;max-width:100%;padding:5px}.cataract-patients h3{flex:none;align-self:center}.cataract-patient{flex:0 0 140px}.cataract-section .table-wrap{max-height:none}}
+@media(max-width:1100px) and (min-width:781px){.cataract-workspace{grid-template-columns:minmax(210px,30%) minmax(185px,26%) minmax(0,1fr)}.cataract-comparison{grid-template-columns:minmax(210px,30%) minmax(0,1fr)}}
+@media(max-width:780px){.cataract-layout.active{grid-template-columns:minmax(0,1fr)}.cataract-patients{position:static;display:flex;gap:5px;overflow:auto;max-height:none;max-width:100%;padding:5px}.cataract-patients h3{flex:none;align-self:center}.cataract-patient{flex:0 0 140px}.cataract-section .table-wrap{max-height:none}
+  .cataract-workspace,.cataract-comparison,.cataract-comparison.numeric-closed{display:block;min-height:0}
+  .cataract-numeric,.cataract-orders{position:static;max-height:none;overflow:visible}
+  .cataract-mobile-switch{display:flex;gap:5px;overflow:auto;padding:5px 0 8px}.cataract-mobile-switch button{min-height:30px;padding:4px 10px;font-size:11px}.cataract-mobile-switch button[aria-pressed=true]{background:#e2eee5;border-color:#92b69b;color:var(--green)}
+  .cataract-workspace>:is(.cataract-numeric,.cataract-orders,.cataract-report-preview),.cataract-comparison>:is(.cataract-numeric,.cataract-orders,.cataract-files){display:none}
+  .cataract-workspace[data-mobile=numeric]>.cataract-numeric,.cataract-workspace[data-mobile=orders]>.cataract-orders,.cataract-workspace[data-mobile=files]>.cataract-report-preview,.cataract-comparison[data-mobile=numeric]:not(.numeric-closed)>.cataract-numeric,.cataract-comparison[data-mobile=orders]>.cataract-orders,.cataract-comparison[data-mobile=files]>.cataract-files{display:block}
+  .cataract-report-preview .cataract-asset :is(iframe,img){height:65dvh}
+}
 .surgery-edit-grid .choice-field>legend{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}

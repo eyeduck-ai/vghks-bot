@@ -5,7 +5,7 @@
 window.FileCompare = (() => {
   const limit = 6;
   let account = "", mrn = "", patientName = "", items = [], activeIndex = 0, remoteCount = 0, feedbackTimer = 0, linkedFrame = null;
-  let remoteDigests = new Set();
+  let remoteDigests = new Set(), remoteItems = [], inlineHost = null, inlineActive = 0, inlineActiveDigest = "";
   const embedded = window.parent !== window;
   const make = (tag, label, cls) => {
     const el = document.createElement(tag);
@@ -25,7 +25,10 @@ window.FileCompare = (() => {
   }
   function context(nextAccount, nextMrn, nextName = "") {
     if (embedded) {
-      if (account !== nextAccount || mrn !== nextMrn) {remoteCount = 0; remoteDigests = new Set();}
+      if (account !== nextAccount || mrn !== nextMrn) {
+        remoteCount = 0; remoteDigests = new Set(); remoteItems = []; inlineActive = 0; inlineActiveDigest = "";
+        renderInline();
+      }
       account = nextAccount || "";
       mrn = nextMrn || "";
       patientName = nextName || "";
@@ -78,7 +81,9 @@ window.FileCompare = (() => {
   }
   function sendState(frame, error = "") {
     frame?.contentWindow?.postMessage({type:"bot:compare-state", account, mrn, count:items.length,
-      digests:items.map(item => item.digest), limit, error}, location.origin);
+      digests:items.map(item => item.digest),
+      items:items.map(({digest, mime, name, source, date, zoom}) => ({digest, mime, name, source, date, zoom})),
+      limit, error}, location.origin);
   }
   function receive(event, expectedFrame, activeAccount) {
     if (event.origin !== location.origin || event.source !== expectedFrame?.contentWindow) return;
@@ -95,6 +100,16 @@ window.FileCompare = (() => {
       if (event.data.account !== activeAccount || event.data.mrn !== mrn) return;
       removeDigest(event.data.digest);
       sendState(expectedFrame);
+    } else if (event.data?.type === "bot:compare-move") {
+      if (event.data.account !== activeAccount || event.data.mrn !== mrn) return;
+      const index = items.findIndex(item => item.digest === event.data.digest);
+      if (index >= 0 && [-1, 1].includes(event.data.delta)) move(index, event.data.delta);
+    } else if (event.data?.type === "bot:compare-zoom") {
+      if (event.data.account !== activeAccount || event.data.mrn !== mrn) return;
+      const item = items.find(row => row.digest === event.data.digest);
+      if (item && [-.25, .25].includes(event.data.delta)) {
+        item.zoom = Math.max(.5, Math.min(3, item.zoom + event.data.delta)); render();
+      }
     }
   }
   function removeDigest(digest) {
@@ -145,6 +160,11 @@ window.FileCompare = (() => {
     if (embedded) {window.parent.postMessage({type:"bot:compare-open"}, location.origin); return;}
     mount();
     if (!items.length) {announce("請先加入要比較的檔案。"); return;}
+    if (linkedFrame && !document.getElementById("modulePage")?.hidden &&
+        new URL(linkedFrame.src, location.href).searchParams.get("module") === "cataract") {
+      linkedFrame.contentWindow.postMessage({type:"bot:compare-inline-open", account, mrn}, location.origin);
+      return;
+    }
     const dialog = document.getElementById("fileCompareDialog");
     if (!dialog.open) dialog.showModal();
     render();
@@ -163,21 +183,33 @@ window.FileCompare = (() => {
     if (!items.length) document.getElementById("fileCompareDialog")?.close();
     render();
   }
-  function pane(item, index) {
+  function pane(item, index, inline = false) {
+    const collection = inline ? remoteItems : items;
     const wrap = make("section", undefined, "file-compare-pane");
-    wrap.dataset.active = String(index === activeIndex);
-    const columns = items.length <= 2 ? items.length : items.length === 4 ? 2 : 3;
-    wrap.style.setProperty("--pane-span", String(items.length === 5 && index >= 3 ? 3 : 6 / columns));
+    wrap.dataset.digest = item.digest;
+    wrap.dataset.active = String(index === (inline ? inlineActive : activeIndex));
+    const columns = collection.length <= 2 ? collection.length : collection.length === 4 ? 2 : 3;
+    wrap.style.setProperty("--pane-span", String(collection.length === 5 && index >= 3 ? 3 : 6 / columns));
     const header = make("div", undefined, "file-compare-pane-head");
     const name = make("strong", item.name || "檢查附件");
     const caption = make("span", [item.source, item.date || "日期未提供"].filter(Boolean).join(" · "));
     const buttons = make("div", undefined, "file-compare-pane-actions");
-    buttons.append(button("←", () => move(index, -1)), button("→", () => move(index, 1)),
-      button("−", () => {item.zoom = Math.max(.5, item.zoom - .25); render();}),
+    const moveItem = delta => inline
+      ? window.parent.postMessage({type:"bot:compare-move", account, mrn, digest:item.digest, delta}, location.origin)
+      : move(index, delta);
+    const zoomItem = delta => inline
+      ? window.parent.postMessage({type:"bot:compare-zoom", account, mrn, digest:item.digest, delta}, location.origin)
+      : (item.zoom = Math.max(.5, Math.min(3, item.zoom + delta)), render());
+    buttons.append(button("←", () => moveItem(-1)), button("→", () => moveItem(1)),
+      button("−", () => zoomItem(-.25)),
       make("span", Math.round(item.zoom * 100) + "%"),
-      button("＋", () => {item.zoom = Math.min(3, item.zoom + .25); render();}),
-      button("移除", () => remove(index)));
+      button("＋", () => zoomItem(.25)),
+      button("移除", () => inline ? removeDigest(item.digest) : remove(index)));
     for (const [i, el] of [...buttons.children].entries()) if (i < 2) el.setAttribute("aria-label", i ? "將檔案向右移" : "將檔案向左移");
+    buttons.children[2].setAttribute("aria-label", "縮小檔案");
+    buttons.children[4].setAttribute("aria-label", "放大檔案");
+    buttons.children[0].disabled = index === 0;
+    buttons.children[1].disabled = index === collection.length - 1;
     header.append(name, caption, buttons);
     const scroll = make("div", undefined, "file-compare-scroll");
     const url = location.pathname === "/tools" && !new URLSearchParams(location.search).has("account")
@@ -191,6 +223,41 @@ window.FileCompare = (() => {
     scroll.append(documentNode);
     wrap.append(header, scroll);
     return wrap;
+  }
+  function renderInline(host = inlineHost) {
+    if (!embedded || !host) return;
+    inlineHost = host;
+    const positions = new Map([...host.querySelectorAll(".file-compare-pane")].map(node => {
+      const scroll = node.querySelector(".file-compare-scroll");
+      return [node.dataset.digest, [scroll?.scrollLeft || 0, scroll?.scrollTop || 0]];
+    }));
+    host.replaceChildren();
+    if (!remoteItems.length) {
+      host.append(make("p", "尚未選取檔案。請到「數值與醫囑」點開報告，再勾選附件加入比較。", "empty-result"));
+      return;
+    }
+    const remembered = remoteItems.findIndex(item => item.digest === inlineActiveDigest);
+    inlineActive = remembered >= 0 ? remembered : Math.min(inlineActive, remoteItems.length - 1);
+    inlineActiveDigest = remoteItems[inlineActive].digest;
+    const tabs = make("div", undefined, "file-compare-inline-tabs");
+    tabs.setAttribute("aria-label", "比較檔案切換");
+    const panes = make("div", undefined, "file-compare-inline-panes");
+    for (const [index, item] of remoteItems.entries()) {
+      const tab = button(item.name || `檔案 ${index + 1}`, () => {
+        inlineActive = index; inlineActiveDigest = item.digest; renderInline();
+      });
+      tab.setAttribute("aria-pressed", String(index === inlineActive));
+      tabs.append(tab);
+      const node = pane(item, index, true);
+      panes.append(node);
+    }
+    host.append(tabs, panes);
+    for (const node of panes.children) {
+      const previous = positions.get(node.dataset.digest);
+      if (!previous) continue;
+      const scroll = node.querySelector(".file-compare-scroll");
+      scroll.scrollLeft = previous[0]; scroll.scrollTop = previous[1];
+    }
   }
   function render() {
     if (embedded) return;
@@ -215,11 +282,15 @@ window.FileCompare = (() => {
   if (embedded) window.addEventListener("message", event => {
     if (event.origin !== location.origin || event.source !== window.parent || event.data?.type !== "bot:compare-state") return;
     if (event.data.account !== account || event.data.mrn !== mrn) return;
-    remoteCount = event.data.count;
-    remoteDigests = new Set(event.data.digests || []);
+    remoteItems = (Array.isArray(event.data.items) ? event.data.items : []).slice(0, limit)
+      .filter(item => valid({...item, account, mrn}))
+      .map(item => ({...item, account, zoom:Math.max(.5, Math.min(3, Number(item.zoom) || 1))}));
+    remoteCount = remoteItems.length;
+    remoteDigests = new Set(remoteItems.map(item => item.digest));
+    renderInline();
     changed();
     if (event.data.error) announce(event.data.error);
   });
   document.addEventListener("DOMContentLoaded", mount);
-  return {add, context, count, has, remove:removeDigest, open, receive};
+  return {add, context, count, has, remove:removeDigest, open, receive, renderInline};
 })();

@@ -90,7 +90,7 @@ function loginFields(key=""){
 function showEntry(key=""){
  if(account&&work&&!root.read_only){clearTimeout(draftTimer);api("/draft/save",draftValue()).catch(()=>{});}
  clearTimeout(draftTimer);manualLookup.reset();manualErrors.clear();renderManualErrors();window.ToolWorkspace?.reset();window.SurgerySystem?.reset();window.ReviewNotesUI?.reset();epoch++;account="";$("#moduleFrame").removeAttribute("src");for(const d of $$("dialog[open]"))d.close();$("#shell").hidden=true;$("#entry").hidden=false;loginFields(key);
- window.FileCompare?.context("", "");
+ window.FileCompare?.context("", "");window.CataractExpanded?.clear();
 }
 async function login(key, automatic=false){
  const revision=epoch;
