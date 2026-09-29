@@ -166,7 +166,7 @@ class BotHandler(Handler):
                     raise ValueError("資料庫已切換，請重新載入頁面。")
                 readonly_routes = {"/api/lists", "/api/library/search", "/api/library/record", "/api/patient-tags/search",
                     "/api/reviews/results", "/api/reviews/history/read", "/api/reviews/notes/read", "/api/extensions/read", "/api/analysis/results", "/api/analysis/raw",
-                    "/api/analysis/google", "/api/analysis/surgery/candidates", "/api/analysis/surgery/history",
+                    "/api/analysis/google", "/api/analysis/cataract/status", "/api/analysis/surgery/candidates", "/api/analysis/surgery/history",
                     "/api/approvals/overview", "/api/approvals/results", "/api/approvals/detail", "/api/approvals/tracking",
                     "/api/earnings/overview", "/api/earnings/detail", "/api/earnings/export",
                     "/api/approvals/cases", "/api/approvals/sync-history", "/api/approvals/history",

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vghks-bot"
-version = "6.6.16"
+version = "6.6.17"
 description = "Portable VGHKS outpatient, surgery, approval and earnings workspaces"
 requires-python = ">=3.11"
 dependencies = [

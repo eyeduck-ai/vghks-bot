@@ -7,7 +7,7 @@ from unittest.mock import Mock, patch
 
 from analysis_fixtures import ExamSDK, MemorySheets, book_fixture, proposal, soap_record
 
-from opd_monitor.analysis_numeric import extract_tables, numeric
+from opd_monitor.analysis_numeric import exam_name, extract_tables, numeric
 from opd_monitor.analysis_store import AnalysisStore
 from opd_monitor.google_sheets import SheetError
 from opd_monitor.jobs import Application
@@ -17,6 +17,16 @@ from opd_monitor.surgery_candidates import candidates
 
 
 class AnalysisTests(unittest.TestCase):
+    def test_eye_numeric_names_do_not_merge_vacc_into_va(self):
+        self.assertEqual(exam_name("VacC"), "VacC")
+        self.assertEqual(exam_name("Va"), "Va")
+        self.assertEqual(exam_name("IOP-pneumo"), "IOP-pneumo")
+        rows = extract_tables({"tables": [
+            {"title": "VacC", "headers": ["日期", "OD"], "rows": [["2026-01-02", "0.8"]]},
+            {"title": "IOP-pneumo", "headers": ["日期", "OS"], "rows": [["2026-01-02", "17"]]},
+        ]}, "synthetic")
+        self.assertEqual([row["exams"] for row in rows], [["VacC"], ["IOP-pneumo"]])
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.path = Path(self.temp.name)

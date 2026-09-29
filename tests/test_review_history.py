@@ -59,6 +59,7 @@ class HistorySDK(BotSyntheticSDK):
     fail_scan_history = False
     mismatched_scan_history = False
     fail_visits = False
+    cataract_order_name = ""
 
     def __init__(self, settings):
         super().__init__(settings)
@@ -130,7 +131,7 @@ class HistorySDK(BotSyntheticSDK):
         self.calls.append((self.card, "orders-history", mrn, options.category))
         if mrn != MRN:
             return []
-        return [ClinicalOrder(ALIAS, "LEGACY", "O", "跨科影像", "2024-01-01", "2024-01-02",
+        return [ClinicalOrder(ALIAS, "LEGACY", "O", type(self).cataract_order_name or "跨科影像", "2024-01-01", "2024-01-02",
                               detail_ref=DETAIL, report_ref=REPORT, pacs_ref=STUDY, pdf_refs=(PDF,))]
 
     def case_orders(self, case):
@@ -173,6 +174,7 @@ class ReviewHistoryTests(unittest.TestCase):
         HistorySDK.fail_scan_history = False
         HistorySDK.mismatched_scan_history = False
         HistorySDK.fail_visits = False
+        HistorySDK.cataract_order_name = ""
         self.app = BotApplication(Settings(), Path(self.temp.name), HistorySDK)
         self.key = self.app.login({"username": "TEST", "password": "memory-only", "remember": False})["account"]["id"]
         self.work = self.app.workspace(self.key)
@@ -193,6 +195,50 @@ class ReviewHistoryTests(unittest.TestCase):
     def request(self, resource, reference=""):
         return {"review_task_id": self.review["id"], "mrn": MRN,
                 "resource": resource, "reference": reference}
+
+    def test_cataract_auto_data_uses_latest_eye_soap_and_lazy_order_assets(self):
+        cohort = self.work.analysis.save_cohort({"source": "manual", "account_id": self.key,
+                                                  "name": "術前分析", "mrns": MRN})
+        HistorySDK.cataract_order_name = "DBR, free charge"
+        HistorySDK.calls.clear()
+        run_id = self.work.analysis.start({"cohort_id": cohort["id"],
+                                           "modules": ["cataract"]})["run_ids"][0]
+        self.assertTrue(self.work.idle.wait(15))
+        run = self.work.analysis.store.document("analysis_runs", run_id)
+        self.assertEqual(run["status"], "completed", run["issues"])
+        self.assertFalse(any(call[1] in {"order-detail", "order-report", "pdf", "image"}
+                             for call in HistorySDK.calls))
+        status = self.work.analysis.cataract_status({"cohort_id": cohort["id"]})
+        self.assertTrue(status["ready"])
+        result = self.work.analysis.results({"cohort_id": cohort["id"], "mrn": MRN,
+                                             "module": "cataract"})
+        self.assertEqual(result["latest_soap"]["record"]["case_no"], "ONE")
+        self.assertEqual(len(result["orders"]), 1)
+        order = result["orders"][0]
+        self.assertFalse(order["report_loaded"])
+        self.assertNotIn("texts", order)
+        self.assertNotIn("assets", order)
+        HistorySDK.calls.clear()
+        refreshed = self.work.analysis.start({"cohort_id": cohort["id"],
+                                               "modules": ["cataract"], "refresh": True})["run_ids"][0]
+        self.assertTrue(self.work.idle.wait(15))
+        self.assertEqual(self.work.analysis.store.document("analysis_runs", refreshed)["status"], "completed")
+        soap_cases = [call[3] for call in HistorySDK.calls if call[1] == "soap"]
+        self.assertEqual(soap_cases[:2], ["EMPTY", "ONE"])
+        self.assertFalse(any(call[1] in {"order-detail", "order-report", "pdf", "image"}
+                             for call in HistorySDK.calls))
+        request = {"cohort_id": cohort["id"], "mrn": MRN,
+                   "resource": "order_report", "reference": order["id"]}
+        self.assertIsNone(self.history.read(request)["data"])
+        with self.assertRaises(ValueError):
+            self.history.read({**request, "reference": "invalid"})
+        self.assertEqual(self.run_task(kind="history", **request)["status"], "completed")
+        saved = self.history.read(request)["data"]
+        self.assertTrue(saved["assets"])
+        self.app.logout(self.key)
+        before = list(HistorySDK.calls)
+        self.assertEqual(self.history.read(request)["data"]["assets"], saved["assets"])
+        self.assertEqual(HistorySDK.calls, before)
 
     def fetch(self, resource, reference="", **options):
         return self.run_task(kind="history", **self.request(resource, reference), **options)

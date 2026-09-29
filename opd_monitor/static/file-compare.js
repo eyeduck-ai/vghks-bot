@@ -4,7 +4,8 @@
 // account-scoped attachment digests and display metadata.
 window.FileCompare = (() => {
   const limit = 6;
-  let account = "", mrn = "", patientName = "", items = [], activeIndex = 0, remoteCount = 0, feedbackTimer = 0;
+  let account = "", mrn = "", patientName = "", items = [], activeIndex = 0, remoteCount = 0, feedbackTimer = 0, linkedFrame = null;
+  let remoteDigests = new Set();
   const embedded = window.parent !== window;
   const make = (tag, label, cls) => {
     const el = document.createElement(tag);
@@ -24,7 +25,7 @@ window.FileCompare = (() => {
   }
   function context(nextAccount, nextMrn, nextName = "") {
     if (embedded) {
-      if (account !== nextAccount || mrn !== nextMrn) remoteCount = 0;
+      if (account !== nextAccount || mrn !== nextMrn) {remoteCount = 0; remoteDigests = new Set();}
       account = nextAccount || "";
       mrn = nextMrn || "";
       patientName = nextName || "";
@@ -47,6 +48,7 @@ window.FileCompare = (() => {
     window.dispatchEvent(new CustomEvent("filecomparechange", {detail:{count:count(), limit}}));
   }
   function count() {return embedded ? remoteCount : items.length;}
+  function has(digest) {return embedded ? remoteDigests.has(digest) : items.some(item => item.digest === digest);}
   function announce(value) {
     if (embedded) {
       window.dispatchEvent(new CustomEvent("filecomparemessage", {detail:value}));
@@ -75,10 +77,12 @@ window.FileCompare = (() => {
     return true;
   }
   function sendState(frame, error = "") {
-    frame?.contentWindow?.postMessage({type:"bot:compare-state", account, mrn, count:items.length, limit, error}, location.origin);
+    frame?.contentWindow?.postMessage({type:"bot:compare-state", account, mrn, count:items.length,
+      digests:items.map(item => item.digest), limit, error}, location.origin);
   }
   function receive(event, expectedFrame, activeAccount) {
     if (event.origin !== location.origin || event.source !== expectedFrame?.contentWindow) return;
+    linkedFrame = expectedFrame;
     if (event.data?.type === "bot:compare-context") {
       if (event.data.account === activeAccount) context(activeAccount, event.data.mrn, event.data.patient_name);
       sendState(expectedFrame);
@@ -87,7 +91,20 @@ window.FileCompare = (() => {
       let error = "";
       try {add(event.data.item);} catch (exc) {error = exc.message;}
       sendState(expectedFrame, error);
+    } else if (event.data?.type === "bot:compare-remove") {
+      if (event.data.account !== activeAccount || event.data.mrn !== mrn) return;
+      removeDigest(event.data.digest);
+      sendState(expectedFrame);
     }
+  }
+  function removeDigest(digest) {
+    if (!/^[a-f0-9]{64}$/.test(digest)) return;
+    if (embedded) {
+      window.parent.postMessage({type:"bot:compare-remove", account, mrn, digest}, location.origin);
+      return;
+    }
+    const index = items.findIndex(item => item.digest === digest);
+    if (index >= 0) remove(index);
   }
   function mount() {
     if (embedded || document.getElementById("fileCompareDialog")) return;
@@ -186,21 +203,23 @@ window.FileCompare = (() => {
     const tabs = document.getElementById("fileCompareTabs"), panes = document.getElementById("fileComparePanes");
     tabs.replaceChildren(); panes.replaceChildren();
     changed();
-    if (!document.getElementById("fileCompareDialog").open) return;
+    if (!document.getElementById("fileCompareDialog").open) {sendState(linkedFrame); return;}
     for (const [index, item] of items.entries()) {
       const tab = button(item.name || `檔案 ${index + 1}`, () => {activeIndex = index; render();});
       tab.setAttribute("aria-pressed", String(index === activeIndex));
       tabs.append(tab);
       panes.append(pane(item, index));
     }
+    sendState(linkedFrame);
   }
   if (embedded) window.addEventListener("message", event => {
     if (event.origin !== location.origin || event.source !== window.parent || event.data?.type !== "bot:compare-state") return;
     if (event.data.account !== account || event.data.mrn !== mrn) return;
     remoteCount = event.data.count;
+    remoteDigests = new Set(event.data.digests || []);
     changed();
     if (event.data.error) announce(event.data.error);
   });
   document.addEventListener("DOMContentLoaded", mount);
-  return {add, context, count, open, receive};
+  return {add, context, count, has, remove:removeDigest, open, receive};
 })();

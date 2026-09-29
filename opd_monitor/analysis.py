@@ -8,7 +8,7 @@ from collections import Counter
 from dataclasses import replace
 from datetime import date
 
-from .analysis_fetch import PatientCollector, RunSessions
+from .analysis_fetch import PatientCollector, RunSessions, order_identity, validate_patient
 from .analysis_numeric import MODULES, extract_tables, term_match
 from .analysis_store import AnalysisStore, digest, identifier
 from .google_sheets import GoogleSettings, SheetError, SheetUncertain
@@ -32,7 +32,7 @@ class Analysis:
         routes = {
             "cohorts": self.overview, "cohorts/save": self.save_cohort,
             "cohorts/delete": self.delete_cohort, "start": self.start, "results": self.results,
-            "raw": self.raw_data,
+            "raw": self.raw_data, "cataract/status": self.cataract_status,
             "delete": self.delete_data, "google": lambda _: self.google.public(),
             "google/save": self.google.save, "google/remove": lambda _: self.google.remove_key(),
             "google/test": self.test_google,
@@ -239,8 +239,12 @@ class Analysis:
         try:
             for member in run["members"]:
                 state.check_cancel()
-                collector = PatientCollector(self.store, state, member, source["settings"][member["account_id"]],
-                                             self.app.sdk_factory, run["options"], sessions)
+                collector = PatientCollector(
+                    self.store, state, member, source["settings"][member["account_id"]],
+                    self.app.sdk_factory,
+                    {**run["options"], "lazy_cataract_orders":
+                     run["options"]["modules"] == ["cataract"] and hasattr(self.app, "review")},
+                    sessions, getattr(self.app, "review", None))
                 try:
                     collector.run()
                 except (Cancelled, StorageError):
@@ -270,6 +274,74 @@ class Analysis:
         if not member:
             raise ValueError("病人不在此分析清單。")
         return member
+
+    def cataract_status(self, values):
+        cohort = self.store.document("analysis_cohorts", values.get("cohort_id"))
+        members = []
+        for member in cohort["members"]:
+            mrn = member["mrn"]
+            soap = self.store.step(mrn, "cataract-soap")
+            ready = all(self.store.step(mrn, key) is not None for key in
+                        ("numeric-history", "orders-history:*", "orders-history:OR", "visits"))
+            ready = ready and bool(soap and soap["payload"].get("status") in
+                                   {"ready", "missing", "no_visit"})
+            members.append({"mrn": mrn, "ready": ready,
+                            "soap_status": soap["payload"].get("status") if soap else "pending"})
+        runs = [run for run in self.store.documents("analysis_runs")
+                if run["cohort_id"] == cohort["id"] and run["options"]["modules"] == ["cataract"]]
+        current = next((run for run in runs if run["status"] in ACTIVE), None)
+        mrns = [member["mrn"] for member in cohort["members"]]
+        resumable = next((run for run in runs if run["status"] in
+                          {"partial", "failed", "cancelled", "interrupted"}
+                          and [member["mrn"] for member in run["members"]] == mrns), None)
+        return {"members": members, "ready": all(row["ready"] for row in members),
+                "active_run_id": current["id"] if current else "",
+                "resume_run_id": resumable["id"] if resumable else ""}
+
+    def cataract_orders(self, mrn, start="", end=""):
+        history = self.app.review.history
+        allowed = history._allowed_mrns(mrn)
+        groups = {}
+        for order in history._order_sources(mrn):
+            if not isinstance(order, dict) or order.get("mrn") not in allowed:
+                continue
+            try:
+                validate_patient(order, order["mrn"])
+            except (TypeError, ValueError):
+                continue
+            if not any(term_match(order.get("name", ""), term)
+                       for term in MODULES["cataract"]["orders"]):
+                continue
+            groups.setdefault(order_identity(order), []).append(order)
+        rows = []
+        for order in history._public_orders(groups):
+            if order["date"] and ((start and order["date"] < start)
+                                  or (end and order["date"] > end)):
+                continue
+            saved = (self.store.step(mrn, "history-order:" + order["id"])
+                     or self.store.step(mrn, "collected-order:" + order["id"]))
+            payload = saved["payload"] if saved else {}
+            rows.append({**order, "exams": [term for term in MODULES["cataract"]["orders"]
+                                           if term_match(order["name"], term)],
+                         "status": payload.get("status", "indexed"),
+                         "report_loaded": bool(saved),
+                         "saved_at": saved["saved_at"] if saved else ""})
+        return rows
+
+    def cataract_soap(self, mrn):
+        marker = self.store.step(mrn, "cataract-soap")
+        record = None
+        if marker and marker["payload"].get("record_id"):
+            record = self.store.library.get_record(marker["payload"]["record_id"])
+        elif not marker:
+            record = next((row for row in self.store.records(mrn)
+                           if "眼科" in (row.get("section", "") + " " + row.get("section_code", ""))), None)
+        if record and record["mrn"] == mrn:
+            keys = ("id", "mrn", "name", "date", "section", "case_no", "soap", "soap_structure")
+            return {"status": marker["payload"]["status"] if marker else "cached",
+                    "record": {key: record.get(key) for key in keys}, "updated_at": record["updated_at"]}
+        return {"status": marker["payload"].get("status", "pending") if marker else "pending",
+                "record": None, "updated_at": ""}
 
     def results(self, values):
         member = self.member(values)
@@ -308,8 +380,12 @@ class Analysis:
             orders.append({**row, "saved_at": step["saved_at"],
                            "exams": [t for t in MODULES[module]["orders"] if term_match(row["name"], t)]})
         coverage = next((s["payload"] for s in steps if s["kind"] == "coverage"), None)
+        if module == "cataract" and hasattr(self.app, "review"):
+            orders = self.cataract_orders(member["mrn"], start, end)
         return {"member": member, "module": module, "numeric": sorted(numeric_rows, key=lambda r: (r["date"], r["id"])),
-                "orders": sorted(orders, key=lambda r: (r["date"], r["id"])), "coverage": coverage,
+                "orders": sorted(orders, key=lambda r: (r["date"], r["id"]), reverse=module == "cataract"),
+                "latest_soap": self.cataract_soap(member["mrn"]) if module == "cataract" else None,
+                "coverage": coverage,
                 "updated_at": max((s["saved_at"] for s in steps), default="")}
 
     def raw_data(self, values):

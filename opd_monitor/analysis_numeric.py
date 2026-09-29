@@ -11,9 +11,10 @@ from .analysis_store import digest
 MODULES = {
     "retina": {"name": "視網膜", "numeric": ["Va"], "orders": [
         "Fundus Color Photo Picture, eac", "Microsonography", "FAG"]},
-    "cataract": {"name": "白內障", "numeric": ["Va", "驗光-散瞳前", "Endothelial No", "KM"],
-                 "orders": ["DBR, free charge", "Keratomery", "Corneal Endothelial Microscopy",
-                            "Photokeratoscopy (color)", "FUNCTIONAL VISUAL ANALYSIS"]},
+    "cataract": {"name": "白內障術前分析", "numeric": ["Va", "VacC", "驗光-散瞳前", "IOP-pneumo", "Endothelial No", "KM"],
+                 "orders": ["DBR, free charge", "Photokeratoscopy (color)",
+                            "FUNCTIONAL VISUAL ANALYSIS", "Keratomery",
+                            "Corneal Endothelial Microscopy"]},
     "surgery": {"name": "刀表更新", "numeric": [], "orders": []},
 }
 
@@ -29,7 +30,7 @@ def term_match(text, term):
 
 def exam_name(value):
     value = norm(value).replace("–", "-").replace("－", "-")
-    for name in ("驗光-散瞳前", "Endothelial No", "Va", "KM"):
+    for name in ("VacC", "驗光-散瞳前", "IOP-pneumo", "Endothelial No", "Va", "KM"):
         if term_match(value, name):
             return name
     return ""

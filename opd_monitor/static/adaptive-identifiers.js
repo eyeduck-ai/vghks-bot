@@ -5,10 +5,10 @@ window.PatientTokens = (() => {
   const separator = /[\s,;，；、]/u;
   const split = /[\s,;，；、]+/u;
 
-  function create({input, kind, request, canLookup, status, onResolved, onFailed}) {
+  function create({input, kind, request, canLookup, status, onResolved, onFailed, idleLookupMs = 0}) {
     const field = document.getElementById(input);
     const progress = document.getElementById(status);
-    let queue = [], busy = false, generation = 0;
+    let queue = [], busy = false, generation = 0, idleTimer = 0, composing = false;
     const pending = new Set();
 
     function enqueue(values, mode = kind()) {
@@ -31,6 +31,12 @@ window.PatientTokens = (() => {
       const remainder = complete ? "" : parts.pop() || "";
       field.value = remainder;
       enqueue(parts.filter(Boolean));
+    }
+
+    function scheduleIdle() {
+      clearTimeout(idleTimer);
+      if (!idleLookupMs || !field.value.trim() || composing) return;
+      idleTimer = setTimeout(() => {idleTimer = 0; if (!composing) consume(true);}, idleLookupMs);
     }
 
     async function pump() {
@@ -84,17 +90,20 @@ window.PatientTokens = (() => {
       }
     }
 
-    field.addEventListener("input", event => {if (!event.isComposing) consume();});
-    field.addEventListener("compositionend", () => consume());
+    field.addEventListener("compositionstart", () => {composing = true; clearTimeout(idleTimer);});
+    field.addEventListener("input", event => {if (!event.isComposing && !composing) {consume(); scheduleIdle();}});
+    field.addEventListener("compositionend", () => {composing = false; consume(); scheduleIdle();});
     field.addEventListener("keydown", event => {
-      if (event.key !== "Enter" || event.isComposing) return;
+      if (event.key !== "Enter" || event.isComposing || composing) return;
       event.preventDefault();
+      clearTimeout(idleTimer);
       consume(true);
     });
     field.addEventListener("paste", event => {
       const pasted = event.clipboardData?.getData("text") || "";
       if (!separator.test(pasted)) return;
       event.preventDefault();
+      clearTimeout(idleTimer);
       const start = field.selectionStart ?? field.value.length, end = field.selectionEnd ?? start;
       consume(true, field.value.slice(0,start) + pasted + field.value.slice(end));
     });
@@ -103,6 +112,8 @@ window.PatientTokens = (() => {
       add: (values, mode) => enqueue(values, mode),
       reset() {
         generation++;
+        clearTimeout(idleTimer);
+        composing = false;
         queue = [];
         pending.clear();
         busy = false;

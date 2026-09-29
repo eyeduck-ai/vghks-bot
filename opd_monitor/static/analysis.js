@@ -8,8 +8,8 @@ $("#analysisPane").innerHTML = [
   '<details id="cohortDetails" class="analysis-members"><summary id="cohortSummary">抓取帳號</summary><div class="table-wrap"><table class="patient-table"><thead><tr><th scope="col">病人</th><th scope="col">病歷號</th><th scope="col">來源紀錄</th><th scope="col">抓取帳號</th><th scope="col">清單</th></tr></thead><tbody id="cohortMembers"></tbody></table></div></details>',
   '<div class="analysis-step-heading"><h3><span>2</span> 選擇模組與檢查期間</h3></div><div class="analysis-run-controls"><fieldset class="analysis-modules"><legend>執行模組</legend><label class="check-label"><input type="checkbox" name="analysisModule" value="retina" checked>視網膜</label><label class="check-label"><input type="checkbox" name="analysisModule" value="cataract">白內障</label><label class="check-label"><input type="checkbox" name="analysisModule" value="surgery">刀表更新</label></fieldset><label>檢查起日<input id="analysisStart" type="date" min="1912-01-01"></label><label>檢查迄日<input id="analysisEnd" type="date" min="1912-01-01"></label><label>資料來源<select id="analysisRefresh"><option value="cache">使用快取、補抓缺漏</option><option value="refresh">更新索引與缺少的報告</option><option value="force">強制重新抓取</option></select></label><button id="startAnalysis" type="button" class="primary">執行分析</button></div>',
   '<p class="small muted analysis-hint">日期留白：歷年資料。分析範圍與門診篩選日期分開。</p><div id="analysisRuns" aria-live="polite"></div>',
-  '<div class="analysis-step-heading"><h3><span>3</span> 檢閱分析結果</h3></div><div class="analysis-view-toolbar"><label>查看病人<select id="analysisPatient"></select></label><label>模組<select id="analysisView"><option value="retina">視網膜</option><option value="cataract">白內障</option><option value="surgery">刀表更新</option></select></label><button id="reloadAnalysis" type="button">檢閱本機資料</button><button id="analysisScans" type="button" hidden>歷年掃描病歷</button><button id="analysisJSON" type="button">JSON ↓</button><button id="deleteAnalysisData" type="button" class="quiet-button danger">刪除此病人分析資料</button></div>',
-  '<div id="analysisCoverage" class="small muted"></div><div id="analysisResults"><p class="empty-result">從門診清單或病歷資料庫選取病人</p></div>',
+  '<div class="analysis-step-heading"><h3><span>3</span> 檢閱分析結果</h3></div><div id="cataractLayout" class="cataract-layout"><aside id="cataractPatients" class="cataract-patients" aria-label="術前分析病人清單" hidden></aside><div class="cataract-main"><div class="analysis-view-toolbar"><label>查看病人<select id="analysisPatient"></select></label><label>模組<select id="analysisView"><option value="retina">視網膜</option><option value="cataract">白內障術前分析</option><option value="surgery">刀表更新</option></select></label><button id="reloadAnalysis" type="button">檢閱本機資料</button><button id="cataractUpdate" type="button" hidden>更新歷年資料</button><button id="analysisScans" type="button" hidden>歷年掃描病歷</button><button id="analysisJSON" type="button">JSON ↓</button><button id="deleteAnalysisData" type="button" class="quiet-button danger">刪除此病人分析資料</button></div>',
+  '<div id="analysisCoverage" class="small muted"></div><div id="analysisResults"><p class="empty-result">從門診清單或病歷資料庫選取病人</p></div></div></div>',
   '<div id="comparisonBar" class="comparison-bar" hidden><span id="comparisonCount"></span><button id="showComparison" type="button" class="primary">並排比較</button><button id="clearComparison" type="button">清除選取</button></div>',
   '<div id="surgeryWorkspace" hidden><div class="section-heading"><h3>手術候選</h3><div class="actions"><button id="reloadSurgery" type="button">重新整理候選</button><button id="previewSheet" type="button" class="primary">產生刀表差異預覽</button></div></div><div id="surgeryCandidates"></div><div id="sheetPreview"></div></div>'
 ].join("");
@@ -18,7 +18,8 @@ document.body.insertAdjacentHTML("beforeend", [
   '<dialog id="comparisonDialog" class="wide-dialog" aria-labelledby="comparisonTitle"><div class="dialog-heading"><h2 id="comparisonTitle">歷次檢查比較</h2><button type="button" data-analysis-close="comparisonDialog" aria-label="關閉">×</button></div><div id="comparisonContent" class="comparison-columns"></div></dialog>',
   '<dialog id="googleDialog" aria-labelledby="googleTitle"><form id="googleForm" method="post"><div class="dialog-heading"><h2 id="googleTitle">刀表連線設定</h2><button type="button" data-analysis-close="googleDialog" aria-label="關閉">×</button></div><div class="record-body"><ol class="google-setup-steps"><li>在 Google Cloud 啟用 Sheets API，建立服務帳戶及 JSON 金鑰。<a href="https://developers.google.com/identity/protocols/oauth2/service-account#creatinganaccount" target="_blank" rel="noopener">設定說明 ↗</a></li><li>將刀表共用給金鑰中的 client_email，權限選「編輯者」。</li><li>匯入金鑰、儲存並測試讀取；之後在刀表差異預覽按「套用更新」。</li></ol><label>Google Sheets 網址或代碼<input id="googleSheetId" name="spreadsheet_id" required></label><label>服務帳戶 JSON 金鑰<input id="googleKeyFile" name="key_file" type="file" accept=".json,application/json"></label><p id="googleStatus" class="small muted"></p><p class="small muted">金鑰隨此帳號資料庫保存，換電腦不需重新匯入。</p><p id="googleConnectionResult" role="status" class="small"></p><div class="dialog-actions"><button id="removeGoogleKey" type="button" class="danger">移除本機金鑰</button><button type="submit">儲存連線設定</button><button id="testGoogleConnection" type="button" class="primary">儲存並測試讀取</button></div></div></form></dialog>',
   '<dialog id="sheetHistoryDialog" class="wide-dialog" aria-labelledby="sheetHistoryTitle"><div class="dialog-heading"><h2 id="sheetHistoryTitle">刀表更新紀錄</h2><button type="button" data-analysis-close="sheetHistoryDialog" aria-label="關閉">×</button></div><div id="sheetHistoryContent" class="record-body"></div></dialog>',
-  '<dialog id="rawAnalysisDialog" class="wide-dialog" aria-labelledby="rawAnalysisTitle"><div class="dialog-heading"><h2 id="rawAnalysisTitle">原始資料與版本</h2><button type="button" data-analysis-close="rawAnalysisDialog" aria-label="關閉">×</button></div><div id="rawAnalysisContent" class="record-body"></div></dialog>'
+  '<dialog id="rawAnalysisDialog" class="wide-dialog" aria-labelledby="rawAnalysisTitle"><div class="dialog-heading"><h2 id="rawAnalysisTitle">原始資料與版本</h2><button type="button" data-analysis-close="rawAnalysisDialog" aria-label="關閉">×</button></div><div id="rawAnalysisContent" class="record-body"></div></dialog>',
+  '<dialog id="cataractOrderDialog" class="wide-dialog" aria-labelledby="cataractOrderTitle"><div class="dialog-heading"><div><h2 id="cataractOrderTitle">醫囑報告</h2><p id="cataractOrderPatient" class="small muted"></p></div><button type="button" data-analysis-close="cataractOrderDialog" aria-label="關閉">×</button></div><div id="cataractOrderContent" class="record-body"></div></dialog>'
 ].join(""));
 Choices.enhance($("#analysisRefresh"));
 const analysisNav = button("分析工作區", () => action(async () => { showPane("analysis"); await loadAnalysis(); }));
@@ -173,6 +174,7 @@ function renderAnalysisRuns() {
     }
     return node;
   }));
+  window.CataractUI?.renderPatients();
 }
 async function refreshAnalysisRuns() {
   const signature=JSON.stringify(history.filter(r=>r.kind==="analysis").map(r=>[r.id,r.revision,r.status]));
@@ -182,7 +184,7 @@ async function refreshAnalysisRuns() {
   const finished=data.runs.some(r=>r.cohort_id===currentCohort?.id&&!active.has(r.status)&&
     analysisState.runs.some(old=>old.id===r.id&&active.has(old.status)));
   analysisState.runs=data.runs; renderAnalysisRuns();
-  if(finished)await loadAnalysisResult();
+  if(finished || embeddedAccount && $("#analysisView").value==="cataract")await loadAnalysisResult();
 }
 
 function rawTable(row) {
@@ -290,10 +292,11 @@ function renderExamSection(exam,rows,type) {
 }
 async function loadAnalysisResult() {
   const request=++resultRequest, module=$("#analysisView").value;
+  window.CataractUI?.layout();
   const member=compareMember();
   const identity=member?.account_id+":"+member?.mrn;
   if(identity!==scanPatient){window.ScanBrowser?.reset();scanPatient=identity;}
-  if(member?.account_id)window.FileCompare?.context(member.account_id,member.mrn);
+  if(member?.account_id)window.FileCompare?.context(member.account_id,member.mrn,member.name||"");
   const scanButton=$("#analysisScans");scanButton.hidden=module!=="cataract"||!embeddedAccount;
   scanButton.disabled=!member||member.account_id!==embeddedAccount;
   scanButton.title=scanButton.disabled?"請將病人抓取帳號設為目前登入帳號":"查看此病人的歷年掃描病歷";
@@ -303,6 +306,7 @@ async function loadAnalysisResult() {
   $("#analysisCoverage").replaceChildren();
   if(!currentCohort) {$("#analysisResults").replaceChildren(el("p","從門診清單或病歷資料庫選取病人","empty-result"));return;}
   if(module==="surgery"){await loadSurgery();return;}
+  if(module==="cataract"&&embeddedAccount)await window.CataractUI.refreshStatus();
   const data=await ap("results",{cohort_id:currentCohort.id,mrn:$("#analysisPatient").value,module,start:$("#analysisStart").value,end:$("#analysisEnd").value});
   if(request!==resultRequest)return;analysisResult=data;
   const coverage=data.coverage, context=$("#analysisCoverage");
@@ -316,6 +320,7 @@ async function loadAnalysisResult() {
     if(coverage.unknown_date_cases)detail.append(el("p",coverage.unknown_date_cases+" 次就診未提供日期。"));
     context.append(detail);
   }
+  if(module==="cataract"&&embeddedAccount){window.CataractUI.render(data);return;}
   const definitions=analysisState.modules[module];
   $("#analysisResults").replaceChildren(...definitions.numeric.map(exam=>renderExamSection(exam,data.numeric.filter(r=>r.exams.includes(exam)),"numeric")),
     ...definitions.orders.map(exam=>renderExamSection(exam,data.orders.filter(r=>r.exams.includes(exam)),"order")));

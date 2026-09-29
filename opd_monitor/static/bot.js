@@ -31,7 +31,7 @@ let collapsedDays=new Set();
 let suppressCompletedReview=false,reconnectTask="",reconnectTarget="";
 const reconnectAttempts=new Map(),recoverySeen=new Map(),resumedTasks=new Set();
 let recoveringConnection=false;
-let reviewHeaderTask="",reviewHeaderExpanded=false,reviewSetupExpanded=false,reviewHasResults=false;
+let reviewHeaderTask="",reviewSetupExpanded=false,reviewHasResults=false;
 
 function say(message,error=false){const n=$(error?"#notice":"#toast");n.textContent=message;n.hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>n.hidden=true,error?9000:3500);}
 function applyReadonly(){window.DatabaseUI?.readonly();}
@@ -138,8 +138,6 @@ const allRows=()=>listing?.days.flatMap(d=>d.rows)||[];
 function visibleRows(){const q=$("#listQuery").value.trim().toLocaleLowerCase();return allRows().filter(r=>(listTab==="own"?own(r):!own(r))&&(!q||(r.mrn+" "+r.name+" "+(r.sequence_no||"")).toLocaleLowerCase().includes(q)));}
 function selectedPatients(){const patients=new Map();for(const row of allRows())if(selected.has(row.id)&&row.mrn&&!patients.has(row.mrn))patients.set(row.mrn,{mrn:row.mrn,name:row.name});for(const patient of manual)if(!patients.has(patient.mrn)||!patients.get(patient.mrn).name)patients.set(patient.mrn,patient);return [...patients.values()];}
 function selectedMRNs(){return selectedPatients().map(patient=>patient.mrn);}
-function removeSelectedPatient(mrn){for(const row of allRows())if(row.mrn===mrn)selected.delete(row.id);manual=manual.filter(patient=>patient.mrn!==mrn);renderList();draftSave();}
-function renderManualChips(){$("#resolvedPatients").replaceChildren(...manual.map(patient=>patientChip(patient,()=>removeSelectedPatient(patient.mrn))));}
 async function browse(force=false){
  dateMode();if(!$("#dateForm").reportValidity())return;
  selected.clear();manual=[];activeListRun="";
@@ -169,10 +167,8 @@ function renderList(){
  }
  if(!rows.length)content.append(empty(listing?.days.some(d=>d.cached)?"此範圍沒有符合的掛號。":"選擇日期查看門診清單，或手動加入病人。"));
  $("#manualMembersSection").hidden=!manual.length;$("#manualCount").textContent=manual.length+" 位";
- $("#manualMembers").replaceChildren(table(["病人／病歷號","性別／生日","操作"],manual.map(p=>[patientName(p),(p.sex||"—")+" · "+(p.birthday||p.age||"—"),btn("移除",()=>{manual=manual.filter(m=>m.mrn!==p.mrn);renderList();draftSave();},"quiet")])));
+ $("#manualMembers").replaceChildren(table(["選取","病人／病歷號","性別／生日"],manual.map(p=>[check("選取手動加入病人 "+p.mrn,true,v=>{if(!v){manual=manual.filter(m=>m.mrn!==p.mrn);renderList();draftSave();}}),patientName(p),(p.sex||"—")+" · "+(p.birthday||p.age||"—")])));
  const n=selectedMRNs().length;$("#selectionCount").textContent=`已選 ${n} 位病人`;
- $("#listSelectedChips").replaceChildren(...selectedPatients().map(patient=>patientChip(patient,()=>removeSelectedPatient(patient.mrn))));
- renderManualChips();
  for(const id of ["saveCollection","useTools","selectedTags"])$("#"+id).disabled=!n;for(const button of $$("[data-use-tool]"))button.disabled=!n;
 }
 async function saveCurrentSet(){return api("/sets/save",{registrations:allRows().filter(r=>selected.has(r.id)).map(r=>({day:r.day,id:r.id})),mrns:manual.map(p=>p.mrn).join("\n"),source_range:ranges()});}
@@ -184,7 +180,7 @@ function toolOptions(){
  $("#soapModeHelp").textContent=(registration?"依選取的掛號日期與科別取得該次門診 SOAP；未來掛號尚未到診。":"取得病人最新符合條件的門診 SOAP；若較新紀錄無內容，會往前補找。")+"就診日期以今天為上限；科別名稱或代碼包含任一關鍵字即符合，以逗號或頓號分隔。";
  $("#reviewRefreshHelp").textContent=$("#forceReview").checked?"本次重新查詢就診紀錄並下載 SOAP；舊版本保留。":"預設重用有效的已存病歷；索引或 SOAP 快取過期、資料缺漏時才補抓。";Choices.sync();
 }
-async function openModule(cohort,module="retina"){window.ToolWorkspace?.activate(module);if(await window.ToolWorkspace?.adoptModule(cohort)===false)return;$("#moduleTitle").textContent={retina:"視網膜比較",cataract:"白內障術前比較",surgery:"刀表更新"}[module]||"檢查比較";$("#moduleFrame").src="/tools?account="+encodeURIComponent(account)+"&cohort="+encodeURIComponent(cohort)+"&module="+encodeURIComponent(module);showPage("module");}
+async function openModule(cohort,module="retina"){window.ToolWorkspace?.activate(module);if(await window.ToolWorkspace?.adoptModule(cohort)===false)return;$("#moduleTitle").textContent={retina:"視網膜比較",cataract:"白內障術前分析",surgery:"刀表更新"}[module]||"檢查比較";$("#moduleFrame").src="/tools?account="+encodeURIComponent(account)+"&cohort="+encodeURIComponent(cohort)+"&module="+encodeURIComponent(module);showPage("module");}
 function renderTasks(history){
  const container=$("#taskList");container.replaceChildren();const tasks=[...(work.tasks||[]).map(t=>({...t,bot:true})),...(work.sdk_sessions||[]).map(t=>({...t,session:true})),...(history?.runs||[]).filter(r=>r.kind!=="bot")].sort((a,b)=>(b.created_at||"").localeCompare(a.created_at||""));
  $("#taskCount").textContent=tasks.filter(t=>inProgress.has(t.status)).length||"";
@@ -248,15 +244,12 @@ const reviewFilters=()=>({q:$("#reviewQuery").value,search_mode:$("#reviewSearch
 function reviewConditionSummary(task){const department=task.department_keywords?.length?"科別含任一：「"+task.department_keywords.join("」、「")+"」":task.department_keyword?"科別含「"+task.department_keyword+"」":task.department_filter==="all"?"不限科別":"同科別";return [task.mode==="registration"?"該次門診的 SOAP":"最新 SOAP",department,"截至 "+task.cutoff,task.force?"重新下載病歷":task.refresh?"檢查新紀錄":"重用已存病歷"].join(" · ");}
 function renderReviewHeader(value){
  const task=value.task;
- if(reviewHeaderTask!==task.id){reviewHeaderTask=task.id;reviewHeaderExpanded=false;reviewSetupExpanded=false;reviewHasResults=false;}
+ if(reviewHeaderTask!==task.id){reviewHeaderTask=task.id;reviewSetupExpanded=false;reviewHasResults=false;}
  reviewHasResults ||= value.patients.some(patient=>patient.records?.length);
  const finished=["completed","partial"].includes(task.status)&&reviewHasResults;
  $("#reviewTitle").textContent="病歷檢閱";
  $("#reviewHeadline").textContent=`${value.all_total} 位病人 · ${labels[task.status]||task.status}`;
- $("#reviewContext").textContent=`${task.name||"病人集合"} · 建立於 ${time(task.created_at)}`;
- $("#reviewConditions").textContent=reviewConditionSummary(task);
- $("#reviewHeaderDetails").hidden=!reviewHeaderExpanded;
- const toggle=$("#reviewInfoToggle");toggle.setAttribute("aria-expanded",String(reviewHeaderExpanded));setIcon(toggle,"info",reviewHeaderExpanded?"收起檢閱資訊":"展開檢閱資訊");
+ $("#reviewChangeSetup").title=[task.name||"病人集合",reviewConditionSummary(task)].join(" · ");
  document.body.classList.toggle("review-result-compact",page==="review"&&finished&&!reviewSetupExpanded);
  if(finished||suppressCompletedReview&&task.status==="completed")$("#reviewProgress").replaceChildren();else JobProgress.show("#reviewProgress",task);
 }
@@ -365,7 +358,9 @@ async function showDiagnostics(values){
 }
 async function extension(kind,mrn,recordId="",force=false){window.ReviewHistoryUI?.dismiss();extensionContext={kind,mrn,record_id:recordId};$("#dataTitle").textContent=kind==="numeric"?"本次數值報告":"掛號紀錄";$("#dataContent").replaceChildren(node("p","正在讀取…","muted"));dialog("dataDialog");setPatientDialogContext("dataDialog",mrn);const {data}=await api("/extensions/read",extensionContext);if(data)renderExtension(data,kind);if(!work.online){if(!data)$("#dataContent").replaceChildren(empty("沒有已保存資料，請登入後再查詢。"));return;}const task=await api("/tasks/start",{...extensionContext,force});extensionTask=task.task_id;await showExtensionTask(extensionTask,kind,false);}
 async function showExtensionTask(id,kind,open=true){const task=await api("/tasks/detail?id="+encodeURIComponent(id));extensionTask=id;extensionContext={kind:kind||task.kind,mrn:task.mrn,record_id:task.record_id||""};if(open){$("#dataTitle").textContent=task.name;dialog("dataDialog");setPatientDialogContext("dataDialog",task.mrn);}if(task.items.length)renderExtension(task.items[0],kind||task.kind);else $("#dataContent").replaceChildren(node("p",task.message||labels[task.status],"muted"));$("#dataContent").prepend(JobProgress.create(task));if(!inProgress.has(task.status)){extensionTask="";if((kind||task.kind)==="registrations"&&page==="review"&&currentReview){await window.ReviewNotesUI.load(currentReview,{force:true});await loadReview();}}}
-function appendNumericTables(c,tables){for(const t of tables){
+const eyeNumericPatterns=[/(?<![a-z0-9])va(?![a-z0-9])/i,/(?<![a-z0-9])vacc(?![a-z0-9])/i,/驗光\s*-\s*散瞳前/i,/(?<![a-z0-9])iop\s*-\s*pneumo(?![a-z0-9])/i,/(?<![a-z0-9])endothelial\s+no(?![a-z0-9])/i,/(?<![a-z0-9])km(?![a-z0-9])/i];
+function eyeNumericRank(t){const text=[t.title||t.name||"",...(t.headers||[]),...(t.column_paths||[]).flat()].join(" ").normalize("NFKC").replace(/[–－−]/g,"-");const found=eyeNumericPatterns.findIndex(pattern=>pattern.test(text));return found<0?eyeNumericPatterns.length:found;}
+function appendNumericTables(c,tables){for(const {table:t} of tables.map((table,index)=>({table,index})).sort((a,b)=>eyeNumericRank(a.table)-eyeNumericRank(b.table)||a.index-b.index)){
   const rows=t.rows||[],paths=t.column_paths||[],legacy=t.headers||[],width=Math.max(0,...rows.map(row=>row.length));
   const aligned=paths.length===width&&rows.every(row=>row.length===width);
   const oldAligned=!paths.length&&!t.header_rows?.length&&legacy.length===width&&rows.every(row=>row.length===width);
@@ -464,7 +459,6 @@ $("#sidebarAccount").addEventListener("toggle",()=>{if($("#sidebarAccount").open
 for(const b of $$("[data-page]"))b.addEventListener("click",()=>act(()=>navigate(b.dataset.page)));
 document.addEventListener("click",event=>{const panel=$("#sidebarAccount");if(panel.open&&!panel.contains(event.target))panel.open=false;});
 $("#reviewPatientsToggle").addEventListener("click",toggleReviewPatients);
-$("#reviewInfoToggle").addEventListener("click",()=>{reviewHeaderExpanded=!reviewHeaderExpanded;if(reviewData)renderReviewHeader(reviewData);});
 $("#reviewChangeSetup").addEventListener("click",()=>{reviewSetupExpanded=true;document.body.classList.remove("review-result-compact");if($("#toolEditSetup").getAttribute("aria-expanded")!=="true")$("#toolEditSetup").click();$("#toolSourcePanel").scrollIntoView({block:"start"});});
 for(const b of $$("[data-close]"))b.addEventListener("click",()=>$("#"+b.dataset.close).close());
 $("#logout").addEventListener("click",()=>act(async()=>{if(!await window.ReviewNotesUI.flushAll())throw new Error("有備註尚未儲存，請重試後再登出。");const key=account;clearTimeout(draftTimer);if(!root.read_only){await api("/draft/save",draftValue());await ra("/accounts/logout",{id:key});}showEntry(key);}));
@@ -506,7 +500,7 @@ const manualLookup=window.PatientTokens.create({
  onResolved:(patient,mode)=>{manualErrors.delete(mode+":"+(patient.input||patient.mrn));renderManualErrors();addManualPatient(patient);},
  onFailed:(token,message,mode)=>{manualErrors.set(mode+":"+token,{token,message,mode});renderManualErrors();},
 });
-$("#manualOpen").addEventListener("click",()=>{dialog("manualDialog");renderManualChips();manualLookup.focus();});
+$("#manualOpen").addEventListener("click",()=>{dialog("manualDialog");manualLookup.focus();});
 $("#saveCollection").addEventListener("click",()=>act(async()=>{await saveCurrentSet();await refresh();say("病人集合已保存。");}));
 $("#useTools").addEventListener("click",()=>act(async()=>{const group=await saveCurrentSet();await refresh();openTools(group);}));
 $("#selectedTags").addEventListener("click",()=>openPatientTags(selectedMRNs()));

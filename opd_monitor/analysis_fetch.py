@@ -6,7 +6,7 @@ from contextlib import ExitStack
 from dataclasses import fields
 from datetime import date, timedelta
 
-from vghks_sdk import AuthenticationError
+from vghks_sdk import AuthenticationError, SoapRecord
 from vghks_sdk.models import (
     NumericHistoryFilter,
     OrderDetailRef,
@@ -22,8 +22,10 @@ from vghks_sdk.order_status import classify_order_execution
 
 from .analysis_numeric import MODULES, iso_day, term_match
 from .analysis_store import digest
+from .library import current_cache
 from .scanner import Cancelled, safe_failure
 from .settings import today
+from .soap_data import snapshot as soap_snapshot
 from .storage import StorageError
 
 
@@ -73,6 +75,15 @@ def validate_visits(value, mrn):
             raise ValueError("就診清單病人不符，已略過。")
 
 
+def validate_order_index(value, allowed_mrns):
+    if not isinstance(value, list):
+        raise ValueError("醫囑索引格式不正確。")
+    for order in value:
+        if not isinstance(order, dict) or order.get("mrn") not in allowed_mrns:
+            raise ValueError("醫囑索引病歷號未經就診清單核對。")
+        validate_patient(order, order["mrn"])
+
+
 def validate_case_report(value, lookup_mrn, case):
     validate_patient(value, case.mrn)
     returned = value.get("case") if isinstance(value, dict) else None
@@ -109,7 +120,7 @@ class RunSessions:
 
 
 class PatientCollector:
-    def __init__(self, store, state, member, settings, factory, options, sessions=None):
+    def __init__(self, store, state, member, settings, factory, options, sessions=None, review=None):
         self.store, self.state, self.member = store, state, member
         self.mrn, self.settings, self.factory = member["mrn"], settings, factory
         self.options = options
@@ -119,6 +130,7 @@ class PatientCollector:
         self.seen = {}
         self.issues = []
         self.sessions = sessions
+        self.review = review
 
     def sdk(self, target="prq"):
         if self.sessions is not None:
@@ -185,7 +197,9 @@ class PatientCollector:
             modules = self.options["modules"]
             terms = list(dict.fromkeys(t for m in modules for t in MODULES[m]["orders"]))
             if terms:
-                self.examinations(terms)
+                visits = self.examinations(terms)
+                if self.options.get("lazy_cataract_orders"):
+                    self.latest_eye_soap(visits)
             if "surgery" in modules:
                 self.surgery()
         finally:
@@ -193,19 +207,20 @@ class PatientCollector:
 
     def examinations(self, terms):
         refresh = self.options["refresh"]
+        visits = self.query("visits", "visits", lambda: self.sdk().records.get_visit_cases(self.mrn),
+                            refresh=refresh, validator=validate_visits)
+        case_sources = {digest(model(VisitCase, raw).identity): raw["mrn"] for raw in visits or []}
+        self.allowed_mrns = {self.mrn, *case_sources.values()}
         numeric = self.query("numeric-history", "numeric", lambda: self.sdk().records.get_numeric_history(
             self.mrn, NumericHistoryFilter()), refresh=refresh)
         sources = {}
         for category in ("*", "OR"):
             result = self.query("orders-history:" + category, "order_index",
                                 lambda category=category: self.sdk().orders.get_order_history(
-                                    self.mrn, OrderHistoryFilter(category=category)), refresh=refresh)
+                                    self.mrn, OrderHistoryFilter(category=category)), refresh=refresh,
+                                validator=lambda value, _: validate_order_index(value, self.allowed_mrns))
             if result is not None:
                 sources[category] = result
-        visits = self.query("visits", "visits", lambda: self.sdk().records.get_visit_cases(self.mrn),
-                            refresh=refresh, validator=validate_visits)
-        case_sources = {digest(model(VisitCase, raw).identity): raw["mrn"] for raw in visits or []}
-        self.allowed_mrns = {self.mrn, *case_sources.values()}
         numeric_cutoff = (today() - timedelta(days=3650)).isoformat()
         order_cutoff = (today() - timedelta(days=4000)).isoformat()
         older, unsupported, unknown_dates = 0, [], 0
@@ -251,12 +266,15 @@ class PatientCollector:
         groups = defaultdict(list)
         for source, orders in sources.items():
             for order in orders:
-                expected = self.mrn if source in {"*", "OR"} else case_sources.get(source)
+                expected = ((order.get("mrn") if order.get("mrn") in self.allowed_mrns else None)
+                            if source in {"*", "OR"} else case_sources.get(source))
                 if not expected or order.get("mrn") != expected or not any(term_match(order.get("name", ""), t) for t in terms):
                     continue
                 groups[order_identity(order)].append({"source": source, "order": order})
         for key, variants in groups.items():
             self.state.check_cancel()
+            if self.options.get("lazy_cataract_orders"):
+                continue
             order = min((v["order"] for v in variants),
                         key=lambda o: {"COMPLETED": 0, "UNKNOWN": 1, "NOT_EXECUTED": 2}[
                             classify_order_execution(o.get("status", ""))])
@@ -283,6 +301,66 @@ class PatientCollector:
             "note": "涵蓋院方回傳的歷史索引與可補查門診；無法補查的住院／急診另列。",
         }
         self.store.save_step(self.mrn, "coverage", "coverage", coverage, self.settings.username)
+        return visits
+
+    def latest_eye_soap(self, visits):
+        """Save the newest readable eye SOAP without changing a review task or its tags."""
+        if visits is None:
+            return
+        from .review import case_key
+
+        candidates = []
+        for raw in visits:
+            case = model(VisitCase, raw)
+            if (case.patient_mrn == self.mrn and case.case_type == "O" and case.visit_date
+                    and case.visit_date <= today()
+                    and "眼科" in (case.section_name + " " + case.section_code)):
+                candidates.append(case)
+        candidates = sorted({case.identity: case for case in candidates}.values(),
+                            key=lambda case: case.visit_date, reverse=True)
+        failed = False
+        for case in candidates:
+            self.state.check_cancel()
+            key = case_key(case)
+            if self.review and self.review.db.deleted_since(key, ""):
+                continue
+            cached = self.store.library.get_record(key)
+            if cached and not (self.options["force"] or self.options["refresh"]) and current_cache(case.visit_date.isoformat(), cached["updated_at"]):
+                self.store.save_step(self.mrn, "cataract-soap", "cataract_soap",
+                                     {"status": "ready", "record_id": key}, self.settings.username)
+                self.state.count(analysis_cached=1)
+                return
+            try:
+                self.state.update(stage="analysis", message=f"{self.member.get('name') or self.mrn} · 最新眼科 SOAP")
+                soap = self.sdk().records.get_soap(case)
+                if (not isinstance(soap, SoapRecord) or soap.case.identity != case.identity
+                        or soap.case.patient_mrn != self.mrn):
+                    raise ValueError("眼科 SOAP 就診識別不符。")
+                if not soap.full_text.strip():
+                    continue
+                record = {"id": key, "mrn": self.mrn, "name": self.member.get("name", ""),
+                          "date": case.visit_date.isoformat(), "section": case.section_name,
+                          "section_code": case.section_code, "case_no": case.case_no,
+                          "source_mrn": case.mrn, "case_index": case.index,
+                          "doctor": case.doctor_name, "doctor_card": case.doctor_card,
+                          **soap_snapshot(soap)}
+                self.store.library.save_record(record, self.settings.username, self.state.data["id"])
+                self.store.save_step(self.mrn, "cataract-soap", "cataract_soap",
+                                     {"status": "ready", "record_id": key}, self.settings.username)
+                self.state.count(analysis_fetched=1)
+                self.state.checkpoint()
+                return
+            except (Cancelled, StorageError, AuthenticationError):
+                raise
+            except Exception as exc:
+                failed = True
+                message, code = safe_failure(exc)
+                self.issues.append({"key": "cataract-soap:" + key, "message": message, "code": code})
+                self.state.issue("最新眼科 SOAP", message, code=code, mrn=self.mrn)
+        if not failed:
+            self.store.save_step(self.mrn, "cataract-soap", "cataract_soap",
+                                 {"status": "missing" if candidates else "no_visit", "record_id": ""},
+                                 self.settings.username)
 
     def in_range(self, day):
         return not ((self.options.get("start") and day < self.options["start"])

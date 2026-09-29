@@ -16,7 +16,7 @@ window.ReviewHistoryUI=(()=>{
  function action(label,callback){const button=btn(label,callback,"quiet");button.classList.add("history-action");return button;}
  async function load(next,{push=false,force=false}={}){
   if(push&&context)stack.push(context);
-  if(!same(context,next)){orderQuery="";orderGroup="date";orderPage=visitPage=0;}
+  if(!same(context,next)){orderQuery="";orderGroup=next.resource==="orders"?"name":"date";orderPage=visitPage=0;}
   context=next;taskId="";signature="";const request=++sequence;
   extensionTask="";
   window.FileCompare?.context(account,next.mrn,reviewPatientIdentity(next.mrn,next.review_task_id).name);

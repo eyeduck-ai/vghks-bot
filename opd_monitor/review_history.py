@@ -50,8 +50,8 @@ class ReviewHistory:
             if task.get("kind") != "review" or mrn not in {member["mrn"] for member in task["members"]}:
                 raise ValueError("病人不在本次檢閱清單。")
         else:
-            if resource not in {"scans", "case_scans", "scan_asset"}:
-                raise ValueError("分析清單僅能開啟掃描病歷。")
+            if resource not in {"scans", "case_scans", "scan_asset", "order_report"}:
+                raise ValueError("分析清單僅能開啟掃描病歷或醫囑報告。")
             member = self.app.analysis.member(values)
             if member.get("account_id") != self.app.account_id:
                 raise ValueError("此病人未指定給目前抓取帳號。")
@@ -202,7 +202,18 @@ class ReviewHistory:
             return step["payload"], step["saved_at"]
         if resource == "order_report":
             step = self.store.step(mrn, "history-order:" + reference)
-            return (step["payload"], step["saved_at"]) if step else (None, "")
+            if step:
+                return step["payload"], step["saved_at"]
+            old = self.store.step(mrn, "collected-order:" + reference)
+            if old:
+                value = old["payload"]
+                return {"id": reference, "order": self._public_orders({reference: self.order(mrn, reference)})[0],
+                        "details": [], "texts": [{"text": row.get("text", ""), "fields": row.get("fields", {})}
+                                                 for row in value.get("texts", [])],
+                        "assets": [{key: asset[key] for key in ("digest", "mime", "size") if key in asset}
+                                   for asset in value.get("assets", [])],
+                        "issues": [], "status": value.get("status", "ready")}, old["saved_at"]
+            return None, ""
         record = self.app.store.library.get_record(reference)
         return (record, record["updated_at"]) if record and record["mrn"] == mrn else (None, "")
 

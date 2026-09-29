@@ -1,6 +1,6 @@
 "use strict";
 window.ToolWorkspace=(()=>{
-  const names={review:"病歷檢閱",retina:"視網膜比較",cataract:"白內障術前比較",surgery:"刀表更新"};
+  const names={review:"病歷檢閱",retina:"視網膜比較",cataract:"白內障術前分析",surgery:"刀表更新"};
   const retrieval={cache:"重用已存病歷",refresh:"檢查新紀錄",force:"重新下載病歷"};
   let kind="review",states={},drafts={},loaded=false,group=null,generation=0;
   let soapSetup=false,soapTask="",soapSetId="";
@@ -167,6 +167,7 @@ window.ToolWorkspace=(()=>{
   }
   const lookup=window.PatientTokens.create({
     input:"toolIdentifier",kind:()=> "auto",request:api,
+    idleLookupMs:700,
     canLookup:()=>!!account&&!!work?.online&&!root.read_only,status:"toolResolveResult",
     onResolved:addResolved,
     onFailed:(token,message)=>{lookupErrors.set("auto:"+token,{token,message});renderLookupErrors();},
