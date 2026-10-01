@@ -13,6 +13,31 @@ py -3.11 -m venv .venv
 .venv/Scripts/python.exe -m pip install -r requirements-build.lock.txt
 ```
 
+### 資料夾與套件名稱
+
+外層專案資料夾可命名為 `vghks-bot`；主程式套件為 `vghks_bot/`，`run.py` 與命令列入口都載入 `vghks_bot.app:main`。套件包含後端、資料儲存及 `static/` 介面，不能當作暫存移除。
+
+既有工作區改名時，先關閉執行中的程式及使用該目錄的終端，再於檔案總管改名。在 Codex 既有專案的「Edit project」調整資料夾，將新路徑設為主要資料夾；保留原專案及對話，不需要刪除後重建。舊對話記錄的工作目錄可能仍是舊路徑，執行命令時應確認目前位於新目錄。
+
+Python 虛擬環境的啟動腳本與部分命令列程式含建立時的絕對路徑，單純搬移 `.venv` 不代表環境已重建。在新資料夾執行建置，腳本會檢查啟動路徑；缺少或不符目前路徑時自動重建並重新安裝固定依賴：
+
+```powershell
+./build.ps1
+
+# 環境損壞或要明確重新安裝時。
+./build.ps1 -RebuildEnvironment
+```
+
+重建只處理目前專案的 `.venv`，遇到連結或 junction 會停止。建置工具依自身位置取得專案根目錄，不需修改 Git remote；若有設定外部資料庫，仍須保留其資料夾及有效路徑。
+
+可核對 `.venv/pyvenv.cfg` 的建立命令與 `Scripts/activate.bat` 的 `VIRTUAL_ENV` 是否為新路徑，再確認 Python 套件及命令列啟動器：
+
+```powershell
+.venv/Scripts/python.exe -c "import sys, vghks_bot; print(sys.executable); print(sys.prefix); print(vghks_bot.__file__)"
+.venv/Scripts/pip.exe --version
+.venv/Scripts/ruff.exe --version
+```
+
 ## 執行與測試
 
 ```powershell
@@ -55,11 +80,19 @@ py -3.11 -m venv .venv
 
 ```powershell
 ./tools/clean.ps1
+
+# 保留驗證日誌，並將發布 ZIP 精簡為最新兩版。
+./tools/clean.ps1 -KeepValidationReports -OldReleases
+
+# 先列出預計清理項目。
+./tools/clean.ps1 -KeepValidationReports -OldReleases -WhatIf
 ```
 
-清理 `.build/`、`.ruff_cache/`、`build/` 及來源下的 Python 快取；先檢查範圍，遇到連結／junction 會停止。保留 `dist/`、`.venv/`、`.local/` 與 `VGHKS-bot-data/`。
+預設清理 `.build/`、`.ruff_cache/`、`build/` 及來源下的 Python 快取；先檢查範圍，遇到連結／junction 會停止。保留 `dist/`、`.venv/`、`.local/` 與 `VGHKS-bot-data/`。`-KeepValidationReports` 保留 `.build/ci/`；`-OldReleases` 只清除正式命名的舊 ZIP，保留最新兩版，EXE、文件、校驗值與 HAR 不受影響。
 
 `.local/` 供個人備份及診斷封存，不列入 Git。HAR 擷取檔及 SDK 診斷 JSONL 也會被忽略，來源發布檢查會拒絕它們與 ZIP 建置包。版本控制只保存可分享的原始碼、合成測試、公開預設值與文件；`dist/` 的舊版本包經確認後可移除，`VGHKS-bot-data/` 不屬於建置快取。
+
+搬回的院內資料快照及不再使用的個人診斷，應確認用途及需要保留的內容後再清除；清理腳本不處理這些資料。自動測試及 EXE 離線自測使用合成 SDK 與獨立暫存資料庫，不讀取專案根目錄的 `VGHKS-bot-data/`；正常啟動若未指定 `--data-dir`，仍會在原始碼或 EXE 同層使用或建立此資料目錄。
 
 ## 更新 SDK
 

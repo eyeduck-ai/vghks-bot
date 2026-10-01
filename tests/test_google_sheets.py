@@ -5,8 +5,8 @@ from unittest.mock import Mock
 
 import requests
 
-from opd_monitor.google_sheets import GoogleSettings, SheetError, SheetsClient, SheetUncertain
-from opd_monitor.selftest_analysis import check_google_and_sheet
+from vghks_bot.google_sheets import GoogleSettings, SheetError, SheetsClient, SheetUncertain
+from vghks_bot.selftest_analysis import check_google_and_sheet
 
 
 class GoogleTests(unittest.TestCase):

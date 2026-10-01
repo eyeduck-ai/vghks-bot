@@ -5,9 +5,9 @@ import threading
 import unittest
 from pathlib import Path
 
-from opd_monitor.selftest import SyntheticSDK
-from opd_monitor.server import Application, LocalServer
-from opd_monitor.settings import Settings
+from vghks_bot.selftest import SyntheticSDK
+from vghks_bot.server import Application, LocalServer
+from vghks_bot.settings import Settings
 
 
 class ServerTests(unittest.TestCase):

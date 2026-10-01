@@ -10,7 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from opd_monitor import __version__  # noqa: E402
+from vghks_bot import __version__  # noqa: E402
 
 
 def main():

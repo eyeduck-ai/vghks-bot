@@ -11,13 +11,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from opd_monitor.bot_server import BotHandler, BotServer  # noqa: E402
-from opd_monitor.databases import DatabaseManager  # noqa: E402
-from opd_monitor.selftest_bot import BotSyntheticSDK  # noqa: E402
-from opd_monitor.selftest_soap import synthetic_soap  # noqa: E402
-from opd_monitor.settings import Settings, today  # noqa: E402
-from opd_monitor.soap_data import snapshot as soap_snapshot  # noqa: E402
-from opd_monitor.surgery_schedule import EBOARD_URL  # noqa: E402
+from vghks_bot.bot_server import BotHandler, BotServer  # noqa: E402
+from vghks_bot.databases import DatabaseManager  # noqa: E402
+from vghks_bot.selftest_bot import BotSyntheticSDK  # noqa: E402
+from vghks_bot.selftest_soap import synthetic_soap  # noqa: E402
+from vghks_bot.settings import Settings, today  # noqa: E402
+from vghks_bot.soap_data import snapshot as soap_snapshot  # noqa: E402
+from vghks_bot.surgery_schedule import EBOARD_URL  # noqa: E402
 
 
 class LocalBoardHandler(BotHandler):

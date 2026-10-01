@@ -1,8 +1,8 @@
 import unittest
 
-from opd_monitor.keywords import extract_keywords
-from opd_monitor.settings import Settings
-from opd_monitor.surgery import parse_surgery
+from vghks_bot.keywords import extract_keywords
+from vghks_bot.settings import Settings
+from vghks_bot.surgery import parse_surgery
 
 FULL_TEXT_SETTINGS = Settings().update({"categories": [
     {**tag, "scope": "all"} for tag in Settings().public()["categories"]

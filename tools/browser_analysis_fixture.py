@@ -12,9 +12,9 @@ sys.path.insert(0, str(ROOT / "tests"))
 from analysis_fixtures import ExamSDK, MemorySheets, soap_record  # noqa: E402
 from vghks_sdk import OutpatientPatient  # noqa: E402
 
-from opd_monitor.jobs import Application  # noqa: E402
-from opd_monitor.server import LocalServer  # noqa: E402
-from opd_monitor.settings import Settings  # noqa: E402
+from vghks_bot.jobs import Application  # noqa: E402
+from vghks_bot.server import LocalServer  # noqa: E402
+from vghks_bot.settings import Settings  # noqa: E402
 
 
 class BrowserSDK(ExamSDK):

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vghks-bot"
-version = "6.6.20"
+version = "6.6.33"
 description = "Portable VGHKS outpatient, surgery, approval and earnings workspaces"
 requires-python = ">=3.11"
 dependencies = [
@@ -17,17 +17,17 @@ dependencies = [
 build = ["PyInstaller==6.14.2", "ruff==0.14.14"]
 
 [project.scripts]
-vghks-bot = "opd_monitor.app:main"
+vghks-bot = "vghks_bot.app:main"
 
 [project.urls]
 Repository = "https://github.com/eyeduck-ai/vghks-bot"
 Issues = "https://github.com/eyeduck-ai/vghks-bot/issues"
 
 [tool.setuptools.packages.find]
-include = ["opd_monitor*"]
+include = ["vghks_bot*"]
 
 [tool.setuptools.package-data]
-opd_monitor = ["static/*", "defaults.json", "licenses/*"]
+vghks_bot = ["static/*", "defaults.json", "licenses/*"]
 
 [tool.ruff]
 target-version = "py311"

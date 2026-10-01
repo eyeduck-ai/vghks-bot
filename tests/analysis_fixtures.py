@@ -22,10 +22,10 @@ from vghks_sdk.models import (
     VisitCase,
 )
 
-from opd_monitor.analysis_store import digest
-from opd_monitor.google_sheets import SheetError, SheetUncertain
-from opd_monitor.settings import today
-from opd_monitor.sheet_plan import HEADERS
+from vghks_bot.analysis_store import digest
+from vghks_bot.google_sheets import SheetError, SheetUncertain
+from vghks_bot.settings import today
+from vghks_bot.sheet_plan import HEADERS
 
 
 class ExamSDK:

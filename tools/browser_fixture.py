@@ -5,9 +5,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from opd_monitor.selftest import SyntheticSDK  # noqa: E402
-from opd_monitor.server import Application, LocalServer  # noqa: E402
-from opd_monitor.settings import Settings  # noqa: E402
+from vghks_bot.selftest import SyntheticSDK  # noqa: E402
+from vghks_bot.server import Application, LocalServer  # noqa: E402
+from vghks_bot.settings import Settings  # noqa: E402
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--port", type=int, default=8765)

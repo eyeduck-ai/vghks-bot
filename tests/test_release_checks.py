@@ -10,7 +10,7 @@ class ReleaseBoundaryTests(unittest.TestCase):
                      "captures/session.har", "captures/diagnostics.jsonl", "release/old-build.zip"):
             with self.subTest(name=name), self.assertRaises(ValueError):
                 check_paths([name])
-        check_paths(["docs/USER_GUIDE.md", "opd_monitor/defaults.json", ".github/workflows/windows.yml"])
+        check_paths(["docs/USER_GUIDE.md", "vghks_bot/defaults.json", ".github/workflows/windows.yml"])
 
     def test_release_tag_must_match_both_project_versions(self):
         version = check_metadata()

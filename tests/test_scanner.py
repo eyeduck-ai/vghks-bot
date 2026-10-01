@@ -6,8 +6,8 @@ from unittest.mock import Mock
 
 from vghks_sdk import AuthenticationError, OutpatientPatient, ParseError, SoapRecord, VisitCase
 
-from opd_monitor.scanner import ScanState, run_scan
-from opd_monitor.settings import Settings
+from vghks_bot.scanner import ScanState, run_scan
+from vghks_bot.settings import Settings
 
 DAY = date(2026, 9, 19)
 CONFIG = Settings(username="DOC1", password="synthetic-password")

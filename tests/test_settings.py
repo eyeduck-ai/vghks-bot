@@ -1,7 +1,7 @@
 import unittest
 from datetime import timedelta
 
-from opd_monitor.settings import Account, Settings, load_defaults, parse_range, today
+from vghks_bot.settings import Account, Settings, load_defaults, parse_range, today
 
 
 class SettingsTests(unittest.TestCase):
@@ -43,6 +43,6 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(Account("a" * 32).update(values).start, future.isoformat())
         with self.assertRaises(ValueError):
             parse_range(values)
-        from opd_monitor.analysis import Analysis
+        from vghks_bot.analysis import Analysis
         with self.assertRaisesRegex(ValueError, "今天"):
             Analysis.options({"modules": ["retina"], **values})

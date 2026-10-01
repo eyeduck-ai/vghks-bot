@@ -26,12 +26,12 @@ from vghks_sdk.models import (
 )
 from vghks_sdk.models.documents import HtmlDocument
 
-from opd_monitor.analysis_fetch import clean
-from opd_monitor.analysis_store import digest
-from opd_monitor.bot import BotApplication
-from opd_monitor.scanned_records import scan_id
-from opd_monitor.selftest_bot import BotSyntheticSDK, wait_task
-from opd_monitor.settings import Settings, today
+from vghks_bot.analysis_fetch import clean
+from vghks_bot.analysis_store import digest
+from vghks_bot.bot import BotApplication
+from vghks_bot.scanned_records import scan_id
+from vghks_bot.selftest_bot import BotSyntheticSDK, wait_task
+from vghks_bot.settings import Settings, today
 
 MRN = "TEST001"
 ALIAS = "ALIAS001"
@@ -209,13 +209,14 @@ class ReviewHistoryTests(unittest.TestCase):
         self.assertFalse(any(call[1] in {"order-detail", "order-report", "pdf", "image"}
                              for call in HistorySDK.calls))
         status = self.work.analysis.cataract_status({"cohort_id": cohort["id"]})
-        self.assertTrue(status["ready"])
+        self.assertFalse(status["ready"])
         result = self.work.analysis.results({"cohort_id": cohort["id"], "mrn": MRN,
                                              "module": "cataract"})
         self.assertEqual(result["latest_soap"]["record"]["case_no"], "ONE")
         self.assertEqual(len(result["orders"]), 1)
         order = result["orders"][0]
         self.assertFalse(order["report_loaded"])
+        self.assertFalse(order["report_complete"])
         self.assertNotIn("texts", order)
         self.assertNotIn("assets", order)
         HistorySDK.calls.clear()
@@ -227,18 +228,118 @@ class ReviewHistoryTests(unittest.TestCase):
         self.assertEqual(soap_cases[:2], ["EMPTY", "ONE"])
         self.assertFalse(any(call[1] in {"order-detail", "order-report", "pdf", "image"}
                              for call in HistorySDK.calls))
+        HistorySDK.calls.clear()
+        selected_run = self.work.analysis.start({"cohort_id": cohort["id"],
+                                                 "modules": ["cataract"], "mrn": MRN})["run_ids"][0]
+        self.assertTrue(self.work.idle.wait(15))
+        self.assertEqual(self.work.analysis.store.document("analysis_runs", selected_run)["status"], "completed")
+        self.assertTrue(any(call[1] == "pdf" for call in HistorySDK.calls))
+        self.assertTrue(any(call[1] == "image" for call in HistorySDK.calls))
+        status = self.work.analysis.cataract_status({"cohort_id": cohort["id"]})
+        self.assertTrue(status["ready"])
+        self.assertTrue(status["members"][0]["attempted"])
+        updated_order = self.work.analysis.results({"cohort_id": cohort["id"], "mrn": MRN,
+                                                    "module": "cataract"})["orders"][0]
+        self.assertTrue(updated_order["report_complete"])
+        self.assertEqual(updated_order["asset_count"], 2)
+        self.assertEqual(len(updated_order["attachments"]), 2)
+        self.assertTrue(all(asset["available"] for asset in updated_order["attachments"]))
+        self.assertEqual({asset["mime"] for asset in updated_order["attachments"]}, {"application/pdf", "image/png"})
+        HistorySDK.calls.clear()
+        cached_run = self.work.analysis.start({"cohort_id": cohort["id"],
+                                               "modules": ["cataract"], "mrn": MRN})["run_ids"][0]
+        self.assertTrue(self.work.idle.wait(15))
+        self.assertEqual(self.work.analysis.store.document("analysis_runs", cached_run)["status"], "completed")
+        self.assertFalse(any(call[1] in {"soap", "orders-history", "order-detail", "order-report", "pdf", "image"}
+                             for call in HistorySDK.calls), HistorySDK.calls)
         request = {"cohort_id": cohort["id"], "mrn": MRN,
                    "resource": "order_report", "reference": order["id"]}
-        self.assertIsNone(self.history.read(request)["data"])
+        self.assertIsNotNone(self.history.read(request)["data"])
         with self.assertRaises(ValueError):
             self.history.read({**request, "reference": "invalid"})
         self.assertEqual(self.run_task(kind="history", **request)["status"], "completed")
         saved = self.history.read(request)["data"]
         self.assertTrue(saved["assets"])
+        self.work.analysis.store.save_step(MRN, "history-order:" + order["id"], "order_report",
+                                           {**saved, "assets": [{"digest": "f" * 64,
+                                                                   "mime": "application/pdf", "size": 10}]},
+                                           "TEST")
+        self.assertTrue(self.work.analysis.cataract_status({"cohort_id": cohort["id"]})["ready"])
+        saved = self.history.read(request)["data"]
+        self.assertEqual(len(saved["assets"]), 2)
         self.app.logout(self.key)
         before = list(HistorySDK.calls)
         self.assertEqual(self.history.read(request)["data"]["assets"], saved["assets"])
         self.assertEqual(HistorySDK.calls, before)
+
+    def test_cataract_loads_numeric_and_soap_before_order_requests(self):
+        cohort = self.work.analysis.save_cohort({"source": "manual", "account_id": self.key,
+                                                  "name": "抓取順序", "mrns": MRN})
+        HistorySDK.cataract_order_name = "DBR, free charge"
+        HistorySDK.calls.clear()
+        run_id = self.work.analysis.start({"cohort_id": cohort["id"], "modules": ["cataract"],
+                                           "mrn": MRN, "refresh": True})["run_ids"][0]
+        self.assertTrue(self.work.idle.wait(15))
+        run = self.work.analysis.store.document("analysis_runs", run_id)
+        self.assertEqual(run["status"], "completed", run["issues"])
+        stages = [call[1] for call in HistorySDK.calls]
+        self.assertIn("numeric-history", stages)
+        self.assertIn("soap", stages)
+        self.assertIn("orders-history", stages)
+        self.assertIn("order-detail", stages)
+        order_start = stages.index("orders-history")
+        self.assertLess(stages.index("numeric-history"), stages.index("soap"))
+        self.assertLess(stages.index("soap"), order_start)
+        self.assertTrue(all(index < order_start for index, stage in enumerate(stages)
+                            if stage in {"numeric-history", "numeric"}))
+        self.assertLess(order_start, stages.index("order-detail"))
+
+    def test_cataract_reuses_review_soap_without_fetching_it_again(self):
+        cohort = self.work.analysis.save_cohort({"source": "manual", "account_id": self.key,
+                                                  "name": "共用 SOAP", "mrns": MRN})
+        review_record = next(record for patient in self.work.review.results({"id": self.review["id"]})["patients"]
+                             for record in patient["records"] if record["case_no"] == "ONE")
+        HistorySDK.calls.clear()
+        run_id = self.work.analysis.start({"cohort_id": cohort["id"], "modules": ["cataract"],
+                                           "mrn": MRN})["run_ids"][0]
+        self.assertTrue(self.work.idle.wait(15))
+        self.assertEqual(self.work.analysis.store.document("analysis_runs", run_id)["status"], "completed")
+        # The review stored the readable encounter. A newer empty encounter may
+        # still need one check before the collector falls back to that record.
+        self.assertFalse(any(call[1] == "soap" and call[3] == "ONE" for call in HistorySDK.calls))
+        result = self.work.analysis.results({"cohort_id": cohort["id"], "mrn": MRN,
+                                             "module": "cataract"})
+        self.assertEqual(result["latest_soap"]["record"]["id"], review_record["id"])
+        self.assertEqual(result["latest_soap"]["record"]["soap_structure"],
+                         review_record["soap_structure"])
+
+    def test_cataract_selected_patient_does_not_fetch_other_cohort_members(self):
+        cohort = self.work.analysis.save_cohort({"source": "manual", "account_id": self.key,
+                                                  "name": "兩位病人", "mrns": MRN + "\nTEST002"})
+        HistorySDK.cataract_order_name = "DBR, free charge"
+        HistorySDK.calls.clear()
+        with self.assertRaises(ValueError):
+            self.work.analysis.start({"cohort_id": cohort["id"], "modules": ["cataract"],
+                                      "mrn": "NOT-IN-COHORT"})
+        with self.assertRaises(ValueError):
+            self.work.analysis.start({"cohort_id": cohort["id"], "modules": ["cataract"],
+                                      "mrn": ""})
+        with self.assertRaises(ValueError):
+            self.work.analysis.start({"cohort_id": cohort["id"], "modules": ["retina"], "mrn": MRN})
+        run_id = self.work.analysis.start({"cohort_id": cohort["id"], "modules": ["cataract"],
+                                           "mrn": MRN})["run_ids"][0]
+        self.assertTrue(self.work.idle.wait(15))
+        run = self.work.analysis.store.document("analysis_runs", run_id)
+        self.assertEqual([member["mrn"] for member in run["members"]], [MRN])
+        self.assertFalse(any("TEST002" in call for call in HistorySDK.calls))
+        members = {item["mrn"]: item for item in self.work.analysis.cataract_status(
+            {"cohort_id": cohort["id"]})["members"]}
+        self.assertTrue(members[MRN]["ready"], (members[MRN], run["issues"]))
+        self.assertFalse(members["TEST002"]["ready"])
+        self.assertFalse(members["TEST002"]["attempted"])
+        self.work.analysis.store.save_step(MRN, "cataract-soap", "cataract_soap",
+                                           {"status": "ready", "record_id": "deleted-record"}, "TEST")
+        self.assertFalse(self.work.analysis.cataract_status({"cohort_id": cohort["id"]})["members"][0]["ready"])
 
     def fetch(self, resource, reference="", **options):
         return self.run_task(kind="history", **self.request(resource, reference), **options)

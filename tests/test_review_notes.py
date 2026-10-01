@@ -3,9 +3,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from opd_monitor.bot import BotApplication
-from opd_monitor.selftest_bot import BotSyntheticSDK
-from opd_monitor.settings import Settings, today
+from vghks_bot.bot import BotApplication
+from vghks_bot.selftest_bot import BotSyntheticSDK
+from vghks_bot.settings import Settings, today
 
 
 class ReviewNoteTests(unittest.TestCase):

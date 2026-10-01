@@ -13,13 +13,13 @@ from vghks_sdk.core.errors import error_info
 from vghks_sdk.parsing.documents import parse_document
 from vghks_sdk.services.records import RecordsService
 
-from opd_monitor.analysis_fetch import clean
-from opd_monitor.bot import BotApplication
-from opd_monitor.bot_gateway import AccountGateway
-from opd_monitor.clinical_identity import doctor_identity, verified_visit_cases
-from opd_monitor.monitoring import interval
-from opd_monitor.selftest_bot import BotSyntheticSDK, wait_task
-from opd_monitor.settings import Settings
+from vghks_bot.analysis_fetch import clean
+from vghks_bot.bot import BotApplication
+from vghks_bot.bot_gateway import AccountGateway
+from vghks_bot.clinical_identity import doctor_identity, verified_visit_cases
+from vghks_bot.monitoring import interval
+from vghks_bot.selftest_bot import BotSyntheticSDK, wait_task
+from vghks_bot.settings import Settings
 
 
 class ContextTests(unittest.TestCase):

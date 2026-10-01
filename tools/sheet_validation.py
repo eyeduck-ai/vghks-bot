@@ -9,7 +9,7 @@ sys.path[:0] = [str(ROOT), str(ROOT / "tests")]
 
 from analysis_fixtures import book_fixture, proposal  # noqa: E402
 
-from opd_monitor.sheet_plan import Planner, verify  # noqa: E402
+from vghks_bot.sheet_plan import Planner, verify  # noqa: E402
 
 
 def main():

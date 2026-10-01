@@ -6,10 +6,10 @@ from unittest.mock import patch
 
 from vghks_sdk.models.review import ReviewCasePart, ReviewCaseRef
 
-from opd_monitor.approvals import order_names
-from opd_monitor.bot import BotApplication
-from opd_monitor.selftest_bot import BotSyntheticSDK, wait_task
-from opd_monitor.settings import Settings
+from vghks_bot.approvals import order_names
+from vghks_bot.bot import BotApplication
+from vghks_bot.selftest_bot import BotSyntheticSDK, wait_task
+from vghks_bot.settings import Settings
 
 
 class ApprovalTests(unittest.TestCase):

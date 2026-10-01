@@ -16,13 +16,13 @@ Windows EXE 可先在本機執行 `./build.ps1` 建置與離線自測，再帶�
 
 ## 發布新版本
 
-1. 同步更新 `pyproject.toml` 的版本及 `opd_monitor/__init__.py` 的 `__version__`。
+1. 同步更新 `pyproject.toml` 的版本及 `vghks_bot/__init__.py` 的 `__version__`。
 2. 在 `CHANGELOG.md` 最上方加入 `## <版本>` 與該次變更。
 3. 在本機完成 EXE 自測及必要的院內驗收，再提交並推送 `main`，等待 Windows build 成功；只推送 `main` 會得到測試 Artifact，不會建立 Release。
 4. 需要正式 Release 時，才在已驗證的同一 commit 建立版本標籤並推送：
 
 ```powershell
-$releaseVersion = (.venv/Scripts/python.exe -c "from opd_monitor import __version__; print(__version__)").Trim()
+$releaseVersion = (.venv/Scripts/python.exe -c "from vghks_bot import __version__; print(__version__)").Trim()
 git tag -a "v$releaseVersion" -m "VGHKS-bot v$releaseVersion"
 git push origin "v$releaseVersion"
 ```

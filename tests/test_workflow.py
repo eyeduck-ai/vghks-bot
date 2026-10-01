@@ -8,11 +8,11 @@ from unittest.mock import patch
 
 from vghks_sdk import OutpatientPatient, SoapRecord
 
-from opd_monitor.jobs import Application, BusyError
-from opd_monitor.library import current_cache, registration_id
-from opd_monitor.selftest import SyntheticSDK
-from opd_monitor.settings import Settings, today
-from opd_monitor.storage import Journal, StorageError
+from vghks_bot.jobs import Application, BusyError
+from vghks_bot.library import current_cache, registration_id
+from vghks_bot.selftest import SyntheticSDK
+from vghks_bot.settings import Settings, today
+from vghks_bot.storage import Journal, StorageError
 
 
 class CountingSDK(SyntheticSDK):
@@ -122,13 +122,13 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(self.app.delete_list({"account_id": self.key, "start": day})["deleted"], 1)
 
     def test_future_cache_expires_and_requires_final_refresh_after_clinic_date(self):
-        with patch("opd_monitor.library.today", return_value=date(2026, 9, 24)), patch(
-            "opd_monitor.library.timestamp", return_value="2026-09-24T12:01:00+08:00"
+        with patch("vghks_bot.library.today", return_value=date(2026, 9, 24)), patch(
+            "vghks_bot.library.timestamp", return_value="2026-09-24T12:01:00+08:00"
         ):
             self.assertTrue(current_cache("2026-09-30", "2026-09-24T12:00:30+08:00"))
             self.assertFalse(current_cache("2026-09-30", "2026-09-24T12:00:00+08:00"))
             self.assertFalse(current_cache("2026-09-30", "2026-09-24T12:02:00+08:00"))
-        with patch("opd_monitor.library.today", return_value=date(2026, 10, 1)):
+        with patch("vghks_bot.library.today", return_value=date(2026, 10, 1)):
             self.assertFalse(current_cache("2026-09-30", "2026-09-24T12:00:00+08:00"))
             self.assertTrue(current_cache("2026-09-30", "2026-10-01T12:00:00+08:00"))
 
@@ -215,7 +215,7 @@ class WorkflowTests(unittest.TestCase):
         self.browse()
         self.fetch()
         record = self.app.library_search({})["records"][0]
-        with patch("opd_monitor.storage.os.replace", side_effect=OSError("test disk failure")), self.assertRaises(StorageError):
+        with patch("vghks_bot.storage.os.replace", side_effect=OSError("test disk failure")), self.assertRaises(StorageError):
             self.app.delete_records({"ids": [record["id"]]})
         self.assertEqual(self.app.library_search({})["total"], 2)
         self.app.close()

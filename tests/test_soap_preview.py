@@ -2,9 +2,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from opd_monitor.library import Library
-from opd_monitor.settings import Settings
-from opd_monitor.soap_preview import ap_preview
+from vghks_bot.library import Library
+from vghks_bot.settings import Settings
+from vghks_bot.soap_preview import ap_preview
 
 
 class SoapPreviewTests(unittest.TestCase):

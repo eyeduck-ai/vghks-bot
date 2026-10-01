@@ -4,9 +4,9 @@ from pathlib import Path
 
 from analysis_fixtures import ExamSDK, soap_record
 
-from opd_monitor.jobs import Application
-from opd_monitor.settings import Settings
-from opd_monitor.tags import extract_tags
+from vghks_bot.jobs import Application
+from vghks_bot.settings import Settings
+from vghks_bot.tags import extract_tags
 
 
 class PatientTagTests(unittest.TestCase):

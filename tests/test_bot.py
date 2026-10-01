@@ -10,12 +10,12 @@ from unittest.mock import patch
 
 from vghks_sdk import LoginRejectedError, RequestError
 
-from opd_monitor.bot import BotApplication
-from opd_monitor.bot_gateway import AccountGateway, NetworkGate
-from opd_monitor.bot_server import BotServer
-from opd_monitor.bounded_search import search
-from opd_monitor.selftest_bot import BotSyntheticSDK, wait_task
-from opd_monitor.settings import Settings, today
+from vghks_bot.bot import BotApplication
+from vghks_bot.bot_gateway import AccountGateway, NetworkGate
+from vghks_bot.bot_server import BotServer
+from vghks_bot.bounded_search import search
+from vghks_bot.selftest_bot import BotSyntheticSDK, wait_task
+from vghks_bot.settings import Settings, today
 
 
 class BotTests(unittest.TestCase):
@@ -278,7 +278,7 @@ class BotTests(unittest.TestCase):
         self.assertFalse(self.work.review.task(task["id"])["items"][0]["records"])
 
     def test_storage_failure_stops_review_before_reading_more_soap(self):
-        from opd_monitor.storage import StorageError
+        from vghks_bot.storage import StorageError
         group = self.group()
         BotSyntheticSDK.calls.clear()
         with patch.object(self.work.store.library, "save_record", side_effect=StorageError("full")):

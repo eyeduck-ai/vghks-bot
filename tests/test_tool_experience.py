@@ -6,9 +6,9 @@ from datetime import timedelta
 from pathlib import Path
 from unittest.mock import patch
 
-from opd_monitor.bot import BotApplication
-from opd_monitor.selftest_bot import BotSyntheticSDK, wait_task
-from opd_monitor.settings import Settings, today
+from vghks_bot.bot import BotApplication
+from vghks_bot.selftest_bot import BotSyntheticSDK, wait_task
+from vghks_bot.settings import Settings, today
 
 
 class ToolExperienceTests(unittest.TestCase):

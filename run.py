@@ -1,4 +1,4 @@
-from opd_monitor.app import main
+from vghks_bot.app import main
 
 if __name__ == "__main__":
     import multiprocessing

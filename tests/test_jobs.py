@@ -7,11 +7,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from opd_monitor.jobs import Application, BusyError
-from opd_monitor.scanner import ScanState
-from opd_monitor.selftest import SyntheticSDK
-from opd_monitor.settings import Settings, parse_range
-from opd_monitor.storage import Journal, StorageError, Store
+from vghks_bot.jobs import Application, BusyError
+from vghks_bot.scanner import ScanState
+from vghks_bot.selftest import SyntheticSDK
+from vghks_bot.settings import Settings, parse_range
+from vghks_bot.storage import Journal, StorageError, Store
 
 
 class JobTests(unittest.TestCase):
@@ -203,7 +203,7 @@ class RecoveryTests(unittest.TestCase):
                     store.load("../settings")
                 store.save_config(Settings(),[])
                 before = json.loads((store.directory/"settings.json").read_text(encoding="utf-8"))
-                with patch("opd_monitor.storage.os.replace",side_effect=OSError("disk error")), self.assertRaises(StorageError):
+                with patch("vghks_bot.storage.os.replace",side_effect=OSError("disk error")), self.assertRaises(StorageError):
                     store.save_config(Settings(min_delay_seconds=2),[])
                 self.assertEqual(json.loads((store.directory/"settings.json").read_text(encoding="utf-8")),before)
             finally:

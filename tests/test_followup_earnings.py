@@ -12,12 +12,12 @@ from unittest.mock import patch
 
 from vghks_sdk import ConfigurationError
 
-from opd_monitor.analysis_fetch import clean
-from opd_monitor.approval_tracker import later
-from opd_monitor.bot import BotApplication
-from opd_monitor.earnings_parser import month_value, normalize_document, numeric_cell
-from opd_monitor.selftest_bot import BotSyntheticSDK, wait_task
-from opd_monitor.settings import Settings, timestamp
+from vghks_bot.analysis_fetch import clean
+from vghks_bot.approval_tracker import later
+from vghks_bot.bot import BotApplication
+from vghks_bot.earnings_parser import month_value, normalize_document, numeric_cell
+from vghks_bot.selftest_bot import BotSyntheticSDK, wait_task
+from vghks_bot.settings import Settings, timestamp
 
 
 class FollowUpTests(unittest.TestCase):

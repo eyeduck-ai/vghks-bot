@@ -12,13 +12,13 @@ from pathlib import Path, PurePosixPath
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from opd_monitor import __version__  # noqa: E402
+from vghks_bot import __version__  # noqa: E402
 
 
 def check_metadata(root=ROOT, tag=""):
     project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))["project"]
     if project["version"] != __version__:
-        raise ValueError("pyproject.toml and opd_monitor.__version__ must match")
+        raise ValueError("pyproject.toml and vghks_bot.__version__ must match")
     if tag and tag != "v" + __version__:
         raise ValueError(f"Release tag must equal v{__version__}")
     sdk = next(v for v in project["dependencies"] if v.startswith("vghks-sdk @ "))
@@ -26,7 +26,7 @@ def check_metadata(root=ROOT, tag=""):
         raise ValueError("Pin vghks-sdk to a full commit")
     if sdk not in (root / "requirements-build.lock.txt").read_text(encoding="utf-8").splitlines():
         raise ValueError("Build lock and project SDK commits differ")
-    defaults = json.loads((root / "opd_monitor/defaults.json").read_text(encoding="utf-8"))
+    defaults = json.loads((root / "vghks_bot/defaults.json").read_text(encoding="utf-8"))
     if defaults.get("username") or defaults.get("password"):
         raise ValueError("Public builds must have blank login defaults")
     return project["version"]

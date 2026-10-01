@@ -15,15 +15,15 @@ exe = ROOT / "dist" / "VGHKS-bot.exe"
 bundle = CArchiveReader(str(exe))
 names = {name.replace("\\", "/"): name for name in bundle.toc}
 assets = []
-for path in sorted((ROOT / "opd_monitor" / "static").iterdir()):
-    key = "opd_monitor/static/" + path.name
+for path in sorted((ROOT / "vghks_bot" / "static").iterdir()):
+    key = "vghks_bot/static/" + path.name
     assert bundle.extract(names[key]) == path.read_bytes(), path.name
     assets.append(path.name)
-defaults = json.loads(bundle.extract(names["opd_monitor/defaults.json"]))
+defaults = json.loads(bundle.extract(names["vghks_bot/defaults.json"]))
 assert not defaults["username"] and not defaults["password"]
-expected = json.loads((ROOT / "opd_monitor" / "defaults.json").read_text(encoding="utf-8"))
+expected = json.loads((ROOT / "vghks_bot" / "defaults.json").read_text(encoding="utf-8"))
 assert defaults["categories"] == expected["categories"]
-licenses = bundle.extract(names["opd_monitor/licenses/THIRD_PARTY_NOTICES.txt"])
+licenses = bundle.extract(names["vghks_bot/licenses/THIRD_PARTY_NOTICES.txt"])
 for dependency in (b"google-auth", b"cryptography", b"vghks-sdk"):
     assert dependency in licenses
 assert f"vghks-sdk {sdk_version}".encode() in licenses

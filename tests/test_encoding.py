@@ -4,9 +4,9 @@ from types import SimpleNamespace
 
 from vghks_sdk.parsing.prq import parse_opd_patients
 
-from opd_monitor.encoding import ClinicalTransport, decode_response
-from opd_monitor.scanner import create_sdk
-from opd_monitor.settings import Settings
+from vghks_bot.encoding import ClinicalTransport, decode_response
+from vghks_bot.scanner import create_sdk
+from vghks_bot.settings import Settings
 
 
 class EncodingTests(unittest.TestCase):

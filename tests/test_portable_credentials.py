@@ -3,11 +3,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from opd_monitor.bot_store import Registry
-from opd_monitor.google_sheets import GoogleSettings
-from opd_monitor.portable_credentials import is_portable, seal
-from opd_monitor.selftest_portable import check_portable_credentials, synthetic_google_key
-from opd_monitor.storage import StorageError
+from vghks_bot.bot_store import Registry
+from vghks_bot.google_sheets import GoogleSettings
+from vghks_bot.portable_credentials import is_portable, seal
+from vghks_bot.selftest_portable import check_portable_credentials, synthetic_google_key
+from vghks_bot.storage import StorageError
 
 
 class PortableCredentialTests(unittest.TestCase):

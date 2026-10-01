@@ -7,25 +7,43 @@ from unittest.mock import Mock, patch
 
 from analysis_fixtures import ExamSDK, MemorySheets, book_fixture, proposal, soap_record
 
-from opd_monitor.analysis_numeric import exam_name, extract_tables, numeric
-from opd_monitor.analysis_store import AnalysisStore
-from opd_monitor.google_sheets import SheetError
-from opd_monitor.jobs import Application
-from opd_monitor.settings import Settings
-from opd_monitor.sheet_plan import Planner, cell_text, entries, fingerprint, verify
-from opd_monitor.surgery_candidates import candidates
+from vghks_bot.analysis_numeric import EYE_NUMERIC_EXAMS, exam_name, extract_tables, numeric
+from vghks_bot.analysis_store import AnalysisStore
+from vghks_bot.google_sheets import SheetError
+from vghks_bot.jobs import Application
+from vghks_bot.settings import Settings
+from vghks_bot.sheet_plan import Planner, cell_text, entries, fingerprint, verify
+from vghks_bot.surgery_candidates import candidates
 
 
 class AnalysisTests(unittest.TestCase):
     def test_eye_numeric_names_do_not_merge_vacc_into_va(self):
-        self.assertEqual(exam_name("VacC"), "VacC")
+        for spelling in ("VAcC", "VacC", "VAcc", "vacc", " VACC ", "\tVAcC\n", "　VAcC　"):
+            self.assertEqual(exam_name(spelling), "VAcC")
         self.assertEqual(exam_name("Va"), "Va")
+        self.assertEqual(exam_name(" va "), "Va")
         self.assertEqual(exam_name("IOP-pneumo"), "IOP-pneumo")
+        self.assertEqual(exam_name("  iop-PNEUMO  "), "IOP-pneumo")
         rows = extract_tables({"tables": [
-            {"title": "VacC", "headers": ["日期", "OD"], "rows": [["2026-01-02", "0.8"]]},
+            {"title": "  vacc  ", "headers": ["日期", "OD"], "rows": [["2026-01-02", "0.8"]]},
             {"title": "IOP-pneumo", "headers": ["日期", "OS"], "rows": [["2026-01-02", "17"]]},
         ]}, "synthetic")
-        self.assertEqual([row["exams"] for row in rows], [["VacC"], ["IOP-pneumo"]])
+        self.assertEqual([row["exams"] for row in rows], [["VAcC"], ["IOP-pneumo"]])
+
+    def test_ophthalmic_numeric_titles_are_classified_without_losing_eye_columns(self):
+        self.assertEqual(len(EYE_NUMERIC_EXAMS), 15)
+        report = {"tables": [{"title": title, "headers": ["日期", "OD", "OS"],
+                              "rows": [["2026-09-11", "8", "9"]]} for title in EYE_NUMERIC_EXAMS]}
+        rows = extract_tables(report, "synthetic")
+        self.assertEqual([row["exams"] for row in rows], [[title] for title in EYE_NUMERIC_EXAMS])
+        self.assertTrue(all([cell["side"] for cell in row["cells"]] == ["OD", "OS"] for row in rows))
+        self.assertEqual(exam_name("IOP－ recheck"), "IOP-recheck")
+        self.assertEqual(exam_name("驗光 – 散瞳後"), "驗光-散瞳後")
+        self.assertEqual(exam_name("VAccurate"), "")
+        self.assertEqual(exam_name("SALT"), "")
+        wide = extract_tables({"tables": [{"title": "眼科檢查", "headers": ["日期", "側別", "項目", "數值"],
+                                           "rows": [["2026-09-11", "OD", "Basic Schirmer", "8"]]}]}, "synthetic")
+        self.assertEqual([cell["exam"] for cell in wide[0]["cells"]], ["Basic Schirmer"])
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()

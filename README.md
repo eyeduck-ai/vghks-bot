@@ -56,6 +56,6 @@ VGHKS-bot-data/
 ./build.ps1
 ```
 
-它會安裝鎖定依賴，執行測試、打包、EXE 自測及封裝核對，輸出至 `dist/`。測試只使用合成資料，不需院內或 Google 帳密。SDK 與第三方依賴的授權聲明隨發布包提供，也內嵌於 EXE。
+它會建立 Python 環境、安裝鎖定依賴，執行測試、打包、EXE 自測及封裝核對，輸出至 `dist/`。專案資料夾搬移或改名後，會自動重建含舊路徑的 `.venv`；也可用 `./build.ps1 -RebuildEnvironment` 明確重建。測試只使用合成資料，不需院內或 Google 帳密。SDK 與第三方依賴的授權聲明隨發布包提供，也內嵌於 EXE。
 
 `main` 的每次 push 也會在 GitHub Actions 產生可下載的測試 Artifact；正式 Release 只有推送與程式版本相符的標籤後才建立。本機 EXE 可先帶至內網驗收，不必等待 GitHub 建置。

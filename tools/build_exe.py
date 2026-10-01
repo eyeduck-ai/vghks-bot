@@ -12,7 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from opd_monitor.settings import Settings  # noqa: E402
+from vghks_bot.settings import Settings  # noqa: E402
 
 
 def notices() -> Path:
@@ -41,7 +41,7 @@ def main():
     args = parser.parse_args()
     if sys.platform != "win32":
         parser.error("請在 Windows 上建置 Windows EXE。")
-    source = args.defaults or ROOT / "opd_monitor" / "defaults.json"
+    source = args.defaults or ROOT / "vghks_bot" / "defaults.json"
     raw = json.loads(source.read_text(encoding="utf-8-sig"))
     settings = Settings().update(raw)
     staging = ROOT / ".build" / "embedded"
@@ -54,8 +54,8 @@ def main():
         command = [sys.executable, "-m", "PyInstaller", "--noconfirm", "--noupx", "--onefile", "--windowed",
             "--name", "VGHKS-bot", "--distpath", str(ROOT / "dist"),
             "--workpath", str(ROOT / ".build" / "pyinstaller"), "--specpath", str(ROOT / ".build"),
-            "--paths", str(ROOT), "--add-data", f"{ROOT / 'opd_monitor' / 'static'};opd_monitor/static",
-            "--add-data", f"{defaults};opd_monitor", "--add-data", f"{notices()};opd_monitor/licenses",
+            "--paths", str(ROOT), "--add-data", f"{ROOT / 'vghks_bot' / 'static'};vghks_bot/static",
+            "--add-data", f"{defaults};vghks_bot", "--add-data", f"{notices()};vghks_bot/licenses",
             "--hidden-import", "truststore",
             "--exclude-module", "tkinter", "--exclude-module", "pytest",
             str(ROOT / "run.py")]

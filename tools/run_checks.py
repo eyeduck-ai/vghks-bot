@@ -39,7 +39,7 @@ def main():
     run([python, "tools/verify_repository.py"])
     run([python, "-m", "pip", "check"])
     run([python, "-m", "ruff", "check", "."])
-    for script in sorted((ROOT / "opd_monitor/static").glob("*.js")):
+    for script in sorted((ROOT / "vghks_bot/static").glob("*.js")):
         run(["node", "--check", str(script)])
     run([python, "-X", "utf8", "-m", "unittest", "discover", "-s", "tests", "-v"], "tests.log")
     source = REPORTS / "source-selftest.json"

@@ -7,13 +7,13 @@ from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 
-from opd_monitor.bot import BotApplication
-from opd_monitor.database_format import MANIFEST
-from opd_monitor.databases import DatabaseManager, copy_database, inspect_database
-from opd_monitor.selftest_bot import BotSyntheticSDK
-from opd_monitor.selftest_databases import check_databases, contents
-from opd_monitor.settings import Settings
-from opd_monitor.storage import StorageError
+from vghks_bot.bot import BotApplication
+from vghks_bot.database_format import MANIFEST
+from vghks_bot.databases import DatabaseManager, copy_database, inspect_database
+from vghks_bot.selftest_bot import BotSyntheticSDK
+from vghks_bot.selftest_databases import check_databases, contents
+from vghks_bot.settings import Settings
+from vghks_bot.storage import StorageError
 
 
 class DatabaseTests(unittest.TestCase):
@@ -126,7 +126,7 @@ class DatabaseTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 copy_database(source, destination, name="invalid", owned=True)
         dest = self.path / "failed"
-        with patch("opd_monitor.databases.shutil.copy2", side_effect=OSError("synthetic disk full")):
+        with patch("vghks_bot.databases.shutil.copy2", side_effect=OSError("synthetic disk full")):
             (source / "attachment.bin").write_bytes(b"test")
             with self.assertRaises(OSError):
                 copy_database(source, dest, name="failed", owned=True)

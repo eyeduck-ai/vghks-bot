@@ -5,8 +5,8 @@ from unittest.mock import Mock, patch
 
 from requests import Response
 
-from opd_monitor.scanner import create_sdk
-from opd_monitor.settings import load_defaults
+from vghks_bot.scanner import create_sdk
+from vghks_bot.settings import load_defaults
 
 URL = "https://example.invalid/offline-test"
 

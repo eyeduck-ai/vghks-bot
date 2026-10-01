@@ -10,11 +10,11 @@ from unittest.mock import patch
 from vghks_sdk import ParseError
 from vghks_sdk.models import SurgeryRecord, SurgeryScheduleProcedure
 
-from opd_monitor.bot import BotApplication
-from opd_monitor.bot_server import BotServer
-from opd_monitor.selftest_bot import BotSyntheticSDK, wait_task
-from opd_monitor.settings import Settings, today
-from opd_monitor.surgery_schedule import default_range, schedule_rows
+from vghks_bot.bot import BotApplication
+from vghks_bot.bot_server import BotServer
+from vghks_bot.selftest_bot import BotSyntheticSDK, wait_task
+from vghks_bot.settings import Settings, today
+from vghks_bot.surgery_schedule import default_range, schedule_rows
 
 
 class SurgeryScheduleTests(unittest.TestCase):
@@ -97,7 +97,7 @@ class SurgeryScheduleTests(unittest.TestCase):
         self.assertEqual(old["task_id"], first["id"])
         self.assertNotEqual(old["fetched_at"], self.work.surgery_schedule.overview()["result"]["fetched_at"])
         self.assertEqual(second["doctor_card"], "AB42")
-        with patch("opd_monitor.surgery_schedule.today", return_value=today()+timedelta(days=30)):
+        with patch("vghks_bot.surgery_schedule.today", return_value=today()+timedelta(days=30)):
             self.assertEqual({r["group"] for r in self.work.surgery_schedule.overview()["result"]["rows"]}, {"past"})
         self.assertEqual(len(BotSyntheticSDK.calls), 2)
 

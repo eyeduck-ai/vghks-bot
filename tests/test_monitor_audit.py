@@ -6,8 +6,8 @@ from unittest.mock import patch
 
 import test_followup_earnings as baseline
 
-from opd_monitor.analysis_fetch import clean
-from opd_monitor.selftest_bot import wait_task
+from vghks_bot.analysis_fetch import clean
+from vghks_bot.selftest_bot import wait_task
 
 
 class MonitorAuditTests(unittest.TestCase):
@@ -33,7 +33,7 @@ class MonitorAuditTests(unittest.TestCase):
             case = original(ref)
             return replace(case, verify_code="1", fields={**case.fields, "VerifyCode": "1"})
 
-        with patch("opd_monitor.approvals.clean", side_effect=delayed), patch.object(
+        with patch("vghks_bot.approvals.clean", side_effect=delayed), patch.object(
                 self.work.gateway.connection.reviews, "get_case", approved):
             key = self.work.review.start({"kind": "approval_search", "force": True})["task_id"]
             try:
@@ -75,7 +75,7 @@ class MonitorAuditTests(unittest.TestCase):
             return clean(value)
 
         values = {"kind": "approval_case", "apply_seq": "1001", "force": True}
-        with patch("opd_monitor.approvals.clean", side_effect=delayed), patch.object(
+        with patch("vghks_bot.approvals.clean", side_effect=delayed), patch.object(
                 self.work.gateway.connection.reviews, "get_case", changing):
             key = self.work.review.start(values)["task_id"]
             try:
@@ -106,7 +106,7 @@ class MonitorAuditTests(unittest.TestCase):
                 release.wait(5)
             return clean(value)
 
-        with patch("opd_monitor.approvals.clean", side_effect=delayed), patch.object(
+        with patch("vghks_bot.approvals.clean", side_effect=delayed), patch.object(
                 self.work.gateway.connection.reviews, "get_cases", changing):
             key = self.work.review.start({"kind": "approval_search", "force": True})["task_id"]
             try:

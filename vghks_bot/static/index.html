@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="zh-Hant" data-density="compact">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>門診病歷工作台 · VGHKS</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/analysis.css">
+  <link rel="stylesheet" href="/file-compare.css">
+  <link rel="stylesheet" href="/choices.css">
+  <script src="/choices.js" defer></script>
+  <script src="/dialog-dismiss.js" defer></script>
+  <script src="/cataract-numeric.js" defer></script>
+  <link rel="stylesheet" href="/clinical-ui.css"><script src="/clinical-ui.js" defer></script><script src="/file-compare.js" defer></script>
+  <script src="/scan-browser.js" defer></script>
+  <script src="/soap-view.js" defer></script>
+  <link rel="stylesheet" href="/progress.css"><script src="/progress.js" defer></script>
+  <script src="/app.js" defer></script>
+  <script src="/workspace.js" defer></script>
+  <script src="/analysis.js" defer></script>
+  <script src="/cataract-export.js" defer></script>
+  <script src="/cataract.js" defer></script>
+  <script src="/patient-tags.js" defer></script>
+  <script src="/tool-bridge.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">跳到主要內容</a>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="VGHKS 門診工作台"><img src="/favicon.svg" width="30" height="30" alt=""><strong>VGHKS</strong><span>門診工作台</span></a>
+    <div class="actions"><span id="version" class="muted"></span><button id="settingsButton" type="button">tag 與設定</button><button id="exitButton" type="button" class="quiet-button">結束程式</button></div>
+  </header>
+  <div id="notice" class="notice" role="alert" hidden></div>
+  <main id="main">
+    <section class="accounts-panel" aria-labelledby="accountsTitle">
+      <div class="section-heading"><div><h1 id="accountsTitle">門診病歷工作台</h1></div><div class="actions"><button id="addAccount" type="button">＋ 新增帳號</button><button id="runSelected" type="button" class="primary">查看已選帳號清單</button></div></div>
+      <details id="accountsDetails" open><summary>帳號設定</summary><div id="accounts"></div>
+      <p class="small muted panel-foot">多帳號依序查詢 · 密碼僅保留於本次執行</p>
+      </details>
+    </section>
+    <nav class="workspace-nav" aria-label="工作區"><button type="button" data-pane="list" aria-pressed="true">門診清單</button><button type="button" data-pane="library" aria-pressed="false">病歷管理</button><button type="button" data-pane="history" aria-pressed="false">作業紀錄</button><span id="corpusSummary" class="muted small"></span></nav>
+    <div id="activeJobs" aria-live="polite"></div>
+    <section id="listPane" aria-labelledby="listTitle" class="workspace-pane">
+      <div class="section-heading"><div><h2 id="listTitle">門診清單</h2><p id="listContext" class="muted small">選擇帳號與日期</p></div><div class="actions"><button id="refreshList" type="button">重新整理清單</button></div></div>
+      <div class="list-toolbar"><label>帳號<select id="listAccount"></select></label><div class="date-switch"><button id="previousDay" type="button" aria-label="前一天">←</button><label>門診日期<input id="listDate" type="date" min="1912-01-01"></label><button id="nextDay" type="button" aria-label="後一天">→</button></div><button id="accountRange" type="button">帳號設定的區間</button><label class="list-search">搜尋清單<input id="listSearch" type="search" placeholder="姓名、病歷號、科別、掛號序號"></label></div>
+      <div class="selection-bar"><label class="check-label"><input id="selectAllPatients" type="checkbox" checked>全選目前顯示</label><span id="patientSelection" class="muted small">0 筆</span><button id="listToAnalysis" type="button" class="primary" disabled>勾選病人 → 分析</button><label class="check-label"><input id="forceSoap" type="checkbox">重新抓取已保存 SOAP</label><button id="fetchPatients" type="button">抓取並保存 SOAP</button></div>
+      <p id="futureListHint" class="small future-list-hint" hidden>未來掛號可用來分析歷年檢查；SOAP 僅抓取截至今天已實際就診的紀錄。掛號清單可能變動，可重新整理。</p>
+      <div class="table-wrap"><table class="patient-table"><caption class="sr-only">可勾選的門診病人清單</caption><thead><tr><th scope="col">選取</th><th scope="col">日期</th><th scope="col">掛號序號</th><th scope="col">病人／病歷號</th><th scope="col">性別／年齡</th><th scope="col">科別／診間</th><th scope="col">本機病歷</th></tr></thead><tbody id="patientRows"></tbody></table></div>
+      <p id="listEmpty" class="empty-result">選擇帳號查看門診清單</p>
+    </section>
+    <section id="libraryPane" aria-labelledby="libraryTitle" class="workspace-pane" hidden>
+      <div class="section-heading"><div><h2 id="libraryTitle">病歷管理</h2><p id="librarySummary" class="muted small">所有 SOAP 皆保留，直到手動刪除</p></div><div class="actions"><button id="libraryJSON" type="button">此頁 JSON ↓</button><button id="libraryCSV" type="button">此頁 CSV ↓</button></div></div>
+      <form id="librarySearchForm" class="library-filters"><label class="fulltext-field">全文搜尋<input id="libraryQuery" type="search" placeholder="姓名、病歷號或 SOAP 任意字串" maxlength="500"></label><label>來源帳號<select id="libraryAccount"><option value="">全部帳號</option></select></label><label>開始日期<input id="libraryStart" type="date" min="1912-01-01"></label><label>結束日期<input id="libraryEnd" type="date" min="1912-01-01"></label><button type="submit">搜尋</button><button id="resetLibrary" type="button" class="quiet-button">重設</button></form>
+      <div class="library-options"><button id="clearList" type="button" class="quiet-button">刪除清單快取</button><label>tag<select id="libraryTag"><option value="">全部 tag 與未分類</option></select></label><label>顯示方式<select id="libraryGroup"><option value="visit">每次就診</option><option value="patient">依病人合併</option><option value="tag">依 tag 分區</option></select></label><button id="deleteLibrarySelection" type="button" class="danger quiet-button" disabled>刪除勾選病歷</button></div>
+      <div id="libraryResults"></div><p id="libraryEmpty" class="empty-result">尚無已保存病歷</p>
+      <div class="pagination"><button id="libraryPrevious" type="button">上一頁</button><span id="libraryPage" class="muted small"></span><button id="libraryNext" type="button">下一頁</button></div>
+    </section>
+    <section id="analysisPane" aria-labelledby="analysisTitle" class="workspace-pane" hidden></section>
+    <div id="historyPane" class="content-grid" hidden>
+      <aside class="history-panel" aria-labelledby="historyTitle">
+        <div class="section-heading"><h2 id="historyTitle">作業紀錄</h2><span id="historyCount" class="badge">0</span></div>
+        <label class="sr-only" for="historyAccount">篩選紀錄帳號</label><select id="historyAccount"><option value="">全部帳號</option></select>
+        <div id="historyList"></div>
+        <p id="historyEmpty" class="empty-small">查詢後自動保存在這裡</p>
+      </aside>
+      <section class="results-panel" aria-labelledby="resultsTitle">
+        <div class="section-heading"><div><h2 id="resultsTitle">作業結果</h2><p id="resultContext" class="muted small">開啟作業紀錄檢閱</p></div><div class="actions"><button id="reclassify" type="button" disabled>套用目前 tag</button><button id="jsonExport" type="button" disabled>JSON ↓</button><button id="csvExport" type="button" disabled>CSV ↓</button></div></div>
+        <div id="runStatus" class="run-status" hidden><div class="status-line"><strong id="runStatusLabel"></strong><span id="runMessage"></span><button id="stopRun" type="button" class="quiet-button">停止查詢</button></div><progress id="runProgress" max="100" aria-label="查詢進度"></progress></div>
+        <div id="metrics" class="metrics" hidden></div>
+        <div id="resultFilters" class="result-filters" hidden><label class="sr-only" for="search">搜尋病人或 SOAP</label><input id="search" type="search" placeholder="搜尋姓名、病歷號、SOAP"><label class="sr-only" for="recordScope">顯示範圍</label><select id="recordScope"><option value="matched">有 tag</option><option value="all">全部 SOAP</option></select></div>
+        <nav id="categoryFilters" class="category-filters" aria-label="篩選 tag"></nav>
+        <div id="results"></div>
+        <p id="emptyResult" class="empty-result">尚無查詢結果</p>
+        <details id="audit" class="audit" hidden><summary id="auditTitle">查詢明細</summary><div id="auditCounts"></div><div id="issues"></div></details>
+      </section>
+    </div>
+    <footer><span>自動保存：<span id="dataPath"></span></span><span>關閉分頁後仍會執行；請按「結束程式」離開。</span></footer>
+  </main>
+  <template id="accountTemplate">
+    <form class="account-card" autocomplete="off">
+      <div class="account-top"><label class="check-label"><input type="checkbox" name="selected" checked><span class="account-title">帳號</span></label><span class="account-state muted">尚未查詢</span><button type="button" class="delete-account quiet-button" aria-label="移除此帳號">移除</button></div>
+      <div class="account-fields">
+        <label>名稱<input name="label" type="text" placeholder="例如：上午診" maxlength="60"></label>
+        <label>登入帳號<input name="username" type="text" autocomplete="username" maxlength="80" required></label>
+        <label>密碼<input name="password" type="password" autocomplete="current-password" maxlength="512" placeholder="請輸入密碼"></label>
+        <label>文字編碼<select name="response_encoding"><option value="auto">自動</option><option value="big5">Big5 / CP950</option><option value="utf-8">UTF-8</option></select></label>
+        <fieldset class="date-mode"><legend>查詢方式</legend><div class="segmented"><label><input type="radio" value="single" checked><span>單日</span></label><label><input type="radio" value="range"><span>區間</span></label></div></fieldset>
+        <label class="start-field"><span>門診日期</span><input name="start" type="date" required min="1912-01-01"></label>
+        <label class="end-field" hidden>結束日期<input name="end" type="date" min="1912-01-01"></label>
+        <div class="account-actions"><button type="button" class="today-button quiet-button">今天</button><button type="button" class="save-account">儲存</button><button type="submit" class="primary run-account">查看清單</button></div>
+      </div>
+      <div class="account-progress" hidden><span></span><button type="button" class="view-run quiet-button">查看結果</button><button type="button" class="stop-account quiet-button">停止</button></div>
+    </form>
+  </template>
+  <dialog id="settingsDialog" aria-labelledby="settingsTitle">
+    <div class="dialog-heading"><h2 id="settingsTitle">tag 與設定</h2><button type="button" data-close="settingsDialog" aria-label="關閉設定">×</button></div>
+    <form id="settingsForm">
+      <div id="settingsError" class="notice" role="alert" hidden></div>
+      <div class="section-heading"><p class="muted small">關鍵字留白＝手動 tag。移除 tag 也會移除該群組的手動標記。</p><button id="addCategory" type="button">＋ 新增 tag</button></div>
+      <div id="categoryEditor"></div>
+      <details class="connection-settings"><summary>連線設定</summary><div class="form-grid">
+        <label>最短額外等待（秒）<input name="min_delay_seconds" type="number" min="0" max="30" step="0.01" required></label>
+        <label>最長額外等待（秒）<input name="max_delay_seconds" type="number" min="0" max="30" step="0.01" required></label>
+        <label>連線逾時（秒）<input name="connect_timeout_seconds" type="number" min="1" max="60" step="1" required></label>
+        <label>讀取逾時（秒）<input name="read_timeout_seconds" type="number" min="5" max="180" step="1" required></label>
+        <label>最多嘗試次數<input name="max_attempts" type="number" min="1" max="3" step="1" required></label>
+      </div><label class="check-label"><input name="allow_unverified_tls" type="checkbox">院內 TLS 相容模式</label></details>
+      <div class="dialog-actions"><button type="button" data-close="settingsDialog">取消</button><button type="submit" class="primary">儲存設定</button></div>
+    </form>
+  </dialog>
+  <template id="categoryTemplate"><fieldset class="category-edit"><legend>tag</legend><div class="category-row"><label>tag 名稱<input name="category_name" type="text" maxlength="40" required></label><label>欄位解析<select name="parser"><option value="none">無</option><option value="surgery">手術模板</option></select></label><button type="button" class="remove-category quiet-button">移除</button></div><label>自動辨識關鍵字（選填）<textarea name="keywords" rows="2" placeholder="每行一個；留白表示只手動加入"></textarea></label></fieldset></template>
+  <dialog id="recordDialog" class="record-dialog" aria-labelledby="recordTitle"><div class="dialog-heading"><div><h2 id="recordTitle"></h2><p id="recordMeta" class="muted small"></p></div><button type="button" data-close="recordDialog" aria-label="關閉病歷">×</button></div><div class="record-body"><div class="version-bar"><label id="versionLabel" hidden>內容版本<select id="recordVersion"></select></label><button id="deleteRecord" type="button" class="danger quiet-button" hidden>刪除此筆病歷</button></div><div id="recordExcerpts"></div><details id="fullSoapDetails"><summary>完整 SOAP</summary><pre id="fullSoap"></pre></details></div></dialog>
+  <dialog id="confirmDialog" aria-labelledby="confirmTitle"><form method="dialog"><div class="dialog-heading"><h2 id="confirmTitle">確認刪除</h2></div><div class="record-body"><p id="confirmMessage"></p><div class="dialog-actions"><button value="cancel" autofocus>取消</button><button value="confirm" class="danger">刪除</button></div></div></form></dialog>
+  <div id="toast" role="status" hidden></div>
+  <noscript>請啟用 JavaScript。</noscript>
+</body>
+</html>

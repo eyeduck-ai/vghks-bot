@@ -7,13 +7,13 @@ from pathlib import Path
 
 from vghks_sdk import SoapRecord, VisitCase
 
-from opd_monitor.bot import BotApplication
-from opd_monitor.selftest_bot import BotSyntheticSDK, wait_task
-from opd_monitor.selftest_soap import synthetic_soap
-from opd_monitor.settings import Settings
-from opd_monitor.soap_data import snapshot
-from opd_monitor.soap_preview import ap_preview
-from opd_monitor.tags import classification, extract_tags
+from vghks_bot.bot import BotApplication
+from vghks_bot.selftest_bot import BotSyntheticSDK, wait_task
+from vghks_bot.selftest_soap import synthetic_soap
+from vghks_bot.settings import Settings
+from vghks_bot.soap_data import snapshot
+from vghks_bot.soap_preview import ap_preview
+from vghks_bot.tags import classification, extract_tags
 
 CASE = VisitCase("TEST001", date(2026, 9, 21), "O", "ONE", "70", "眼科",
                  detail_params={"hid": "transient-not-clinical"})
