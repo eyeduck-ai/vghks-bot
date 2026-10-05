@@ -49,7 +49,7 @@ class BotSyntheticSDK:
             get_registration_history=self.registrations, resolve_identity=self.resolve)
         self.records = SimpleNamespace(get_visit_cases=self.visits, get_soap=self.soap,
             get_numeric_report=self.numeric, get_numeric_history=self.history)
-        self.orders = SimpleNamespace(get_order_history=lambda *_: [])
+        self.orders = SimpleNamespace(get_order_history=lambda *_: [], get_case_orders=lambda *_: [])
         self.surgery = SimpleNamespace(get_patient_info=lambda mrn: {"mrn": mrn}, get_schedule=self.surgery_schedule)
         self.reviews = SimpleNamespace(get_cases=self.review_cases, get_case=self.review_case,
             get_options=self.review_options, get_doctors=self.review_doctors,
@@ -243,6 +243,10 @@ def self_test(report_path: Path) -> int:
                 assert task["status"] == "completed", task
                 assert all(len(p["records"]) == 2 and p["fallback"] for p in task["items"])
                 assert workspace.review.results({"id": review, "q": "# APPLY", "search_mode": "regex"})["total"] == 2
+                from .selftest_efficiency import check_efficiency
+
+                check_efficiency(workspace, review)
+                result["checks"].append("scoped SQL search, rebuildable tag indexes, body-free progress, immutable membership, inventory pages and 4/64 task limits")
                 assert other.library_search({})["total"] == 0
                 record = task["items"][0]["records"][0]
                 structured = record["soap_structure"]
@@ -322,10 +326,23 @@ def self_test(report_path: Path) -> int:
                 recorder.finalize(command="selftest", status="OK", exit_code=0)
                 assert "SECRET" not in recorder.trace_path.read_text(encoding="utf-8")
                 result["checks"].append("portable failure diagnostics, SDK trace recording and credential-value exclusion")
-                from .selftest_diagnostics import check_order_index_evidence
+                from .selftest_diagnostics import (
+                    check_failure_trace_policy,
+                    check_order_index_evidence,
+                )
 
                 check_order_index_evidence(workspace)
                 result["checks"].append("order-index query scopes, full clinical failure evidence ZIP and offline SDK replay")
+                check_failure_trace_policy(workspace)
+                result["checks"].append("compact successful HTTP logging, bounded session failure evidence, SDK manifest and probe replay")
+                from .selftest_connection import check_connection_contract
+
+                check_connection_contract(workspace)
+                result["checks"].append("SDK acquisition states, nested recovery causes, password countdown and no outer login replay")
+                from .selftest_session import check_sdk_session_recovery
+
+                check_sdk_session_recovery(Path(directory) / "native-session")
+                result["checks"].append("native SDK WebMAAS SSO recovery without account rebuild or Portal password POST, original timeout diagnostics")
                 from .selftest_cataract import check_numeric_prefetch
                 check_numeric_prefetch(workspace)
                 result["checks"].append("durable decimal refraction/KM parsing, serial background wait and selected-patient priority")

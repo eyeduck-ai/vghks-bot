@@ -18,7 +18,7 @@ body.tool-embedded {background:#fff; margin:0;}
 .tool-embedded #activeJobs {display:none!important;}
 .tool-embedded > .topbar, .tool-embedded > .skip,
 .tool-embedded .accounts-panel, .tool-embedded .workspace-nav,
-.tool-embedded main > footer, .tool-embedded .workflow-guide,
+.tool-embedded .workflow-guide,
 .tool-embedded #analysisPane > .analysis-step-heading:first-of-type,
 .tool-embedded #analysisFromList, .tool-embedded #analysisFromLibrary {display:none!important;}
 .tool-embedded #main {max-width:none; margin:0; padding:12px;}

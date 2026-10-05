@@ -12,7 +12,15 @@ from datetime import date
 from .analysis_fetch import PatientCollector, RunSessions, order_identity, validate_patient
 from .analysis_numeric import MODULES, term_match
 from .analysis_store import AnalysisStore, digest, identifier
+from .connection_state import should_pause
+from .demographics import merge_demographics
 from .google_sheets import GoogleSettings, SheetError, SheetUncertain
+from .ophthalmic_orders import (
+    SCOPE_KEY,
+    eye_order_contexts,
+    eye_visit_signature,
+    order_in_eye_context,
+)
 from .scanner import Cancelled, ScanState, safe_failure
 from .settings import parse_mrns, timestamp, today
 from .sheet_plan import Planner, fingerprint, verify
@@ -49,14 +57,19 @@ class Analysis:
             raise ValueError("分析功能不存在。")
         return routes[path](values)
 
-    def overview(self, _):
-        runs = self.store.documents("analysis_runs")
+    def overview(self, values):
+        summary = str(values.get("summary", "")) == "1"
+        runs = self.store.run_summaries(values.get("cohort_id")) if summary else self.store.documents("analysis_runs", cohort_id=values.get("cohort_id"))
         for run in runs:
             state = self.app.states.get(run["id"])
             if state is not None and run["status"] in ACTIVE:
                 live = state.snapshot(detail=False)
                 run.update({k: live[k] for k in ("status", "message", "counts")})
-        return {"cohorts": self.store.documents("analysis_cohorts"), "modules": MODULES,
+        cohorts = self.store.documents("analysis_cohorts")
+        with self.store.library.read_snapshot():
+            for cohort in cohorts:
+                cohort["members"] = [self.member_demographics(m) for m in cohort["members"]]
+        return {"cohorts": cohorts, "modules": MODULES,
                 "runs": runs, "google": self.google.public()}
 
     def label_history(self, rows):
@@ -81,7 +94,7 @@ class Analysis:
     def resolve_members(self, values):
         grouped = {}
 
-        def add(mrn, name, usernames, record_ids=(), selected="", registration=None):
+        def add(mrn, name, usernames, record_ids=(), selected="", registration=None, demographics=None):
             item = grouped.setdefault(mrn, {"mrn": mrn, "name": name, "accounts": [],
                                            "source_records": [], "source_registrations": [], "account_id": selected})
             item["accounts"] = sorted(set(item["accounts"]) | set(usernames))
@@ -91,6 +104,8 @@ class Analysis:
             if not item["account_id"]:
                 item["account_id"] = next((a.id for a in self.app.accounts.values()
                                           if a.username in item["accounts"]), "")
+            if demographics:
+                item.update(merge_demographics(item, item, demographics))
 
         if values.get("source") == "library":
             if values.get("all"):
@@ -104,7 +119,7 @@ class Analysis:
                 if any(r is None for r in records):
                     raise ValueError("部分病歷已刪除，請重新選取。")
             for record in records:
-                add(record["mrn"], record.get("name", ""), record.get("accounts", []), [record["id"]])
+                add(record["mrn"], record.get("name", ""), record.get("accounts", []), [record["id"]], demographics=record)
         elif values.get("source") == "list":
             account = self.app._account(values.get("account_id"))
             refs = values.get("rows", [])
@@ -123,7 +138,7 @@ class Analysis:
                 if not row or classify_opd_registration(patient_model(row), doctor_card=account.username) != "DEDICATED":
                     raise ValueError("門診清單已變更或病人不屬於所選帳號，請重新載入。")
                 add(row["mrn"], row.get("name", ""), [account.username], selected=account.id,
-                    registration={"account": account.username, "day": day, "id": ref["id"]})
+                    registration={"account": account.username, "day": day, "id": ref["id"]}, demographics=row)
         elif values.get("source") == "manual":
             account = self.app._account(values.get("account_id"))
             for mrn in parse_mrns(values.get("mrns")):
@@ -146,7 +161,7 @@ class Analysis:
             raise ValueError("請輸入病歷號，或從門診清單、病歷資料庫選取病人。")
         if not grouped:
             raise ValueError("請至少選取一位病人。")
-        return list(grouped.values())
+        return [self.member_demographics(m) for m in grouped.values()]
 
     def test_google(self, _):
         client = self.client_factory()
@@ -224,6 +239,12 @@ class Analysis:
         return result
 
     def start(self, values, *, enqueue=True):
+        if enqueue:
+            with self.app.lock, self.app.task_manager.admission():
+                return self._start(values, enqueue=enqueue)
+        return self._start(values, enqueue=enqueue)
+
+    def _start(self, values, *, enqueue=True):
         with self.app.lock:
             self.app._available()
             if values.get("resume"):
@@ -297,6 +318,8 @@ class Analysis:
                 except (Cancelled, StorageError):
                     raise
                 except Exception as exc:
+                    if should_pause(exc):
+                        raise
                     message, code = safe_failure(exc)
                     state.issue("病人分析", message, code=code, mrn=member["mrn"])
                 state.count(patients_done=1)
@@ -320,19 +343,27 @@ class Analysis:
         member = next((m for m in cohort["members"] if m["mrn"] == values.get("mrn")), None)
         if not member:
             raise ValueError("病人不在此分析清單。")
-        return member
+        return self.member_demographics(member)
+
+    def member_demographics(self, member):
+        review = getattr(self.app, "review", None)
+        return review.member_demographics(member) if review else merge_demographics(member)
 
     def cataract_status(self, values):
         # Queue locks are acquired before the library transaction, matching the
         # scheduler's lock order. The summary never reads SOAP version payloads.
         queue = self.cataract_queue.snapshot(values.get("cohort_id"))
-        with self.store.library.batch():
+        with self.store.library.read_snapshot():
             return self._cataract_status(values, queue)
 
     def _cataract_status(self, values, queue):
         cohort = self.store.document("analysis_cohorts", values.get("cohort_id"))
-        runs = [run for run in self.store.documents("analysis_runs")
-                if run["cohort_id"] == cohort["id"] and run["options"]["modules"] == ["cataract"]]
+        runs = [run for run in self.store.run_summaries(cohort["id"])
+                if run["options"]["modules"] == ["cataract"]]
+        with self.store.status_cache(member["mrn"] for member in cohort["members"]):
+            return self._cataract_members_status(cohort, runs, queue)
+
+    def _cataract_members_status(self, cohort, runs, queue):
         members = []
         for member in cohort["members"]:
             mrn = member["mrn"]
@@ -340,19 +371,24 @@ class Analysis:
             soap_status = soap["payload"].get("status") if soap else "pending"
             soap_record = None
             if soap_status == "ready":
-                with self.store.library.connect() as db:
-                    soap_record = db.execute("SELECT 1 FROM records WHERE id=? AND mrn=? "
-                                             "AND id NOT IN (SELECT record_id FROM pending_deletions)",
-                                             (soap["payload"].get("record_id"), mrn)).fetchone()
-            ready = all(self.store.step(mrn, key) is not None for key in
-                        ("numeric-history", "orders-history:*", "orders-history:OR", "visits"))
+                soap_record = True if self.store.record_exists(mrn, soap["payload"].get("record_id")) else None
+            visits = self.store.step(mrn, "visits")
+            scope = self.store.step(mrn, SCOPE_KEY)
+            if scope:
+                indexed = (visits is not None and scope["payload"].get("complete")
+                           and scope["payload"].get("visit_signature") == eye_visit_signature(visits["payload"], mrn))
+            else:
+                indexed = all(self.store.step(mrn, "orders-history:" + category) is not None for category in ("*", "OR"))
+            numeric = self.store.step(mrn, "numeric-history")
+            ready = (visits is not None and numeric is not None and indexed
+                     and numeric.get("assessment", {}).get("complete") is not False)
             ready = ready and soap_status in {"ready", "missing", "no_visit"}
             ready = ready and (soap_status != "ready" or soap_record is not None)
             orders = self.cataract_orders(mrn) if ready else []
             ready = ready and all(order["report_complete"] for order in orders)
-            related = [run for run in runs if any(row["mrn"] == mrn for row in run["members"])]
+            related = [run for run in runs if mrn in run["member_mrns"]]
             active = next((run for run in related if run["status"] in ACTIVE), None)
-            cleared = self.app.library_data.cleared(mrn)
+            cleared = self.store.cleared(mrn)
             attempted = cleared or any(run["options"].get("mrn") == mrn for run in related)
             resumable = next((run for run in related if run["options"].get("mrn") == mrn
                               and run["status"] in {"paused", "partial", "failed", "cancelled", "interrupted"}), None)
@@ -373,6 +409,28 @@ class Analysis:
         with self.store.library.batch():
             return self._cataract_orders(mrn, start, end)
 
+    def cataract_sources(self, mrn):
+        history = self.app.review.history
+        visit_step = self.store.step(mrn, "visits")
+        visits = visit_step["payload"] if visit_step else history._visits(mrn)[0] or []
+        scope = self.store.step(mrn, SCOPE_KEY)
+        categories, case_keys = ("*", "OR"), None
+        if scope:
+            categories = ("*",) if scope["payload"].get("history_complete", True) else ()
+            case_keys = set(scope["payload"]["case_keys"]) if "case_keys" in scope["payload"] else None
+        contexts = eye_order_contexts(visits, mrn)
+        sources = []
+        for order in history._order_sources(mrn, visits=visits, categories=categories, case_keys=case_keys):
+            if not order_in_eye_context(order, contexts) or not any(
+                    term_match(order.get("name", ""), term) for term in MODULES["cataract"]["orders"]):
+                continue
+            try:
+                validate_patient(order, order["mrn"])
+            except (TypeError, ValueError):
+                continue
+            sources.append(order)
+        return sources, visits
+
     def _cataract_orders(self, mrn, start="", end=""):
         history = self.app.review.history
         available_assets = {}
@@ -388,17 +446,11 @@ class Analysis:
                     available_assets[sha] = False
             return available_assets[sha]
 
-        allowed = history._allowed_mrns(mrn)
+        sources, visits = self.cataract_sources(mrn)
+        allowed = history._allowed_mrns(mrn, visits=visits)
         groups = {}
-        for order in history._order_sources(mrn):
+        for order in sources:
             if not isinstance(order, dict) or order.get("mrn") not in allowed:
-                continue
-            try:
-                validate_patient(order, order["mrn"])
-            except (TypeError, ValueError):
-                continue
-            if not any(term_match(order.get("name", ""), term)
-                       for term in MODULES["cataract"]["orders"]):
                 continue
             groups.setdefault(order_identity(order), []).append(order)
         rows = []
@@ -492,9 +544,13 @@ class Analysis:
                 numeric_rows.append(row)
             seen_counts |= local_counts
         orders = []
+        visits = self.store.step(member["mrn"], "visits")
+        eye_contexts = eye_order_contexts(visits["payload"] if visits else [], member["mrn"])
         for step in steps:
             row = step["payload"]
             if step["kind"] != "order" or not any(term_match(row["name"], t) for t in MODULES[module]["orders"]):
+                continue
+            if module == "cataract" and not order_in_eye_context(row.get("order"), eye_contexts):
                 continue
             if row["date"] and ((start and row["date"] < start) or (end and row["date"] > end)):
                 continue

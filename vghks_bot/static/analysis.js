@@ -182,7 +182,7 @@ async function refreshAnalysisRuns() {
     return;
   }
   analysisRunSignature=signature;
-  const data=await ap("cohorts");
+  const data=await ap("cohorts",{summary:1});
   const finished=data.runs.some(r=>r.cohort_id===currentCohort?.id&&!active.has(r.status)&&
     analysisState.runs.some(old=>old.id===r.id&&active.has(old.status)));
   analysisState.runs=data.runs; renderAnalysisRuns();
@@ -221,7 +221,10 @@ function examCard(row,type,exam,comparing=false) {
   if(type==="numeric") {
     const dl=el("dl",undefined,"exam-values");
     for(const cell of row.cells.filter(c=>c.exam===exam)) {
-      const div=el("div");div.append(el("dt",measureLabel(cell)),el("dd",cell.raw+(cell.unit?" "+cell.unit:"")));dl.append(div);
+      const div=el("div"), label=el("dt"),value=el("dd");
+      label.append(CataractNumeric.labelledText(measureLabel(cell)));
+      value.append(CataractNumeric.labelledText(CataractNumeric.displayValue(cell.raw,cell.exam,cell.metric)+(cell.unit?" "+cell.unit:"")));
+      div.append(label,value);dl.append(div);
     }
     card.append(dl);
     const original=el("details",undefined,"exam-original");original.open=comparing||!row.cells.length;
@@ -244,7 +247,7 @@ function examCard(row,type,exam,comparing=false) {
       const member=compareMember();
       if(member?.account_id && (!embeddedAccount || member.account_id===embeddedAccount))assetBox.append(ClinicalUI.comparisonChoice({
         account:member.account_id,mrn:member.mrn,digest:asset.digest,mime:asset.mime,
-        name:(row.name||exam||"醫囑附件")+" "+(i+1),source:"醫囑報告",date:row.date||""
+        name:row.name||exam||"醫囑附件",source:"醫囑報告",date:row.date||"",fileIndex:i+1,fileCount:row.assets.length,reportId:row.id
       }));
     }
     card.append(assets);
@@ -276,10 +279,10 @@ function trendCharts(rows,exam) {
     const svg=svgNode("svg",{viewBox:"0 0 440 180",role:"img","aria-label":caption+" 時序趨勢"});
     const times=points.map(p=>Date.parse(p.date)), values=points.map(p=>p.value), minT=Math.min(...times),maxT=Math.max(...times),lo=Math.min(...values),hi=Math.max(...values);
     const coords=points.map((p,i)=>[45+(times[i]-minT)/(maxT-minT||1)*365,135-(p.value-lo)/(hi-lo||1)*110]);
-    svg.append(svgNode("line",{x1:45,x2:410,y1:135,y2:135,class:"axis"}),svgNode("text",{x:3,y:30},String(hi)),svgNode("text",{x:3,y:138},String(lo)),
+    svg.append(svgNode("line",{x1:45,x2:410,y1:135,y2:135,class:"axis"}),svgNode("text",{x:3,y:30},CataractNumeric.displayValue(hi,exam,first.metric)),svgNode("text",{x:3,y:138},CataractNumeric.displayValue(lo,exam,first.metric)),
       svgNode("text",{x:45,y:165},points[0].date),svgNode("text",{x:410,y:165,"text-anchor":"end"},points.at(-1).date),
       svgNode("polyline",{points:coords.map(p=>p.join(",")).join(" ")}));
-    coords.forEach((p,i)=>{const circle=svgNode("circle",{cx:p[0],cy:p[1],r:3});circle.append(svgNode("title",{},points[i].date+" · "+points[i].raw));svg.append(circle);});
+    coords.forEach((p,i)=>{const circle=svgNode("circle",{cx:p[0],cy:p[1],r:3});circle.append(svgNode("title",{},points[i].date+" · "+CataractNumeric.displayValue(points[i].raw,exam,points[i].metric)));svg.append(circle);});
     figure.append(svg);wrapper.append(figure);
   }
   return wrapper;

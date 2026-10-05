@@ -111,6 +111,9 @@ class ExamSDK:
 
     def orders_history(self, mrn, history_filter):
         self.calls.append(("orders", mrn, history_filter.category))
+        return self.recent_orders(mrn)
+
+    def recent_orders(self, mrn):
         result = []
         names = ["Microsonography", "DBR, free charge", "FAG", "Fundus Color Photo Picture, eac"]
         for index, name in enumerate(names, 1):
@@ -143,7 +146,7 @@ class ExamSDK:
 
     def case_orders(self, case):
         self.calls.append(("case_orders", case.mrn))
-        return []
+        return self.recent_orders(case.mrn) if case.case_no == "RECENT" else []
 
     def detail(self, ref):
         self.calls.append(("detail", ref.mrn, ref.sequence_no))

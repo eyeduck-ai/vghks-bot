@@ -33,7 +33,8 @@ class EarningsMonitor:
 
     def overview(self):
         value = self.preferences()
-        task = self.db.get("task", value.get("last_task", ""), required=False)
+        tasks = self.db.task_summaries(key=value.get("last_task", ""))
+        task = tasks[0] if tasks else None
         configured = self.earnings.public_credentials()["configured"]
         return {**value, "configured": configured, "due": value["enabled"] and configured and value["next_check"] <= timestamp(),
                 "last_status": task["status"] if task else "", "last_message": task.get("message", "") if task else ""}
@@ -45,7 +46,7 @@ class EarningsMonitor:
         if not value["due"]:
             return
         if any(t["kind"].startswith("earnings_") and t["status"] in {"queued", "running", "cancelling", "paused"}
-               for t in self.db.all("task")):
+               for t in self.db.task_summaries(kinds=('earnings_options','earnings_capture'))):
             return
         # Open both current month menus and re-read every still-published report.
         # The archive deduplicates unchanged content and retains changed versions.

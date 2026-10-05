@@ -3,6 +3,7 @@ import time
 
 
 def check_numeric_prefetch(workspace):
+    check_order_compatibility()
     analysis = workspace.analysis
     cohort = analysis.save_cohort({"source": "manual", "account_id": workspace.account_id,
                                    "name": "合成背景數值驗證", "mrns": "CATA628A CATA628B"})
@@ -47,3 +48,25 @@ def check_numeric_prefetch(workspace):
         with analysis.store.library.connect() as nested:
             assert nested is connection
         assert analysis.store.step("CATA628A", "numeric-history")
+
+
+def check_order_compatibility():
+    import json
+
+    from vghks_sdk.models import PdfAttachmentRef, to_jsonable
+
+    from .analysis_fetch import model
+    from .sdk_orders import parse_order_index
+
+    path = r"\\hfs01_1A0.vghks.gov.tw\SECTORD\lightrep\TEST001_O_DOCUMENT1.pdf"
+    page = """<script>
+var orderStr = '<a href="/PRQWeb/QueryOrderDetail.do?hhisnum=TEST001&caseNo=EYE1&caseType=O&seqNo=1">光照治療</a>';
+var mydate = '2026-09-01'; var rcpDt = '2026-09-02'; var qrcodeStr = '';
+var filepath = PATH;
+qrcodeStr += '<button class="attachBtn" path="'+filepath+'">光照治療紀錄</button>';
+new KSCase('', orderStr, mydate, rcpDt, '', '已執行', qrcodeStr);
+</script>""".replace("PATH", json.dumps(path))
+    orders = parse_order_index(page, mrn="TEST001")
+    assert len(orders) == 1 and orders[0].name == "光照治療"
+    ref = orders[0].pdf_refs[0]
+    assert model(PdfAttachmentRef, to_jsonable(ref)).file_path == path

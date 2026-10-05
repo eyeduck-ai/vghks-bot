@@ -130,7 +130,9 @@ window.ScanBrowser = (() => {
   }
   async function poll(revision) {
     while (revision === serial && dialog()?.open && task) {
-      const detail = await request("/tasks/detail?id=" + encodeURIComponent(task));
+      await window.JobProgress.ready();
+      if (revision !== serial || !dialog()?.open || !task) return;
+      const detail = await request("/tasks/detail?summary=1&id=" + encodeURIComponent(task));
       if (revision !== serial) return;
       const result = await request("/reviews/history/read", base());
       if (revision !== serial) return;
@@ -141,7 +143,7 @@ window.ScanBrowser = (() => {
         if (["failed", "partial", "paused"].includes(detail.status)) message(detail.message || "部分掃描資料未取得，可續跑。", true);
         return;
       }
-      await new Promise(resolve => setTimeout(resolve, 1200));
+      await window.JobProgress.wait();
     }
   }
   function scanRow(row, index) {
@@ -241,12 +243,13 @@ window.ScanBrowser = (() => {
     if (!result.data && canFetch()) {
       const started = await request("/tasks/start", {kind:"history", ...values});
       for (;;) {
-        const job = await request("/tasks/detail?id=" + encodeURIComponent(started.task_id));
+        await window.JobProgress.ready();
+        const job = await request("/tasks/detail?summary=1&id=" + encodeURIComponent(started.task_id));
         if (!["queued", "running", "cancelling"].includes(job.status)) {
           if (job.status !== "completed") throw new Error(job.message || "掃描 PDF 尚未取得。");
           break;
         }
-        await new Promise(resolve => setTimeout(resolve, 800));
+        await window.JobProgress.wait();
       }
       result = await request("/reviews/history/read", values);
     }

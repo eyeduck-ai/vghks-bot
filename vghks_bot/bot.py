@@ -5,7 +5,8 @@ import secrets
 import sys
 import threading
 import uuid
-from dataclasses import replace
+from contextlib import contextmanager
+from dataclasses import asdict, replace
 from pathlib import Path
 
 from vghks_sdk import LoginRejectedError
@@ -21,7 +22,7 @@ from .jobs import Application, BusyError
 from .review import Review
 from .scanned_records import ScanArchive
 from .scanner import create_sdk, safe_failure
-from .settings import Account, credentials, today
+from .settings import FOLLOWUP_TAG, Account, credentials, today
 from .storage import StorageError
 from .surgery_schedule import SurgerySchedule
 
@@ -31,11 +32,13 @@ class Workspace(Application):
         self.root = root
         self.account_id, self.username = info["id"], info["username"]
         self.gateway = AccountGateway(root.sdk_factory, root.gate)
+        self.session_lock = threading.RLock()
         super().__init__(root.settings, root.directory / "accounts" / self.account_id, self.gateway.lease)
         self.accounts = {self.account_id: Account(self.account_id, username=self.username, label=info["label"])}
         self.launch_token, self.session_token, self.csrf_token = root.launch_token, root.session_token, root.csrf_token
         self.analysis.sheet_lock = root.sheet_lock
         self.review = Review(self)
+        self._migrate_default_tags()
         self.scans = ScanArchive(self)
         self.diagnostics = Diagnostics(self)
         self.gateway.diagnostic = self.diagnostics.save
@@ -47,6 +50,24 @@ class Workspace(Application):
         self.entered = False
         self.offline_mode = False
 
+    def _migrate_default_tags(self):
+        if self.root.read_only:
+            return
+        key = "default-tags-v1"
+        if self.review.db.get("preferences", key, required=False):
+            return
+        tags = self.settings.categories
+        # A fresh workspace already receives the new defaults. Explicit custom
+        # constructor settings are preserved; only saved older accounts migrate.
+        if (self.store.directory / "settings.json").exists() and not any(
+            tag.id == FOLLOWUP_TAG.id or tag.name == FOLLOWUP_TAG.name for tag in tags
+        ):
+            if len(tags) >= 50:
+                self.store.warnings.append("自動 TAG 已達 50 個，尚未加入追蹤；請先調整 TAG 設定。")
+                return
+            self.save_settings({"categories": [asdict(tag) for tag in (*tags, FOLLOWUP_TAG)]})
+        self.review.db.save("preferences", {"id": key, "followup": True})
+
     def bootstrap(self):
         return {**super().bootstrap(), "context": self.root.context_token, "read_only": self.root.read_only}
 
@@ -55,6 +76,19 @@ class Workspace(Application):
         return False
 
     def login(self, password, info):
+        with self.session():
+            self._login(password, info)
+
+    @contextmanager
+    def session(self):
+        if not self.session_lock.acquire(timeout=30):
+            raise BusyError("此帳號正在登入或登出，請稍後重試。")
+        try:
+            yield
+        finally:
+            self.session_lock.release()
+
+    def _login(self, password, info):
         settings = replace(self.settings, username=self.username, password=password)
         self.gateway.login(settings)
         account = self.accounts[self.account_id]
@@ -63,6 +97,10 @@ class Workspace(Application):
         self.offline_mode = False
 
     def logout(self):
+        with self.session():
+            self._logout()
+
+    def _logout(self):
         self.analysis.cataract_queue.pause("帳號已登出，重新登入後可繼續背景抓取。")
         self.gateway.online = False
         with self.lock:
@@ -72,6 +110,7 @@ class Workspace(Application):
         with self.review.lock:
             for state in self.review.foreground.values():
                 state.cancel.set()
+        self.task_manager.cancel_pending()
         self.gateway.close()
         self.accounts[self.account_id] = replace(self.accounts[self.account_id], password="")
         self.entered = False
@@ -94,14 +133,15 @@ class Workspace(Application):
         task_id = values.pop("task_id", "")
         if not task_id:
             return super().library_search(values)
-        task = self.review.db.get("task", task_id)
+        tasks = self.review.db.task_summaries(key=task_id)
+        if not tasks:
+            raise ValueError("資料不存在於此帳號工作區。")
+        task = tasks[0]
         if task["kind"] != "review":
             raise ValueError("請選擇病歷檢閱任務。")
-        allowed = {r["id"] for p in self.review.db.items(task_id) for r in p.get("records", [])}
-        result = self.store.library.search(values, self.settings, all_results=True)
-        rows = [r for r in result["records"] if r["id"] in allowed]
-        offset, limit = int(values.get("offset", 0)), int(values.get("limit", 40))
-        result.update(records=rows[offset:offset+limit], total=len(rows), patients=len({r["mrn"] for r in rows}))
+        values.update(task_id=task_id)
+        values.setdefault("limit", 40)
+        result = self.store.library.search(values, self.settings)
         return {**result, "categories": self.settings.public()["categories"], "stats": self.store.library.stats()}
 
     def request_close(self):
@@ -113,7 +153,7 @@ class Workspace(Application):
 
     def close(self):
         self.request_close()
-        self.gateway.close()
+        self.gateway.close(wait=True)
         with self.review.lock:
             threads = list(self.review.threads.values())
         for thread in threads:
@@ -238,21 +278,28 @@ class BotApplication:
             workspace = self.workspaces.get(key)
             if workspace is None:
                 workspace = self.workspaces[key] = Workspace(self, info)
-        try:
-            workspace.login(password, info)
-        except Exception as exc:
-            message, _ = safe_failure(exc)
-            raise ValueError("登入未完成。" + message) from exc
-        try:
-            self.registry.save(username, label, campus, password, remember, key)
-        except Exception:
-            workspace.logout()
-            raise
+        with workspace.session():
+            try:
+                workspace.login(password, info)
+            except BusyError:
+                raise
+            except Exception as exc:
+                message, _ = safe_failure(exc)
+                raise ValueError("登入未完成。" + message) from exc
+            try:
+                self.registry.save(username, label, campus, password, remember, key)
+            except Exception:
+                workspace.logout()
+                raise
         return {"account": {**self.registry.account(key), "online": True}}
 
     def activate(self, key):
         """Select an account and restore only its own SDK session when needed."""
         workspace = self.workspace(key, require_entered=False)
+        with workspace.session():
+            return self._activate(key, workspace)
+
+    def _activate(self, key, workspace):
         if self.read_only:
             return {**self.offline(key), "status": "offline"}
         if workspace.gateway.online:
@@ -267,20 +314,26 @@ class BotApplication:
             workspace.login(password, self.registry.account(key))
         except Exception as exc:
             message, code = safe_failure(exc)
-            status = "needs_password" if isinstance(exc, LoginRejectedError) or code == "PORTAL_LOGIN_HTTP_DENIED" else "unavailable"
+            from .connection_state import failure_state
+
+            issue = failure_state(exc)
+            status = ("password_change_required" if issue["action"] == "password_change" else
+                      "needs_password" if isinstance(exc, LoginRejectedError) or issue["action"] == "credentials" else
+                      "unavailable")
             return {"account": self.registry.account(key), "online": False, "status": status,
-                    "message": message, "error_code": code}
+                    "message": message, "error_code": code, "connection_issue": issue}
         self.registry.preference("last_account", key)
         return {"account": self.registry.account(key), "online": True, "status": "ready"}
 
     def offline(self, key):
         workspace = self.workspace(key, require_entered=False)
-        if workspace.gateway.online:
-            workspace.logout()
-        workspace.entered = True
-        workspace.offline_mode = True
-        self.registry.preference("last_account", key)
-        return {"account": self.registry.account(key), "online": workspace.gateway.online}
+        with workspace.session():
+            if workspace.gateway.online:
+                workspace.logout()
+            workspace.entered = True
+            workspace.offline_mode = True
+            self.registry.preference("last_account", key)
+            return {"account": self.registry.account(key), "online": workspace.gateway.online}
 
     def logout(self, key):
         self.workspace(key, require_entered=False).logout()

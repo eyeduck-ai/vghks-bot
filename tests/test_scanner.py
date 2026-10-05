@@ -146,7 +146,7 @@ class ScanTests(unittest.TestCase):
     def test_authentication_failure_stops_without_repeated_login_attempts(self):
         self.sdk.records.get_visit_cases.side_effect = AuthenticationError("private password")
         result = self.run_scan()
-        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["status"], "paused")
         self.sdk.records.get_visit_cases.assert_called_once()
         self.assertNotIn("private password", str(result))
 
@@ -168,7 +168,7 @@ class ScanTests(unittest.TestCase):
     def test_failed_readiness_never_queries_patients(self):
         self.sdk.auth.check.return_value = SimpleNamespace(ok=False, targets=[])
         result = self.run_scan()
-        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["status"], "paused")
         self.sdk.opd.get_doctor_patients.assert_not_called()
 
 

@@ -9,9 +9,7 @@ from contextlib import contextmanager
 from datetime import datetime
 
 from .settings import timestamp, today
-from .soap_preview import ap_preview
 from .storage import StorageError
-from .tags import classification
 
 
 def encoded(value):
@@ -41,6 +39,7 @@ class Library:
         self.path = path
         self.lock = threading.RLock()
         self._batch = threading.local()
+        self._search_settings = None
         with self.connect() as db:
             db.executescript("""
                 PRAGMA journal_mode=WAL;
@@ -70,16 +69,19 @@ class Library:
                     PRIMARY KEY(mrn, tag_id));
                 CREATE INDEX IF NOT EXISTS patient_tags_group ON patient_tags(tag_id, mrn);
             """)
+            from .library_search import initialize
+
+            initialize(db)
 
     @contextmanager
     def connect(self):
         from .database_format import schema
 
+        shared = getattr(self._batch, "db", None)
+        if shared is not None:
+            yield shared
+            return
         with self.lock:
-            shared = getattr(self._batch, "db", None)
-            if shared is not None:
-                yield shared
-                return
             db = None
             try:
                 db = sqlite3.connect(self.path, timeout=15)
@@ -93,6 +95,28 @@ class Library:
             finally:
                 if db is not None:
                     db.close()
+
+    @contextmanager
+    def read_snapshot(self):
+        """A consistent WAL read without holding the account writer mutex."""
+        shared = getattr(self._batch, "db", None)
+        if shared is not None:
+            yield shared
+            return
+        db = None
+        try:
+            db = sqlite3.connect(self.path.resolve().as_uri() + "?mode=ro", uri=True, timeout=15)
+            db.row_factory = sqlite3.Row
+            db.execute("PRAGMA query_only=ON")
+            db.execute("BEGIN")
+            self._batch.db = db
+            yield db
+        except sqlite3.Error as exc:
+            raise StorageError("本機資料庫無法讀取，先前資料已保留。") from exc
+        finally:
+            self._batch.db = None
+            if db is not None:
+                db.close()
 
     @contextmanager
     def batch(self):
@@ -153,6 +177,11 @@ class Library:
                 (record["id"], record["mrn"], record["date"], record.get("section_code", ""), content, now, now))
             db.execute("INSERT OR IGNORE INTO versions VALUES(?,?,?,?)", (record["id"], digest, content, now))
             db.execute("INSERT OR IGNORE INTO sources VALUES(?,?,?)", (record["id"], account, run_id))
+            if self._search_settings is not None:
+                from .library_search import project
+
+                current = db.execute("SELECT payload FROM records WHERE id=?", (record["id"],)).fetchone()[0]
+                project(db, json.loads(current), current, self._search_settings)
 
     def get_record(self, key, *, include_versions=True):
         with self.connect() as db:
@@ -203,77 +232,16 @@ class Library:
             return bool(row and row[0] == summary["revision"])
 
     def search(self, values, settings, *, all_results=False):
-        query = values.get("q", "")
-        if not isinstance(query, str) or len(query) > 500:
-            raise ValueError("搜尋字串最多 500 字。")
-        clauses = ["r.id NOT IN (SELECT record_id FROM pending_deletions)"]
-        args = []
-        for field, expression in (("start", "r.day>=?"), ("end", "r.day<=?"), ("mrn", "r.mrn=?")):
-            if values.get(field):
-                if not isinstance(values[field], str):
-                    raise ValueError("篩選條件不正確。")
-                clauses.append(expression)
-                args.append(values[field])
-        for field in ("account", "tag", "group"):
-            if not isinstance(values.get(field, ""), str):
-                raise ValueError("篩選條件不正確。")
-        if values.get("start") and values.get("end") and values["start"] > values["end"]:
-            raise ValueError("結束日期不可早於開始日期。")
-        if values.get("account"):
-            clauses.append("EXISTS(SELECT 1 FROM sources s WHERE s.record_id=r.id AND s.account=?)")
-            args.append(values["account"])
-        category = values.get("tag", "")
-        if category not in {"", "__untagged", "__tagged", *(c.id for c in settings.categories)}:
-            raise ValueError("tag 不存在，請重新選擇。")
-        with self.connect() as db:
-            raw = db.execute("SELECT r.* FROM records r WHERE " + " AND ".join(clauses) + " ORDER BY day DESC, mrn, id", args).fetchall()
-            accounts = {}
-            for row in db.execute("SELECT DISTINCT record_id, account FROM sources ORDER BY account"):
-                accounts.setdefault(row[0], []).append(row[1])
-            versions = dict(db.execute("SELECT record_id, COUNT(*) FROM versions GROUP BY record_id"))
-        result = []
-        counts = {c.id: 0 for c in settings.categories}
-        manual = self.manual_tags(settings)
-        untagged = 0
-        scope_issue_count = 0
-        for row in raw:
-            record = json.loads(row["payload"])
-            # Unicode casefold + literal substring also supports Chinese and
-            # punctuation, unlike token-based full-text indexes.
-            if query.strip().casefold() not in " ".join(str(record.get(k, "")) for k in ("mrn", "name", "sex", "age", "date", "section", "doctor", "case_no", "soap")).casefold():
-                continue
-            record.update(classification(record, settings))
-            scope_issue_count += bool(record["tag_scope_issues"])
-            record["manual_tags"] = manual.get(record["mrn"], [])
-            tags = {m["category"] for m in record["matches"]} | {t["id"] for t in record["manual_tags"]}
-            for tag in tags:
-                counts[tag] += 1
-            untagged += int(not tags)
-            if category == "__untagged" and tags or category == "__tagged" and not tags or category not in {"", "__untagged", "__tagged"} and category not in tags:
-                continue
-            record.update(accounts=accounts.get(record["id"], []), version_count=versions.get(record["id"], 1), first_saved=row["first_saved"], updated_at=row["updated_at"])
-            result.append(record)
-        try:
-            offset, limit = int(values.get("offset", 0)), int(values.get("limit", 50))
-        except (ValueError, TypeError):
-            raise ValueError("分頁不正確。") from None
-        if offset < 0 or not 1 <= limit <= 200:
-            raise ValueError("分頁不正確。")
-        patients = list(dict.fromkeys(r["mrn"] for r in result))
-        by_patient = values.get("group") == "patient"
-        selected = set(patients[offset:offset + limit])
-        page = result if all_results else [r for r in result if r["mrn"] in selected] if by_patient else result[offset:offset + limit]
-        for record in page:
-            record["ap_preview"] = ap_preview(record)
-        return {"records": page, "total": len(result), "patients": len(patients), "page_total": len(patients) if by_patient else len(result),
-            "tag_counts": counts, "untagged": untagged, "offset": offset, "limit": limit,
-            "scope_issue_count": scope_issue_count}
+        from .library_search import search
 
-    def manual_tags(self, settings):
+        return search(self, values, settings, all_results=all_results)
+
+    def manual_tags(self, settings, *, mrns=None):
         definitions = {t.id: t for t in settings.categories}
         result = {}
         with self.connect() as db:
-            for row in db.execute("SELECT * FROM patient_tags ORDER BY added_at, tag_id"):
+            clause, args = (" WHERE mrn IN (SELECT value FROM json_each(?))", (encoded(mrns),)) if mrns is not None else ("", ())
+            for row in db.execute("SELECT * FROM patient_tags" + clause + " ORDER BY added_at, tag_id", args):
                 if row["tag_id"] in definitions:
                     result.setdefault(row["mrn"], []).append({"id": row["tag_id"],
                         "name": definitions[row["tag_id"]].name, "added_at": row["added_at"]})
@@ -310,7 +278,9 @@ class Library:
             return grouped.setdefault(mrn, {"mrn": mrn, "name": "", "accounts": set(),
                 "source_records": [], "auto_tags": {}, "manual_tags": []})
 
-        records = self.search({}, settings, all_results=True)["records"]
+        from .library_search import index_rows
+
+        records = index_rows(self, settings)
         for record in records:
             item = patient(record["mrn"])
             item["name"] = item["name"] or record.get("name", "")

@@ -58,7 +58,7 @@ class SurgerySchedule:
         self.app, self.db = app, app.review.db
 
     def require_idle(self):
-        if any(t["kind"] == KIND and t["status"] in {"queued", "running", "cancelling"} for t in self.db.all("task")):
+        if self.db.task_summaries(kinds=(KIND,), statuses=("queued", "running", "cancelling")):
             raise ValueError("手術排程正在查詢，請等待完成或先暫停。")
 
     def prepare(self, task, values):
@@ -107,10 +107,9 @@ class SurgerySchedule:
 
     def overview(self, values=None):
         values = values or {}
-        tasks = [t for t in self.db.all("task") if t["kind"] == KIND]
+        tasks = self.db.task_list((KIND,), values)
         tasks.sort(key=lambda t: t["created_at"], reverse=True)
-        results = self.db.all("surgery_schedule_result")
-        results.sort(key=lambda r: r["fetched_at"], reverse=True)
+        results = self.db.documents("surgery_schedule_result", limit=1)
         result = results[0] if results else None
         if values.get("task_id"):
             task = self.db.get("task", values["task_id"])

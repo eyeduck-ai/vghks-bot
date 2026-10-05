@@ -37,11 +37,16 @@ window.CataractUI = (() => {
     stateFor(member);
     restoreHeaderTools();
     coverage.replaceChildren();
-    const heading = el("h2", member.name || "姓名未提供", "cataract-identity");
-    heading.append(ClinicalUI.mrnBadge(member.mrn, message => notify(message)));
+    const heading = patientIdentity(member);
     const waiting = el("p", "正在讀取已存 SOAP 與數值…", "small muted");
     waiting.setAttribute("role", "status");
     $("#analysisResults").replaceChildren(heading, waiting);
+  }
+
+  function patientIdentity(member) {
+    const heading = el("h2", member.name || "姓名未提供", "cataract-identity");
+    heading.append(ClinicalUI.mrnBadge(member.mrn, message => notify(message)), ClinicalUI.ageBadge(member));
+    return heading;
   }
 
   function readFailure(member, error) {
@@ -326,7 +331,8 @@ window.CataractUI = (() => {
           check.setAttribute("aria-label",`將 ${row.name} ${asset.name||'檔案 '+(index+1)} 加入比較`);
           check.addEventListener("change",()=>{
             try{
-              if(check.checked)window.FileCompare.add({account:embeddedAccount,mrn:$("#analysisPatient").value,digest:asset.digest,mime:asset.mime,name:`${row.name} ${asset.name||'檔案 '+(index+1)}`,source:"醫囑報告",date:row.date||""});
+              const current=item._order,files=current.attachments||[],fileIndex=files.findIndex(file=>file.digest===asset.digest)+1;
+              if(check.checked)window.FileCompare.add({account:embeddedAccount,mrn:$("#analysisPatient").value,digest:asset.digest,mime:asset.mime,name:[current.name,asset.name].filter(Boolean).join(" · "),source:"醫囑報告",date:current.date||"",fileIndex,fileCount:files.length,reportId:current.id});
               else window.FileCompare.remove(asset.digest);
             }catch(error){notify(error.message,true);}
             syncAttachments();
@@ -390,7 +396,12 @@ window.CataractUI = (() => {
     const area = $("#analysisResults"), member = data.member, state = stateFor(member);
     const numericSignature = JSON.stringify(data.numeric || []), soapSignature = JSON.stringify(data.latest_soap || {});
     const orderSignature = JSON.stringify(data.orders || []);
+    const identitySignature = JSON.stringify([member.mrn, member.name, member.birthday, ClinicalUI.patientAge(member)]);
     if (currentUI && area.contains(currentUI.heading)) {
+      if (currentUI.identitySignature !== identitySignature) {
+        const next = patientIdentity(member);currentUI.identity.replaceWith(next);
+        currentUI.identity = next;currentUI.identitySignature = identitySignature;
+      }
       if (currentUI.numericSignature !== numericSignature) {
         const scroll = currentUI.numeric.scrollTop, next = numericPanel(data, state);
         currentUI.numeric.replaceWith(next); next.scrollTop = scroll;
@@ -425,8 +436,7 @@ window.CataractUI = (() => {
       if (!state.orderRow) {state.selectedOrderId = ""; state.report = null;}
     }
     const heading = el("div", undefined, "cataract-result-heading");
-    const identity=el("h2",member.name || "姓名未提供","cataract-identity");
-    identity.append(ClinicalUI.mrnBadge(member.mrn,message=>notify(message)));heading.append(identity);
+    const identity = patientIdentity(member);heading.append(identity);
     const tabs = {}, nav = el("nav", undefined, "cataract-view-nav");
     nav.setAttribute("aria-label", "術前分析檢視");
     for (const [key, label] of [["overview", "總覽"], ["work", "醫囑報告"]]) {
@@ -462,7 +472,7 @@ window.CataractUI = (() => {
     const preview = el("section", undefined, "cataract-section cataract-report-preview");
     workPage.append(mobileSwitch("work", state), workspace);
     workspace.append(numeric, orders, preview);
-    currentUI = {heading, tools, pages:{overview, work:workPage}, tabs, compare, retry,
+    currentUI = {heading, identity, identitySignature, tools, pages:{overview, work:workPage}, tabs, compare, retry,
       overview, overviewNumeric, work:workPage, soap, numeric, orders, preview, workspace, railToggle,
       numericSignature, soapSignature, orderSignature};
     renderOrder(state.report, state.orderRow);
@@ -584,14 +594,15 @@ window.CataractUI = (() => {
       const started = await api("/api/tasks/start", {kind: "history", ...request, force: true});
       parent.postMessage({type: "bot:task-started"}, location.origin);
       for (;;) {
-        const task = await api("/api/tasks/detail?id=" + encodeURIComponent(started.task_id));
+        await JobProgress.ready();
+        const task = await api("/api/tasks/detail?summary=1&id=" + encodeURIComponent(started.task_id));
         JobProgress.show(progress, task);
         if (!active.has(task.status)) {
           if (currentState.selectedOrderId === row.id) await readSavedOrder(row);
           await loadAnalysisResult();
           return;
         }
-        await new Promise(resolve => setTimeout(resolve, 700));
+        await JobProgress.wait();
       }
     } finally {progress.remove();}
   }

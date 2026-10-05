@@ -48,103 +48,41 @@ class LibraryData:
 
     def soap_cleared(self, ids, mrns):
         with self.library.connect() as db:
-            keys = [(row["mrn"], row["key"]) for row in db.execute("SELECT * FROM analysis_steps")
-                    if row["kind"] == "cataract_soap" and json.loads(row["payload"]).get("record_id") in ids]
+            keys = [(row["mrn"], row["key"]) for row in db.execute("SELECT mrn,key FROM analysis_steps WHERE kind='cataract_soap' "
+                    "AND json_extract(payload,'$.record_id') IN (SELECT value FROM json_each(?))", (json.dumps(ids),))]
             for table in ("analysis_steps", "analysis_versions"):
                 db.executemany(f"DELETE FROM {table} WHERE mrn=? AND key=?", keys)
             db.executemany("INSERT OR REPLACE INTO clinical_cache_deletions VALUES(?,?,?)",
                            [(mrn, "soap", timestamp()) for mrn in mrns])
 
-    def _snapshot(self):
-        with self.library.connect() as db:
-            steps = [dict(row) for row in db.execute("SELECT * FROM analysis_steps")]
-            versions = [dict(row) for row in db.execute("SELECT * FROM analysis_versions")]
-            refs = [dict(row) for row in db.execute("SELECT * FROM analysis_asset_refs")]
-            assets = {row["digest"]: dict(row) for row in db.execute("SELECT * FROM analysis_assets")}
-            lists = [dict(row) for row in db.execute("SELECT * FROM list_cache")]
-            records = [dict(row) for row in db.execute("SELECT mrn,payload FROM records")]
-            tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-            documents = ([dict(row) for row in db.execute("SELECT * FROM bot_documents")]
-                         if "bot_documents" in tables else [])
+    def _snapshot(self, mrns, list_keys):
+        packed = json.dumps(mrns)
+        where = "mrn IN (SELECT value FROM json_each(?))"
+        with self.library.read_snapshot() as db:
+            steps = [dict(row) for row in db.execute("SELECT * FROM analysis_steps WHERE " + where, (packed,))]
+            versions = [dict(row) for row in db.execute("SELECT * FROM analysis_versions WHERE " + where, (packed,))]
+            # Other patients' references matter only when they share a selected
+            # attachment. Include those references in the deletion fingerprint.
+            refs = [dict(row) for row in db.execute("SELECT * FROM analysis_asset_refs WHERE digest IN "
+                "(SELECT digest FROM analysis_asset_refs WHERE " + where + ") ORDER BY mrn,key,digest", (packed,))]
+            digests = json.dumps(list({row["digest"] for row in refs}))
+            assets = {row["digest"]: dict(row) for row in db.execute("SELECT * FROM analysis_assets "
+                "WHERE digest IN (SELECT value FROM json_each(?))", (digests,))}
+            lists = [dict(row) for row in db.execute("SELECT * FROM list_cache WHERE (account,day) IN "
+                "(SELECT json_extract(value,'$.account'),json_extract(value,'$.day') FROM json_each(?))", (json.dumps(list_keys),))]
+            records = [dict(row) for row in db.execute("SELECT DISTINCT mrn FROM records WHERE " + where, (packed,))]
+            has_documents = db.execute("SELECT 1 FROM sqlite_master WHERE name='bot_documents'").fetchone()
+            documents = [dict(row) for row in db.execute("SELECT * FROM bot_documents WHERE kind IN "
+                "('profile','registrations','visits','numeric') AND coalesce(nullif(json_extract(payload,'$.mrn'),''),id) "
+                "IN (SELECT value FROM json_each(?)) ORDER BY kind,id", (packed,))] if has_documents else []
         return steps, versions, refs, assets, lists, records, documents
 
     def read(self, values):
-        steps, versions, refs, assets, lists, records, documents = self._snapshot()
-        patients = {}
+        from .library_inventory import read
 
-        def patient(mrn, name=""):
-            row = patients.setdefault(mrn, {"mrn": mrn, "name": "", "categories": {},
-                                           "updated_at": "", "attachment_bytes": 0})
-            if name:
-                row["name"] = name
-            return row
-
-        def add(mrn, category, saved, count=1, version_count=0):
-            row = patient(mrn)
-            item = row["categories"].setdefault(category, {"count": 0, "versions": 0,
-                                                         "attachment_bytes": 0, "attachments": 0})
-            item["count"] += count
-            item["versions"] += version_count
-            row["updated_at"] = max(row["updated_at"], saved or "")
-
-        for record in records:
-            patient(record["mrn"], json.loads(record["payload"]).get("name", ""))
-        for value in documents:
-            raw, kind = json.loads(value["payload"]), value["kind"]
-            mrn = raw.get("mrn") or (value["id"] if kind in {"profile", "registrations", "visits"} else "")
-            if kind in {"profile", "registrations", "visits", "numeric"} and mrn:
-                category = "numeric" if kind == "numeric" else kind
-                patient(mrn, raw.get("name", ""))
-                add(mrn, category, value["updated_at"])
-            elif kind == "set":
-                for member in raw.get("members", []):
-                    if member.get("mrn") in patients:
-                        patient(member["mrn"], member.get("name", ""))
-        kinds = {(row["mrn"], row["key"]): row["kind"] for row in steps}
-        for row in steps:
-            if row["kind"] != "numeric_structured":
-                add(row["mrn"], step_category(row["key"], row["kind"]), row["saved_at"])
-        for row in versions:
-            add(row["mrn"], step_category(row["key"], kinds.get((row["mrn"], row["key"]), "")),
-                row["saved_at"], 0, 1)
-        for value in documents:
-            raw = json.loads(value["payload"])
-            if value["kind"] == "set":
-                for member in raw.get("members", []):
-                    if member.get("mrn") in patients:
-                        patient(member["mrn"], member.get("name", ""))
-        for cohort in self.app.analysis.store.documents("analysis_cohorts"):
-            for member in cohort.get("members", []):
-                if member.get("mrn") in patients:
-                    patient(member["mrn"], member.get("name", ""))
-        seen, patient_assets = set(), set()
-        for ref in refs:
-            category = step_category(ref["key"], kinds.get((ref["mrn"], ref["key"]), ""))
-            key = (ref["mrn"], category, ref["digest"])
-            if key in seen or ref["digest"] not in assets:
-                continue
-            seen.add(key)
-            add(ref["mrn"], category, "", 0)
-            item = patients[ref["mrn"]]["categories"][category]
-            item["attachments"] += 1
-            item["attachment_bytes"] += assets[ref["digest"]]["size"]
-            patient_key = (ref["mrn"], ref["digest"])
-            if patient_key not in patient_assets:
-                patient_assets.add(patient_key)
-                patients[ref["mrn"]]["attachment_bytes"] += assets[ref["digest"]]["size"]
-        query = str(values.get("q", "")).strip().casefold()
-        rows = [row for row in patients.values() if row["categories"] and
-                (not query or query in (row["mrn"] + " " + row["name"]).casefold())]
-        saved_lists = [{"account": row["account"], "day": row["day"], "updated_at": row["fetched_at"],
-                        "count": len(json.loads(row["rows_json"]))} for row in lists
-                       if (not values.get("start") or row["day"] >= values["start"]) and
-                          (not values.get("end") or row["day"] <= values["end"])]
-        return {"patients": sorted(rows, key=lambda row: (row["name"], row["mrn"])),
-                "lists": sorted(saved_lists, key=lambda row: row["day"], reverse=True),
-                "categories": [{"id": key, "name": name} for key, name in CATEGORIES.items()]}
+        return read(self, values)
 
     def preview(self, values):
-        steps, versions, refs, assets, lists, records, documents = self._snapshot()
         mrns, selected = values.get("mrns", []), values.get("categories", [])
         list_keys = values.get("lists", [])
         if not isinstance(mrns, list) or len(mrns) > 1000 or any(not isinstance(m, str) for m in mrns):
@@ -156,9 +94,12 @@ class LibraryData:
             raise ValueError("請選擇門診掛號清單。")
         if bool(mrns) == bool(list_keys) or mrns and not selected:
             raise ValueError("請選擇病人與資料類型，或門診掛號清單。")
-        known = {row["mrn"] for row in self.read({})["patients"]}
-        # SOAP-only members are also valid for the legacy analysis-delete API.
-        known.update(row["mrn"] for row in records)
+        if any(not isinstance(row, dict) or not isinstance(row.get("account"), str)
+               or not isinstance(row.get("day"), str) for row in list_keys):
+            raise ValueError("請選擇門診掛號清單。")
+        steps, versions, refs, assets, lists, records, documents = self._snapshot(mrns, list_keys)
+        known = {row["mrn"] for row in steps + versions + refs + records}
+        known.update(json.loads(row["payload"]).get("mrn") or row["id"] for row in documents)
         if not set(mrns).issubset(known):
             raise ValueError("病人不存在於此帳號的本機資料。")
         categories = set(selected)
@@ -216,18 +157,21 @@ class LibraryData:
             self.app.store.purge_index_copies(selected if "visits" in categories else [], preview["lists"])
             self.app.analysis.store.invalidate_previews(selected)
             with self.library.connect() as db:
-                keys = [(row["mrn"], row["key"]) for row in db.execute("SELECT * FROM analysis_steps")
+                packed = json.dumps(sorted(selected))
+                scope = "mrn IN (SELECT value FROM json_each(?))"
+                keys = [(row["mrn"], row["key"]) for row in db.execute("SELECT * FROM analysis_steps WHERE " + scope, (packed,))
                         if row["mrn"] in selected and step_category(row["key"], row["kind"]) in categories]
-                known_kinds = {(row["mrn"], row["key"]): row["kind"] for row in db.execute("SELECT * FROM analysis_steps")}
+                known_kinds = {(row["mrn"], row["key"]): row["kind"] for row in db.execute("SELECT * FROM analysis_steps WHERE " + scope, (packed,))}
                 for table in ("analysis_versions", "analysis_asset_refs"):
-                    keys.extend((row["mrn"], row["key"]) for row in db.execute(f"SELECT * FROM {table}")
+                    keys.extend((row["mrn"], row["key"]) for row in db.execute(f"SELECT * FROM {table} WHERE " + scope, (packed,))
                                 if row["mrn"] in selected and step_category(row["key"], known_kinds.get((row["mrn"], row["key"]), "")) in categories)
                 for table in ("analysis_steps", "analysis_versions", "analysis_asset_refs"):
                     db.executemany(f"DELETE FROM {table} WHERE mrn=? AND key=?", sorted(set(keys)))
                 db.executemany("INSERT OR REPLACE INTO clinical_cache_deletions VALUES(?,?,?)",
                                [(mrn, category, timestamp()) for mrn in selected for category in categories])
                 if review:
-                    for row in db.execute("SELECT * FROM bot_documents").fetchall():
+                    for row in db.execute("SELECT * FROM bot_documents WHERE kind IN ('profile','registrations','visits','numeric','task') "
+                        "AND coalesce(nullif(json_extract(payload,'$.mrn'),''),id) IN (SELECT value FROM json_each(?))", (packed,)).fetchall():
                         raw = json.loads(row["payload"])
                         mrn = raw.get("mrn") or row["id"]
                         if mrn in selected and row["kind"] in categories & {"numeric", "visits", "profile", "registrations"}:
@@ -244,7 +188,8 @@ class LibraryData:
                                            (encoded({"status": "deleted", "mrn": mrn, "message": "本機資料已清除"}), row["id"]))
                     # Resolve tasks carry multiple patients rather than a single mrn.
                     if "profile" in categories:
-                        for row in db.execute("SELECT task_id,key,payload FROM bot_task_items").fetchall():
+                        for row in db.execute("SELECT task_id,key,payload FROM bot_task_items WHERE json_extract(payload,'$.mrn') "
+                            "IN (SELECT value FROM json_each(?)) AND json_extract(payload,'$.status')='resolved'", (packed,)).fetchall():
                             raw = json.loads(row["payload"])
                             if raw.get("mrn") in selected and raw.get("status") == "resolved":
                                 db.execute("UPDATE bot_task_items SET payload=? WHERE task_id=? AND key=?",

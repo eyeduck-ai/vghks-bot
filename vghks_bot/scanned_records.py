@@ -8,6 +8,7 @@ from vghks_sdk.models import PdfAttachmentRef
 
 from .analysis_fetch import clean, model
 from .analysis_store import digest
+from .connection_state import should_pause
 from .scanner import safe_failure
 from .storage import StorageError
 
@@ -227,6 +228,8 @@ class ScanArchive:
             except StorageError:
                 raise
             except Exception as exc:
+                if should_pause(exc):
+                    raise
                 message, code = safe_failure(exc)
                 issues.append({"part": "歷年掃描索引", "code": code, "message": message})
         return {"status": "partial" if issues else "ready", "issues": issues}
@@ -268,6 +271,8 @@ class ScanArchive:
             except (AuthenticationError, StorageError):
                 raise
             except Exception as exc:
+                if should_pause(exc):
+                    raise
                 message, code = safe_failure(exc)
                 issues.append({"part": "就診索引", "code": code, "message": message})
         for case in cases:
@@ -289,6 +294,8 @@ class ScanArchive:
             except StorageError:
                 raise
             except Exception as exc:
+                if should_pause(exc):
+                    raise
                 message, code = safe_failure(exc)
                 issues.append({"part": reference, "code": code, "message": message})
                 progress(reference, "error")

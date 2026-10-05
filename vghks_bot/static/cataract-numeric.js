@@ -7,14 +7,42 @@ window.CataractNumeric = (() => {
   const hasValue = value => !["", "-", "—", "--", "N/A", "NA"].includes(String(value ?? "").trim().toUpperCase());
   const standardFormat = new Intl.NumberFormat("en-US", {maximumFractionDigits:3, useGrouping:false});
   const opticalFormat = new Intl.NumberFormat("en-US", {minimumFractionDigits:2, maximumFractionDigits:2, useGrouping:false});
-  const number = (value, fixed = false) => value !== null && value !== undefined && String(value).trim() !== "" && Number.isFinite(Number(value))
-    ? (fixed ? opticalFormat : standardFormat).format(Number(value)) : "—";
+  const number = (value, fixed = false, signed = false) => value !== null && value !== undefined && String(value).trim() !== "" && Number.isFinite(Number(value))
+    ? (signed && Number(value) > 0 ? "+" : "") + (fixed ? opticalFormat : standardFormat).format(Number(value)) : "—";
+  // Apply signs only to identified refraction fields; retain unrecognized source text.
+  function displayValue(value, exam = "", metric = "") {
+    const raw = String(value ?? "");
+    const text = raw.normalize("NFKC").replace(/−/g, "-").trim();
+    const labelOf = value => String(value).normalize("NFKC").replace(/[\[(][^\])]*[\])]/g, "")
+      .replace(/\b(?:OD|OS|OU)\b/gi, "").replace(/驗光\s*[-－–−]\s*散瞳[前後]|配鏡/g, "").trim().replace(/[\s/:：_-]+/g, "");
+    const decimal = "[+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)";
+    const signed = text => Number(text) > 0 && !text.startsWith("+") ? "+" + text : text;
+    const field = /^(?:sph|sphere|cyl|cylinder|se)$/i;
+    const datedColumn = /(?:\d{3,4}[-/.]\d{1,2}[-/.]\d{1,2})/.test(String(metric));
+    if ((field.test(labelOf(metric)) || datedColumn && field.test(labelOf(exam))) && new RegExp("^" + decimal + "$").test(text)) return signed(text);
+    if (/\bKM\b/i.test(exam + " " + metric) && /\bCYL\s+/i.test(text))
+      return text.replace(new RegExp("(\\bCYL\\s+)(" + decimal + ")(?=\\s*(?:[x×]|$))", "gi"),
+        (_, label, value) => label + signed(value));
+    if (!/驗光\s*[-－–−]\s*散瞳[前後]|配鏡/.test(exam + " " + metric)) return raw;
+    const match = text.match(new RegExp("^(" + decimal + ")(\\s+)(" + decimal + ")(\\s*[x×]\\s*)(" + decimal + ")$", "i"));
+    if (!match || !Number.isInteger(Number(match[5])) || Number(match[5]) < 0 || Number(match[5]) > 180) return raw;
+    return signed(match[1]) + match[2] + signed(match[3]) + match[4] + match[5];
+  }
+  function labelledText(value) {
+    const text = node("span");
+    for (const part of String(value ?? "").split(/\b(SE|K1|K2|Kavg|CYL)\b/gi)) {
+      if (!part) continue;
+      text.append(/^(?:SE|K1|K2|Kavg|CYL)$/i.test(part)
+        ? node("span", part, "measurement-label") : document.createTextNode(part));
+    }
+    return text;
+  }
   function measurementText(measurement, line) {
     const v = measurement.values;
     if (measurement.kind === "refraction") {
-      return line ? `SE ${number(v.se)}` : `${number(v.sph, true)} ${v.cyl > 0 ? "+" : ""}${number(v.cyl, true)} X ${number(v.axis)}`;
+      return line ? `SE ${number(v.se, false, true)}` : `${number(v.sph, true, true)} ${number(v.cyl, true, true)} X ${number(v.axis)}`;
     }
-    if (line === 2) return `Kavg ${number(v.kavg)} | CYL ${number(v.cyl, true)}${v.cyl_axis != null ? ` X ${number(v.cyl_axis)}` : ""}`;
+    if (line === 2) return `Kavg ${number(v.kavg)} | CYL ${number(v.cyl, true, true)}${v.cyl_axis != null ? ` X ${number(v.cyl_axis)}` : ""}`;
     const k = line + 1;
     return `K${k} ${number(v[`k${k}`], true)}${v[`r${k}`] != null ? ` (${number(v[`r${k}`])})` : ""}${v[`axis${k}`] != null ? ` X ${number(v[`axis${k}`])}` : ""}`;
   }
@@ -106,7 +134,7 @@ window.CataractNumeric = (() => {
             const matches = entry.cells.filter(item => item.side === eye);
             const parsed = entry.row.measurements?.find(item => item.exam === exam && item.side === eye && item.status !== "unparsed");
             if (lines > 1 && parsed) {
-              cell.append(node("strong", measurementText(parsed, index)));
+              const value = node("strong");value.append(labelledText(measurementText(parsed, index)));cell.append(value);
               tr.append(cell);
               continue;
             }
@@ -120,9 +148,12 @@ window.CataractNumeric = (() => {
               if (metric) line.title = metric;
               // The exam heading and eye column already name a single value.
               // Keep a label only if one eye has different measurements in this row.
-              if (matches.length > 1 && distinctMetrics.size > 1 && metric)
-                line.append(node("small", metric));
-              line.append(node("strong", measurement.raw + (measurement.unit ? ` ${measurement.unit}` : "")));
+              if (matches.length > 1 && distinctMetrics.size > 1 && metric) {
+                const label = node("small");label.append(labelledText(metric));line.append(label);
+              }
+              const value = node("strong");
+              value.append(labelledText(displayValue(measurement.raw, exam, metric) + (measurement.unit ? ` ${measurement.unit}` : "")));
+              line.append(value);
               cell.append(line);
             }
             tr.append(cell);
@@ -167,5 +198,5 @@ window.CataractNumeric = (() => {
     }
     return section;
   }
-  return {create, exams};
+  return {create, exams, displayValue, labelledText};
 })();

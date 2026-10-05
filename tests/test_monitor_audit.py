@@ -80,7 +80,9 @@ class MonitorAuditTests(unittest.TestCase):
             key = self.work.review.start(values)["task_id"]
             try:
                 self.assertTrue(entered.wait(3))
-                newer = wait_task(self.work, self.work.review.start(values)["task_id"])
+                # Distinct parts allow an independent fetch; identical requests
+                # now correctly reuse the foreground task already in flight.
+                newer = wait_task(self.work, self.work.review.start({**values, "parts": ["detail", "orders"]})["task_id"])
                 self.assertEqual(newer["status"], "completed")
             finally:
                 release.set()
@@ -91,6 +93,10 @@ class MonitorAuditTests(unittest.TestCase):
 
     def test_older_query_cannot_replace_newer_query_cache(self):
         self.query()
+        # The second query uses the normal cache policy while the first forces
+        # a refresh. Remove the seed so both policies perform a real read.
+        for query in self.db.all("approval_query"):
+            self.db.delete("approval_query", query["id"])
         entered, release = threading.Event(), threading.Event()
         original = self.work.gateway.connection.reviews.get_cases
         requests = []
@@ -112,7 +118,7 @@ class MonitorAuditTests(unittest.TestCase):
             try:
                 self.assertTrue(entered.wait(3))
                 newer = wait_task(self.work, self.work.review.start({
-                    "kind": "approval_search", "force": True})["task_id"])
+                    "kind": "approval_search"})["task_id"])
                 self.assertEqual(newer["status"], "completed")
             finally:
                 release.set()

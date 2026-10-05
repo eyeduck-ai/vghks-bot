@@ -2,7 +2,8 @@
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
     [switch]$KeepValidationReports,
-    [switch]$OldReleases
+    [switch]$OldReleases,
+    [switch]$BrowserArtifacts
 )
 
 $ErrorActionPreference = 'Stop'
@@ -25,6 +26,13 @@ function Get-VghksCleanupPath([string]$Candidate) {
 }
 
 $vghksCandidates = @('.ruff_cache', 'build') | ForEach-Object { Join-Path $vghksRoot $_ }
+if ($BrowserArtifacts) {
+    $vghksOutput = Join-Path $vghksRoot 'output'
+    if (Test-Path -LiteralPath $vghksOutput) {
+        $null = Get-VghksCleanupPath $vghksOutput
+    }
+    $vghksCandidates += @('.playwright-cli', 'output/playwright') | ForEach-Object { Join-Path $vghksRoot $_ }
+}
 $vghksBuild = Join-Path $vghksRoot '.build'
 if (Test-Path -LiteralPath $vghksBuild) {
     $vghksBuild = Get-VghksCleanupPath $vghksBuild

@@ -9,7 +9,7 @@ window.SurgerySystem = (() => {
   function reset(){revision++;data=null;initialized=false;taskId=signature=rendered="";expanded.clear();fill({});$("#surgerySearch").value="";for(const id of ["surgeryResults","surgeryTasks"])$("#"+id).replaceChildren();$("#surgeryResultMeta").textContent="";unloadBoard();}
   function visibility(name){if(name==="operatingRoom")showBoard();else unloadBoard();}
   async function load(){
-    const n=++revision,value=await api("/surgery/overview",taskId?{task_id:taskId}:{});
+    const n=++revision,value=await api("/surgery/overview",{summary:1,...(taskId?{task_id:taskId}:{})});
     if(n!==revision)return;
     data=value;
     if(!initialized){fill(taskId&&data.result?data.result:data.query);initialized=true;}

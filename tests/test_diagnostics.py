@@ -59,16 +59,16 @@ class DiagnosticTests(unittest.TestCase):
     def unsupported_orders(self, mrn, _filters):
         return parse_clinical_orders(UNSUPPORTED_ORDERS_HTML, mrn=mrn)
 
-    def test_index_failures_identify_both_queries_and_preserve_completed_data_on_resume(self):
+    def test_cataract_index_failure_identifies_single_query_and_preserves_completed_data_on_resume(self):
         with (patch.object(self.work.gateway.connection.orders, "get_order_history", side_effect=self.unsupported_orders),
               patch.object(self.work.gateway.connection.orders, "get_case_orders", return_value=[], create=True)):
             task = self.analysis()
         self.assertEqual(task["status"], "partial")
         self.assertTrue(self.work.gateway.online)
         saved = self.work.diagnostics.query({"task_id": task["id"]})
-        self.assertEqual(len(saved["failures"]), 2)
-        self.assertEqual({item["query"]["category"] for item in saved["failures"]}, {"*", "OR"})
-        self.assertEqual({item["key"] for item in saved["saved_attempts"]}, {"orders-history:*", "orders-history:OR"})
+        self.assertEqual(len(saved["failures"]), 1)
+        self.assertEqual({item["query"]["category"] for item in saved["failures"]}, {"*"})
+        self.assertEqual({item["key"] for item in saved["saved_attempts"]}, {"orders-history:*"})
         self.assertTrue(all("醫囑索引" in item["label"] for item in saved["failures"]))
         self.assertTrue(all(item["parser_context"]["variable"] == "orderStr" for item in saved["failures"]))
         self.assertTrue(all("[字串]" in item["parser_context"]["expression_shape"] for item in saved["failures"]))
@@ -161,7 +161,8 @@ class DiagnosticTests(unittest.TestCase):
         self.assertTrue(saved["contains_raw_response"])
         self.assertTrue(saved["contains_medical_values"])
         raw = failure["transport"]["evidence"]["files"]
-        self.assertEqual(len(raw), 2)
+        self.assertEqual(len([file for file in raw if file["name"].endswith((".bin", ".html"))]), 2)
+        self.assertTrue(any(file["name"].startswith("operation-") for file in raw))
         archive = self.work.diagnostics.export({"task_id": "http-failure"})
         with zipfile.ZipFile(io.BytesIO(archive)) as zip_file:
             body = zip_file.read(next(name for name in zip_file.namelist() if name.endswith(".html"))).decode("utf-8")
@@ -195,7 +196,7 @@ class DiagnosticTests(unittest.TestCase):
                 {"name": "../../private.html", "sha256": "invalid"},
                 {"name": "response-1-1.html", "sha256": "invalid"}]}}, "error": {"code": "PARSE_ERROR"}})
         with zipfile.ZipFile(io.BytesIO(self.work.diagnostics.export({"task_id": "forged"}))) as zip_file:
-            self.assertEqual(set(zip_file.namelist()), {"debug.json", "README.txt"})
+            self.assertEqual(set(zip_file.namelist()), {"debug.json", "sdk-context.json", "README.txt"})
             exported = json.loads(zip_file.read("debug.json"))["export"]
             self.assertEqual(exported["evidence_files"], [])
             self.assertEqual(len(exported["missing_files"]), 1)
@@ -228,7 +229,7 @@ class DiagnosticTests(unittest.TestCase):
                     self.assertTrue(any(name.endswith(".bin") for name in archive.namelist()))
                 with zipfile.ZipFile(io.BytesIO(read(second)[2])) as archive:
                     self.assertFalse(json.loads(archive.read("debug.json"))["items"])
-                    self.assertEqual(set(archive.namelist()), {"debug.json", "README.txt"})
+                    self.assertEqual(set(archive.namelist()), {"debug.json", "sdk-context.json", "README.txt"})
             finally:
                 server.shutdown()
                 thread.join(timeout=3)
@@ -308,6 +309,7 @@ class DiagnosticTests(unittest.TestCase):
         self.work.gateway.login(Settings(username="TEST", password="SECRET_PASSWORD"))
         recorder = self.work.gateway.recorder
         self.assertIs(recorder, self.work.gateway.connection._runtime.transport.diagnostics)
+        operation = recorder.start_operation(name="get_soap", app_key="prq")
         request_id = recorder.record_http_request(method="POST", url="https://synthetic.invalid/PRQWeb/QueryBillingSOAP.do?hid=SECRET_TOKEN",
             attempt=1, max_attempts=2, throttle_delay_seconds=0, tls_verification_enabled=True,
             kwargs={"data": {"password": "SECRET_PASSWORD", "mrn": "TEST001"}})
@@ -316,13 +318,15 @@ class DiagnosticTests(unittest.TestCase):
         response.headers["Content-Type"] = "text/html; charset=utf-8"
         response._content = b'<div id="data"><div class="soap"><pre>SECRET_SOAP</pre></div></div>'
         recorder.record_http_response(request_id=request_id, response=response, elapsed_seconds=.01)
+        recorder.finish_operation(operation_id=operation, name="get_soap", status="OK")
         with self.work.gateway.task_context("trace-task", "numeric"):
             self.work.gateway.record_diagnostic({"mrn": "TEST001", "phase": "test", "recovered": False})
         self.app.logout(self.key)
         relative = recorder.directory.relative_to(self.app.directory)
         trace = recorder.trace_path.read_text(encoding="utf-8")
-        self.assertIn('"status_code": 200', trace)
-        self.assertIn('"#data .soap pre": 1', trace)
+        self.assertIn('"successful_operations": {"get_soap": 1}', trace)
+        self.assertNotIn('"html_shape"', trace)
+        self.assertFalse(list(recorder.directory.glob("response-*")))
         self.assertNotIn("SECRET", trace)
         other = self.app.login({"username": "SECOND", "password": "synthetic"})["account"]["id"]
         self.assertFalse(self.app.workspace(other).diagnostics.query({"mrn": "TEST001"})["items"])

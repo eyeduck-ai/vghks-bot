@@ -165,16 +165,23 @@ class Store:
 
     def summaries(self):
         result = []
+        cache = getattr(self, "_summary_cache", {})
+        current = {}
         for path in (self.directory / "runs").glob("*/run.json"):
             try:
-                value = read_json(path)
+                stat = path.stat()
+                stamp = (stat.st_mtime_ns, stat.st_size)
+                saved = cache.get(path)
+                value = saved[1] if saved and saved[0] == stamp else read_json(path)
                 if self.path(value["id"]) != path.parent or not isinstance(value.get("counts"), dict):
                     raise ValueError()
                 result.append(value)
+                current[path] = (stamp, value)
             except (ValueError, KeyError, OSError):
                 warning = "有紀錄檔無法讀取，原檔已保留。"
                 if warning not in self.warnings:
                     self.warnings.append(warning)
+        self._summary_cache = current
         return sorted(result, key=lambda row: (row.get("created_at", ""), row["id"]), reverse=True)
 
     def load(self, run_id):

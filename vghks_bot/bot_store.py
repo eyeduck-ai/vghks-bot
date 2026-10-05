@@ -102,10 +102,31 @@ class WorkbenchStore:
                     status TEXT NOT NULL, error_code TEXT NOT NULL, message TEXT NOT NULL);
                 CREATE INDEX IF NOT EXISTS bot_sdk_events_task ON bot_sdk_events(task_id,id);
                 CREATE TABLE IF NOT EXISTS bot_deleted_records (id TEXT PRIMARY KEY, deleted_at TEXT NOT NULL);
+                CREATE INDEX IF NOT EXISTS bot_documents_recent ON bot_documents(kind,updated_at DESC,id);
+                CREATE INDEX IF NOT EXISTS bot_task_status ON bot_documents(json_extract(payload,'$.status'),updated_at,id)
+                    WHERE kind='task';
+                CREATE TABLE IF NOT EXISTS bot_revisions (kind TEXT PRIMARY KEY, revision INTEGER NOT NULL);
+                CREATE TRIGGER IF NOT EXISTS bot_insert_revision AFTER INSERT ON bot_documents BEGIN
+                    INSERT INTO bot_revisions VALUES(new.kind,1) ON CONFLICT(kind) DO UPDATE SET revision=revision+1;
+                END;
+                CREATE TRIGGER IF NOT EXISTS bot_update_revision AFTER UPDATE ON bot_documents BEGIN
+                    INSERT INTO bot_revisions VALUES(new.kind,1) ON CONFLICT(kind) DO UPDATE SET revision=revision+1;
+                END;
+                CREATE TRIGGER IF NOT EXISTS bot_delete_revision AFTER DELETE ON bot_documents BEGIN
+                    INSERT INTO bot_revisions VALUES(old.kind,1) ON CONFLICT(kind) DO UPDATE SET revision=revision+1;
+                END;
+                CREATE TRIGGER IF NOT EXISTS bot_event_revision AFTER INSERT ON bot_sdk_events BEGIN
+                    INSERT INTO bot_revisions VALUES('sdk_event',1) ON CONFLICT(kind) DO UPDATE SET revision=revision+1;
+                END;
             """)
-        for task in self.all("task"):
-            if task["status"] in {"queued", "running", "cancelling"}:
-                self.save("task", {**task, "status": "paused", "message": "上次中斷，待續跑"})
+            columns = {row[1] for row in db.execute("PRAGMA table_info(bot_sdk_events)")}
+            if "assessment" not in columns:
+                db.execute("ALTER TABLE bot_sdk_events ADD COLUMN assessment TEXT NOT NULL DEFAULT '{}'")
+            from .task_data import initialize
+
+            initialize(db)
+        for task in self.task_summaries(statuses=("queued", "running", "cancelling")):
+            self.save("task", {**self.get("task", task["id"]), "status": "paused", "message": "上次中斷，待續跑"})
 
     def save(self, kind, value):
         value = {**value, "id": value.get("id") or uuid.uuid4().hex, "updated_at": timestamp()}
@@ -127,17 +148,128 @@ class WorkbenchStore:
     def get(self, kind, key, *, required=True):
         with self.library.connect() as db:
             row = db.execute("SELECT payload FROM bot_documents WHERE kind=? AND id=?", (kind, key)).fetchone()
+            state = db.execute("SELECT payload,updated_at,revision FROM bot_task_state WHERE task_id=?", (key,)).fetchone() if kind == "task" else None
         if not row and required:
             raise ValueError("資料不存在於此帳號工作區。")
-        return json.loads(row[0]) if row else None
+        value = json.loads(row[0]) if row else None
+        if value is not None and state:
+            value.update({k: v for k, v in json.loads(state["payload"]).items() if v is not None or k in value})
+            value.update(updated_at=state["updated_at"], revision=state["revision"])
+        return value
 
     def all(self, kind):
+        if kind == "task":
+            return self.documents(kind)
         with self.library.connect() as db:
             return [json.loads(r[0]) for r in db.execute("SELECT payload FROM bot_documents WHERE kind=? ORDER BY updated_at DESC,id", (kind,))]
+
+    def documents(self, kind, *, filters=None, keys=None, limit=None, offset=0):
+        clauses, args = ["d.kind=?"], [kind]
+        if keys is not None:
+            clauses.append("d.id IN (SELECT value FROM json_each(?))")
+            args.append(json.dumps(list(keys)))
+        for field, value in (filters or {}).items():
+            if field not in {"kind", "report_id", "apply_seq", "cohort_id", "mrn"}:
+                raise ValueError("資料篩選欄位不正確。")
+            clauses.append("json_extract(d.payload,'$." + field + "')=?")
+            args.append(value)
+        suffix = ""
+        if limit is not None:
+            suffix = " LIMIT ? OFFSET ?"
+            args += [limit, offset]
+        with self.library.connect() as db:
+            rows = db.execute("SELECT d.payload,s.payload AS state,s.updated_at,s.revision FROM bot_documents d "
+                              "LEFT JOIN bot_task_state s ON d.kind='task' AND s.task_id=d.id WHERE " +
+                              " AND ".join(clauses) + " ORDER BY coalesce(s.updated_at,d.updated_at) DESC,d.id" + suffix, args).fetchall()
+        result = []
+        for row in rows:
+            value = json.loads(row["payload"])
+            if row["state"]:
+                value.update({k: v for k, v in json.loads(row["state"]).items() if v is not None or k in value})
+                value.update(updated_at=row["updated_at"], revision=row["revision"])
+            result.append(value)
+        return result
+
+    def headers(self, kind, fields, *, filters=None):
+        """Extract metadata inside SQLite without decoding document bodies."""
+        if any(not field.replace('_', '').isalnum() for field in fields):
+            raise ValueError("資料欄位不正確。")
+        columns = ",".join("json_extract(payload,'$." + field + "') AS " + field for field in fields)
+        clauses, args = ["kind=?"], [kind]
+        for field, value in (filters or {}).items():
+            if field not in {"report_id", "kind", "month", "apply_seq"}:
+                raise ValueError("資料篩選欄位不正確。")
+            clauses.append("json_extract(payload,'$." + field + "')=?")
+            args.append(value)
+        with self.library.connect() as db:
+            return [dict(row) for row in db.execute("SELECT " + columns + " FROM bot_documents WHERE " +
+                " AND ".join(clauses) + " ORDER BY updated_at DESC,id", args)]
+
+    def update_task(self, key, changes):
+        """Progress updates never rewrite the task's immutable patient list."""
+        with self.library.connect() as db:
+            row = db.execute("SELECT payload FROM bot_task_state WHERE task_id=?", (key,)).fetchone()
+            if not row:
+                raise ValueError("任務不存在。")
+            value = {**json.loads(row[0]), **changes}
+            now = timestamp()
+            db.execute("UPDATE bot_task_state SET payload=?,updated_at=?,revision=revision+1 WHERE task_id=?",
+                       (json.dumps(value, ensure_ascii=False), now, key))
+        return {**value, "updated_at": now}
+
+    def item_counts(self, key, **options):
+        from .task_data import item_counts
+
+        with self.library.connect() as db:
+            return item_counts(db, key, **options)
+
+    def revisions(self):
+        with self.library.connect() as db:
+            return dict(db.execute("SELECT kind,revision FROM bot_revisions"))
+
+    def task_summaries(self, *, watched=None, kinds=None, statuses=None, key=None):
+        clauses, args = ["1"], []
+        for field, values in (("kind", kinds), ("status", statuses)):
+            if values is not None:
+                clauses.append("json_extract(payload,'$." + field + "') IN (SELECT value FROM json_each(?))")
+                args.append(json.dumps(list(values)))
+        if key is not None:
+            clauses.append("task_id=?")
+            args.append(key)
+        if watched is not None:
+            watched = list(dict.fromkeys(watched))[:20]
+            clauses.append("task_id IN (SELECT task_id FROM bot_task_state WHERE json_extract(payload,'$.status') IN ('queued','running','cancelling') "
+                           "UNION SELECT task_id FROM (SELECT task_id FROM bot_task_state ORDER BY updated_at DESC,task_id LIMIT 20) "
+                           "UNION SELECT value FROM json_each(?))")
+            args.append(json.dumps(watched))
+        with self.library.connect() as db:
+            rows = db.execute("SELECT task_id,payload,updated_at,revision FROM bot_task_state WHERE " +
+                              " AND ".join(clauses) + " ORDER BY updated_at DESC,task_id", args).fetchall()
+        return [{**{k: v for k, v in json.loads(row["payload"]).items() if v is not None},
+                 "id": row["task_id"], "updated_at": row["updated_at"], "revision": row["revision"]} for row in rows]
+
+    def task_list(self, kinds, values):
+        tasks = self.task_summaries(kinds=kinds)
+        if str((values or {}).get("summary", "")) == "1":
+            return tasks
+        return self.documents("task", keys=[task["id"] for task in tasks])
 
     def delete(self, kind, key):
         with self.library.connect() as db:
             db.execute("DELETE FROM bot_documents WHERE kind=? AND id=?", (kind, key))
+
+    def delete_many(self, kind, keys):
+        """Delete exactly these document keys in a single transaction."""
+        with self.library.connect() as db:
+            cursor = db.executemany("DELETE FROM bot_documents WHERE kind=? AND id=?",
+                                   [(kind, key) for key in keys])
+            return cursor.rowcount
+
+    def review_note_counts(self):
+        """Return task counts without reading or exposing clinical note text."""
+        with self.library.connect() as db:
+            return dict(db.execute("SELECT substr(id,1,instr(id,':')-1),count(*) "
+                "FROM bot_documents WHERE kind='review_note' AND instr(id,':')>0 GROUP BY 1"))
 
     def item(self, task, key, value=None):
         with self.library.connect() as db:
@@ -150,22 +282,22 @@ class WorkbenchStore:
         with self.library.connect() as db:
             return [json.loads(r[0]) for r in db.execute("SELECT payload FROM bot_task_items WHERE task_id=? ORDER BY rowid", (task,))]
 
-    def sdk_event(self, *, session_id, task_id, service, method, status, error_code="", message=""):
+    def sdk_event(self, *, session_id, task_id, service, method, status, error_code="", message="", assessment=None):
         # Persist only operation names and safe error summaries; SDK arguments and
         # response bodies can contain credentials or clinical data.
         with self.library.connect() as db:
-            db.execute("INSERT INTO bot_sdk_events(session_id,task_id,occurred_at,service,method,status,error_code,message) "
-                       "VALUES(?,?,?,?,?,?,?,?)", (session_id, task_id, timestamp(), service, method,
-                       status, error_code, message))
+            db.execute("INSERT INTO bot_sdk_events(session_id,task_id,occurred_at,service,method,status,error_code,message,assessment) "
+                       "VALUES(?,?,?,?,?,?,?,?,?)", (session_id, task_id, timestamp(), service, method,
+                       status, error_code, message, json.dumps(assessment or {})))
 
     def sdk_events(self, *, task_id="", session_id="", limit=200):
         if not task_id and not session_id:
             return []
         column, key = ("task_id", task_id) if task_id else ("session_id", session_id)
         with self.library.connect() as db:
-            rows = db.execute(f"SELECT occurred_at,service,method,status,error_code,message "
+            rows = db.execute(f"SELECT occurred_at,service,method,status,error_code,message,assessment "
                               f"FROM bot_sdk_events WHERE {column}=? ORDER BY id DESC LIMIT ?", (key, limit))
-            return [dict(row) for row in rows]
+            return [{**dict(row), "assessment": json.loads(row["assessment"])} for row in rows]
 
     def sdk_sessions(self):
         with self.library.connect() as db:

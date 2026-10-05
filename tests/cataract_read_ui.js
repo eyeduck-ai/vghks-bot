@@ -27,7 +27,7 @@ const context = {
   config:{read_only:false}, performance, location:{origin:"http://synthetic.invalid"}, resultRequest:0,
   document:{createComment:()=>new Node(),activeElement:null,addEventListener(){}},
   window:{addEventListener:(name,callback)=>messages.set(name,[...(messages.get(name)||[]),callback]),CataractNumeric:{exams:[]}},
-  ClinicalUI:{mrnBadge:()=>new Node()},
+  ClinicalUI:{mrnBadge:()=>new Node(),ageBadge:()=>new Node(),patientAge:()=>"未提供"},
   JobProgress:{pending:()=>{pending++;return {remove(){}};}},
   loadAnalysisResult:async options=>updates.push(options), notify(){}, action:run=>run(),
   ap:(path,values)=>{calls.push({path,values});return respond(path,values);}

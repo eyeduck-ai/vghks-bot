@@ -5,8 +5,8 @@ window.PatientTokens = (() => {
   const separator = /[\s,;，；、]/u;
   const split = /[\s,;，；、]+/u;
 
-  function createErrors({container, onOpen}) {
-    const host = document.getElementById(container), errors = new Map(), timers = new Map();
+  function createErrors({container, onOpen, onRetry}) {
+    const host = document.getElementById(container), errors = new Map();
     function render() {
       host.replaceChildren(...[...errors].map(([key, error]) => {
         const row = document.createElement("div"), message = document.createElement("span");
@@ -18,27 +18,32 @@ window.PatientTokens = (() => {
         action.textContent = error.taskId ? "查看 DEBUG" : "爬蟲紀錄";
         action.addEventListener("click", () => onOpen(error.taskId));
         row.append(message, action);
+        if (onRetry) {
+          const retry = document.createElement("button");
+          retry.type = "button"; retry.className = "quiet"; retry.textContent = "重試此筆";
+          retry.addEventListener("click", () => onRetry(error.token, error.mode));
+          row.append(retry);
+        }
+        const dismiss = document.createElement("button");
+        dismiss.type = "button"; dismiss.className = "quiet"; dismiss.textContent = "移除";
+        dismiss.setAttribute("aria-label", "移除失敗紀錄 " + error.token);
+        dismiss.addEventListener("click", () => remove(key)); row.append(dismiss);
         return row;
       }));
     }
     function remove(key) {
-      clearTimeout(timers.get(key));
-      timers.delete(key);
       errors.delete(key);
       render();
     }
     return {
       add(token, message, mode, taskId = "") {
         const key = mode + ":" + token;
-        clearTimeout(timers.get(key));
-        errors.set(key, {token, message, taskId});
-        timers.set(key, setTimeout(() => remove(key), 15000));
+        errors.set(key, {token, message, taskId, mode});
         render();
       },
       remove,
       clear() {
-        for (const timer of timers.values()) clearTimeout(timer);
-        timers.clear(); errors.clear(); render();
+        errors.clear(); render();
       },
     };
   }
@@ -83,7 +88,7 @@ window.PatientTokens = (() => {
       const revision = generation, mode = queue[0].mode, batch = [];
       while (queue.length && queue[0].mode === mode && batch.length < 100) batch.push(queue.shift());
       const received = new Set();
-      let taskId = "";
+      let taskId = "", delivered = 0;
       JobProgress.pending(progress, "病人基本資料", "正在核對 " + batch.length + " 位病人…");
       try {
         if (!canLookup()) throw new Error("此帳號目前無法查詢，請連線後重試。");
@@ -93,7 +98,16 @@ window.PatientTokens = (() => {
         taskId = started.task_id;
         if (revision !== generation) return;
         for (;;) {
-          const task = await request("/tasks/detail?id=" + encodeURIComponent(started.task_id));
+          await JobProgress.ready();
+          if (revision !== generation) return;
+          let task = await request("/tasks/detail?summary=1&id=" + encodeURIComponent(started.task_id));
+          if (revision !== generation) return;
+          if (!["queued","running","cancelling"].includes(task.status) || task.done > delivered) {
+            await JobProgress.ready();
+            if (revision !== generation) return;
+            task = await request("/tasks/detail?id=" + encodeURIComponent(started.task_id));
+            delivered = task.done || 0;
+          }
           if (revision !== generation) return;
           JobProgress.show(progress, task);
           for (const item of task.items || []) {
@@ -118,7 +132,7 @@ window.PatientTokens = (() => {
             }
             break;
           }
-          await new Promise(resolve => setTimeout(resolve, 700));
+          await JobProgress.wait();
         }
       } catch (error) {
         if (revision === generation) {

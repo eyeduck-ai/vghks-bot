@@ -6,6 +6,7 @@ window.ToolWorkspace=(()=>{
   let soapSetup=false,soapTask="",soapSetId="";
   const lookupErrors=window.PatientTokens.createErrors({
     container:"toolLookupErrors",onOpen:taskId=>act(()=>openLookupDiagnostics(taskId)),
+    onRetry:(token,mode)=>act(()=>{if(!work?.online)throw new Error("請先重新連線，再重試此筆。");lookup.add([token],mode);}),
   });
   let setupOpen=true,activeTask=null,resultKind="",starting=false;
   let settingsDraft=null;
@@ -21,7 +22,7 @@ window.ToolWorkspace=(()=>{
     render();
   }
   function beginSettings(){settingsDraft=settingValues();$("#tagSettings").open=false;render();}
-  function commitSettings(){const changed=settingsDraft&&JSON.stringify(settingsDraft)!==JSON.stringify(settingValues());settingsDraft=null;if(changed&&activeTask){setupOpen=true;if(page==="review"){reviewSetupExpanded=true;document.body.classList.remove("review-result-compact");}}render();}
+  function commitSettings(){const changed=settingsDraft&&JSON.stringify(settingsDraft)!==JSON.stringify(settingValues());settingsDraft=null;if(changed&&activeTask){setupOpen=true;if(page==="review"){reviewSetupExpanded=true;updateReviewLayout();}}render();}
   function cancelSettings(){if(settingsDraft){$("#departmentKeyword").value=settingsDraft.departmentKeyword;$("#soapMode").value=settingsDraft.soapMode;$("#forceReview").checked=settingsDraft.forceReview;settingsDraft=null;render();}}
   function reset(){
     generation++;soapSetup=false;soapTask=soapSetId="";$("#toolSoapProgress").replaceChildren();$("#toolLaunchProgress").replaceChildren();
@@ -32,6 +33,7 @@ window.ToolWorkspace=(()=>{
   }
   function visibility(name){
     $("#toolSourcePanel").hidden=!["tool","review","module"].includes(name);
+    $("#reviewProgress").hidden=name!=="review";
     for(const button of $$("[data-tool]")){
       const active=!$("#toolSourcePanel").hidden&&button.dataset.tool===kind;
       button.classList.toggle("active",active);
@@ -48,6 +50,12 @@ window.ToolWorkspace=(()=>{
     const base=group?._base_set_id||group?.id||"";
     group={id:"",_base_set_id:base,name:group?.name||"手動病人集合",members};
     drafts[kind]=group;selectedSet=group;render();
+  }
+  async function clearPatients(){
+    if(starting||!group?.members.length)return;
+    generation++;lookup.reset();lookupErrors.clear();soapSetup=false;
+    group={id:"",name:"手動病人集合",members:[]};drafts[kind]=group;selectedSet=group;
+    render();await save();
   }
   function addResolved(patient){
     if(!patient.mrn)return;
@@ -71,8 +79,9 @@ window.ToolWorkspace=(()=>{
     $("#toolReviewOptions").hidden=!(isReview||kind==="surgery"&&soapSetup);$("#reviewOptions").hidden=$("#toolReviewOptions").hidden;
     $("#toolPage").firstElementChild.hidden=!!group?.members.length;
     $("#toolSoapProgress").hidden=kind!=="surgery"||group?.id!==soapSetId;
-    $("#toolSelectedCount").textContent=!setupOpen&&activeTask?activeTask.members.length+" 位病人":group?.members.length?group.members.length+" 位病人":"尚未選擇病人";
+    $("#toolSelectedCount").textContent=!setupOpen&&activeTask?activeTask.members.length+" 位病人"+(isReview?" · "+(labels[activeTask.status]||activeTask.status):""):group?.members.length?group.members.length+" 位病人":"尚未選擇病人";
     $("#toolSelectionSummary").replaceChildren(...(group?.members||[]).map(patient=>patientChip(patient,()=>editMembers(group.members.filter(member=>member.mrn!==patient.mrn)))));
+    $("#toolClearPatients").disabled=starting||!group?.members.length;
     $("#toolSetupBody").hidden=!setupOpen;$("#toolSourcePanel").classList.toggle("setup-collapsed",!setupOpen);
     $("#toolEditSetup").hidden=!hasResult;setIcon($("#toolEditSetup"),"patients",setupOpen?"收起病人來源":"更換病人");$("#toolEditSetup").setAttribute("aria-expanded",String(setupOpen));
     $("#toolRunSummary").hidden=setupOpen;
@@ -80,7 +89,6 @@ window.ToolWorkspace=(()=>{
     $("#toolRunSummary").textContent=activeTask?(activeTask.mode==="registration"?"該次門診的 SOAP":"最新 SOAP")+" · "+taskDepartment+" · 截至 "+activeTask.cutoff+" · "+retrieval[activeTask.force?"force":activeTask.refresh?"refresh":"cache"]:group?.name||"";
     $("#toolSettingsSummary").hidden=!(isReview||kind==="surgery"&&soapSetup);
     $("#toolSettingsSummary").textContent=[$("#soapMode").value==="registration"?"該次門診的 SOAP":"最新 SOAP","科別含任一：「"+departmentKeywords().join("」、「")+"」",retrieval[$("#forceReview").checked?"force":"cache"]].join(" · ");
-    $("#toolNewReviewHint").hidden=!isReview||!activeTask;
     $("#toolStart").textContent=isReview?(starting?"正在建立檢閱…":activeTask?"開始新檢閱":"開始檢閱"):"開啟"+names[kind];
     $("#toolStart").disabled=starting||!group?.members.length||root.read_only||(isReview&&!work?.online);
     $("#toolFetchSoap").hidden=kind!=="surgery";$("#toolFetchSoap").textContent=soapSetup?"開始取得／更新 SOAP":"取得／更新此集合 SOAP";
@@ -98,7 +106,7 @@ window.ToolWorkspace=(()=>{
     activeTask=null;resultKind="";setupOpen=true;
     group=selectedGroup||drafts[value]||(work.sets||[]).find(s=>s.id===states[value]?.set_id)||null;selectedSet=group;
     if(selectedGroup)delete drafts[value];
-    lookupErrors.clear();$("#toolLaunchProgress").replaceChildren();
+    $("#toolLaunchProgress").replaceChildren();
     loadOptions();
     if(selectedGroup)await save();if(revision!==generation)return;$("#moduleFrame").removeAttribute("src");showPage("tool");render();
   }
@@ -137,7 +145,7 @@ window.ToolWorkspace=(()=>{
     if(revision!==generation){pending?.remove();return;}
     $("#forceReview").checked=false;
     if(inline){soapTask=result.task_id;soapSetId=group.id;soapSetup=false;$("#toolSoapProgress").replaceChildren(node("p","正在取得此集合 SOAP…","caption"));render();}
-    else{await openReview(result.task_id);if(revision!==generation)return;$("#reviewTitle").focus({preventScroll:true});$("#toolSourcePanel").scrollIntoView({block:"start"});}
+    else{await openReview(result.task_id);if(revision!==generation)return;$("#toolWorkspaceTitle").focus({preventScroll:true});$("#toolSourcePanel").scrollIntoView({block:"start"});}
     await refresh();
   }
   async function start(){
@@ -151,7 +159,7 @@ window.ToolWorkspace=(()=>{
     }finally{pending?.remove();if(revision===generation){starting=false;render();}}
   }
   async function poll(){
-    if(soapTask){const id=soapTask,revision=generation,task=await api("/tasks/detail?id="+id);if(id!==soapTask||revision!==generation)return;JobProgress.show("#toolSoapProgress",task);if(!inProgress.has(task.status)){soapTask="";if(task.status!=="completed")$("#toolSoapProgress").append(node("p",task.message+"；可由爬蟲紀錄續跑。","error"));else if(kind==="surgery"&&group?.id===soapSetId){say("SOAP 已保存，可重新整理手術候選。");$("#moduleFrame").contentWindow?.postMessage({type:"bot:soap-updated"},location.origin);}}}
+    if(soapTask){const id=soapTask,task=work.tasks.find(row=>row.id===id);if(!task)return;JobProgress.show("#toolSoapProgress",task);if(!inProgress.has(task.status)){soapTask="";if(task.status!=="completed")$("#toolSoapProgress").append(node("p",task.message+"；可由爬蟲紀錄續跑。","error"));else if(kind==="surgery"&&group?.id===soapSetId){say("SOAP 已保存，可重新整理手術候選。");$("#moduleFrame").contentWindow?.postMessage({type:"bot:soap-updated"},location.origin);}}}
   }
   function renderSaved(){
     const query=$("#toolSavedQuery").value.trim().toLocaleLowerCase(),area=$("#toolSavedSets");
@@ -175,10 +183,11 @@ window.ToolWorkspace=(()=>{
   $("#toolOpenSaved").addEventListener("click",()=>act(async()=>{$("#toolSavedQuery").value="";await refresh();renderSaved();dialog("toolSavedDialog");}));
   $("#toolSavedQuery").addEventListener("input",renderSaved);
   $("#toolGoList").addEventListener("click",()=>navigate("patients"));
+  $("#toolClearPatients").addEventListener("click",()=>act(clearPatients).finally(render));
   for(const id of ["departmentKeyword","soapMode"])$("#"+id).addEventListener("input",render);
   $("#forceReview").addEventListener("change",render);
-  $("#toolEditSetup").addEventListener("click",()=>{setupOpen=!setupOpen;if(page==="review"&&setupOpen){reviewSetupExpanded=true;document.body.classList.remove("review-result-compact");}render();if(setupOpen)$("#toolSourcePanel").scrollIntoView({block:"start"});});
+  $("#toolEditSetup").addEventListener("click",()=>{setupOpen=!setupOpen;if(page==="review"){reviewSetupExpanded=setupOpen;updateReviewLayout();}render();if(setupOpen)$("#toolSourcePanel").scrollIntoView({block:"start"});});
   $("#toolStartForm").addEventListener("submit",e=>{e.preventDefault();act(start);});$("#toolRules").addEventListener("click",openRules);
   $("#toolFetchSoap").addEventListener("click",()=>act(async()=>{if(!soapSetup){soapSetup=true;render();}else await startReview(true);}));
-  return {reset,open,activate,visibility,adoptReview,adoptModule,poll,refreshSettings:render,beginSettings,commitSettings,cancelSettings,queryOptions};
+  return {reset,open,activate,visibility,adoptReview,adoptModule,poll,watched:()=>soapTask?[soapTask]:[],refreshSettings:render,beginSettings,commitSettings,cancelSettings,queryOptions};
 })();

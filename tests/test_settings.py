@@ -12,8 +12,8 @@ class SettingsTests(unittest.TestCase):
         self.assertNotIn("synthetic-secret", str(account))
         self.assertNotIn("password", account.persisted())
         self.assertTrue(account.public()["password_set"])
-        self.assertEqual([c.name for c in load_defaults().categories],["手術","審查"])
-        self.assertEqual([c.scope for c in load_defaults().categories], ["ap", "ap"])
+        self.assertEqual([c.name for c in load_defaults().categories],["手術","審查","追蹤"])
+        self.assertEqual([c.scope for c in load_defaults().categories], ["ap", "ap", "all"])
         self.assertEqual(load_defaults().categories, Settings().categories)
 
     def test_password_retained_only_for_same_account(self):

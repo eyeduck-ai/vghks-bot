@@ -3,17 +3,37 @@ window.JobProgress = (() => {
   const tasks=new Map(),activeStatuses=new Set(["queued","running","cancelling"]);
   const scopedAccount=new URLSearchParams(location.search).get("account");
   const embedded=parent!==window&&/^[a-f0-9]{32}$/.test(scopedAccount||"");
+  let workspaceVisible=true;
+  const visibilityWaiters=new Set();
+  function resumeVisible(){
+    if(document.hidden||!workspaceVisible)return;
+    for(const resolve of visibilityWaiters)resolve();
+    visibilityWaiters.clear();
+  }
+  function ready(){return document.hidden||!workspaceVisible?new Promise(resolve=>visibilityWaiters.add(resolve)):Promise.resolve();}
+  async function wait(){await new Promise(resolve=>setTimeout(resolve,2000));await ready();}
+  document.addEventListener("visibilitychange",resumeVisible);
+  window.addEventListener("message",event=>{
+    if(!embedded||event.origin!==location.origin||event.source!==parent||event.data?.account!==scopedAccount||event.data.type!=="bot:workspace-visibility")return;
+    workspaceVisible=!!event.data.visible;resumeVisible();
+  });
   let owner=scopedAccount||"local",card=null,minimized=false,expanded=false,serial=0,readOnly=false;
   const dialogStack=[];
   const taskNames={list:"門診清單",review:"病歷檢閱",resolve:"病人基本資料",history:"歷史資料",analysis:"進階工具",surgery_schedule:"手術排程",approval_sync:"審查同步",approval_case:"審查明細",earnings_capture:"薪資業績",earnings_options:"薪資期別"};
   function publish(run,account=owner){
     if(!run?.id||!account)return;
+    prune();
     const key=account+":"+run.id,old=tasks.get(key);
     const terminal=!activeStatuses.has(run.status);
     const time=Date.parse(run.finished_at||run.updated_at||"");
     const ended=terminal?(old?.status===run.status?old._ended:(Number.isFinite(time)?time:old?Date.now():0)):0;
-    const next={...old,...run,_owner:account,_ended:ended};
+    const next={...old,_owner:account,_ended:ended};
+    for(const field of ["id","name","kind","status","source","message","created_at","finished_at","updated_at","read_only","_pending","_claimed"])
+      if(field in run)next[field]=run[field];
+    if(run.progress)next.progress={done:run.progress.done,total:run.progress.total,failed:run.progress.failed,unit:run.progress.unit,stage:run.progress.stage};
+    if(run.counts){next.counts={};for(const field of ["days_done","days_total","days_failed","patients_done","patients_total","errors"])next.counts[field]=run.counts[field];}
     if(!run.progress&&run.counts)delete next.progress;
+    if(!live(next)){tasks.delete(key);return;}
     tasks.set(key,next);
     if(embedded){parent.postMessage({type:"bot:progress",account,runs:[next]},location.origin);return;}
     renderCard();
@@ -24,6 +44,7 @@ window.JobProgress = (() => {
   }
   function context(account,readonly=false){owner=account;readOnly=readonly;minimized=false;expanded=false;renderCard();}
   function live(run){return activeStatuses.has(run.status)||Date.now()-(run._ended||0)<(run.status==="completed"?5000:15000);}
+  function prune(){for(const [key,run] of tasks)if(!live(run))tasks.delete(key);}
   function element(tag,text,cls){const node=document.createElement(tag);if(text!==undefined)node.textContent=text;if(cls)node.className=cls;return node;}
   function control(label,callback){const button=element("button",label);button.type="button";button.addEventListener("click",callback);return button;}
   function mountCard(){
@@ -41,7 +62,7 @@ window.JobProgress = (() => {
     card.style.top=Math.max(8,box&&box.height&&box.bottom<140?box.bottom+5:8)+"px";
   }
   function renderCard(){
-    if(embedded)return;mountCard();if(!card)return;
+    prune();if(embedded)return;mountCard();if(!card)return;
     const rows=[...tasks.values()].filter(run=>run._owner===owner&&live(run)).sort((a,b)=>Number(activeStatuses.has(b.status))-Number(activeStatuses.has(a.status)));
     card.hidden=!rows.length;if(!rows.length)return;
     const focused=card.ownerDocument.activeElement;
@@ -106,7 +127,7 @@ window.JobProgress = (() => {
     }
     try{
       const response=await originalFetch(input,options);
-      if(local&&(placeholder||["/history","/workbench","/analysis/cohorts"].includes(path)||path==="/tasks/detail")){
+      if(local&&(placeholder||["/history","/workbench","/status","/analysis/cohorts"].includes(path)||path==="/tasks/detail")){
         const data=await response.clone().json();
         if(placeholder){
           if(response.ok){
@@ -137,5 +158,5 @@ window.JobProgress = (() => {
     });
     observer.observe(document.body,{attributes:true,subtree:true,attributeFilter:["open"]});setInterval(renderCard,1000);
   });
-  return {create,show,visible,pending,context,publish,receive};
+  return {create,show,visible,pending,context,publish,receive,prune,ready,wait,size:()=>tasks.size};
 })();

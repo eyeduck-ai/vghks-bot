@@ -8,6 +8,7 @@ from contextlib import nullcontext
 
 from .analysis_fetch import AnalysisYield as CataractYield
 from .analysis_fetch import PatientCollector, RunSessions
+from .connection_state import should_pause
 from .scanner import Cancelled, safe_failure
 from .storage import ACTIVE, StorageError
 
@@ -271,15 +272,14 @@ class CataractQueue:
             with self.condition:
                 self.paused, self.reason = True, "保存失敗，已停止背景抓取。"
         except Exception as exc:
-            category = getattr(getattr(exc, "info", None), "category", "")
-            disconnected = not self.online() or category in {"NETWORK", "AUTHENTICATION"}
+            disconnected = not self.online() or should_pause(exc)
             if state:
                 message, code = safe_failure(exc)
                 state.issue("白內障背景抓取", message, code=code, mrn=mrn)
                 state.update(status="paused" if disconnected else "failed", message=message)
             completed = not disconnected
             if disconnected:
-                self.pause("連線失敗，請重新登入後按繼續。")
+                self.pause(safe_failure(exc)[0])
         finally:
             if state:
                 self.finish(state)

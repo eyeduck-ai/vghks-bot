@@ -28,7 +28,7 @@
   <a class="skip" href="#main">跳到主要內容</a>
   <header class="topbar">
     <a class="brand" href="/" aria-label="VGHKS 門診工作台"><img src="/favicon.svg" width="30" height="30" alt=""><strong>VGHKS</strong><span>門診工作台</span></a>
-    <div class="actions"><span id="version" class="muted"></span><button id="settingsButton" type="button">tag 與設定</button><button id="exitButton" type="button" class="quiet-button">結束程式</button></div>
+    <div class="actions"><span id="version" class="muted"></span><button id="settingsButton" type="button">tag 與設定</button><button id="exitButton" type="button" class="quiet-button" title="關閉分頁不會停止背景任務；請按此結束程式。" aria-describedby="exitHelp">結束程式</button></div>
   </header>
   <div id="notice" class="notice" role="alert" hidden></div>
   <main id="main">
@@ -74,7 +74,6 @@
         <details id="audit" class="audit" hidden><summary id="auditTitle">查詢明細</summary><div id="auditCounts"></div><div id="issues"></div></details>
       </section>
     </div>
-    <footer><span>自動保存：<span id="dataPath"></span></span><span>關閉分頁後仍會執行；請按「結束程式」離開。</span></footer>
   </main>
   <template id="accountTemplate">
     <form class="account-card" autocomplete="off">
@@ -111,6 +110,7 @@
   <template id="categoryTemplate"><fieldset class="category-edit"><legend>tag</legend><div class="category-row"><label>tag 名稱<input name="category_name" type="text" maxlength="40" required></label><label>欄位解析<select name="parser"><option value="none">無</option><option value="surgery">手術模板</option></select></label><button type="button" class="remove-category quiet-button">移除</button></div><label>自動辨識關鍵字（選填）<textarea name="keywords" rows="2" placeholder="每行一個；留白表示只手動加入"></textarea></label></fieldset></template>
   <dialog id="recordDialog" class="record-dialog" aria-labelledby="recordTitle"><div class="dialog-heading"><div><h2 id="recordTitle"></h2><p id="recordMeta" class="muted small"></p></div><button type="button" data-close="recordDialog" aria-label="關閉病歷">×</button></div><div class="record-body"><div class="version-bar"><label id="versionLabel" hidden>內容版本<select id="recordVersion"></select></label><button id="deleteRecord" type="button" class="danger quiet-button" hidden>刪除此筆病歷</button></div><div id="recordExcerpts"></div><details id="fullSoapDetails"><summary>完整 SOAP</summary><pre id="fullSoap"></pre></details></div></dialog>
   <dialog id="confirmDialog" aria-labelledby="confirmTitle"><form method="dialog"><div class="dialog-heading"><h2 id="confirmTitle">確認刪除</h2></div><div class="record-body"><p id="confirmMessage"></p><div class="dialog-actions"><button value="cancel" autofocus>取消</button><button value="confirm" class="danger">刪除</button></div></div></form></dialog>
+  <span id="exitHelp" hidden>關閉分頁不會停止背景任務；請按此結束程式。</span>
   <div id="toast" role="status" hidden></div>
   <noscript>請啟用 JavaScript。</noscript>
 </body>

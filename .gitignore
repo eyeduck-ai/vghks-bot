@@ -10,12 +10,14 @@ __pycache__/
 .ruff_cache/
 *.spec
 output/
+.playwright-cli/
 VGHKS-OPD-data/
 VGHKS-bot-data/
 # Runtime data and credentials must never enter the source repository.
 **/VGHKS-bot-data/
 **/VGHKS-OPD-data/
 *.sqlite
+*.sqlite-*
 *.sqlite3
 *.sqlite3-*
 *.db

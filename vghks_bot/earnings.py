@@ -7,8 +7,10 @@ from vghks_sdk.core.config import EarningsCredentials
 from vghks_sdk.core.errors import error_info
 
 from .analysis_store import digest
+from .connection_state import should_pause
 from .earnings_monitor import EarningsMonitor
 from .earnings_parser import export_csv, month_value, normalize_document, report_content
+from .pagination import slice_rows
 from .portable_credentials import seal, unseal
 from .scanner import Cancelled, safe_failure
 from .settings import timestamp
@@ -81,7 +83,7 @@ class Earnings:
         return self.public_credentials()
 
     def forget(self, _=None):
-        if any(t["kind"] in KINDS and t["status"] in {"queued", "running", "cancelling"} for t in self.db.all("task")):
+        if any(t["kind"] in KINDS and t["status"] in {"queued", "running", "cancelling"} for t in self.db.task_summaries(kinds=('earnings_options','earnings_capture'))):
             raise ValueError("請先暫停薪資查詢任務。")
         with self.lock, self.db.library.connect() as db:
             db.execute("DELETE FROM bot_earnings_credentials")
@@ -115,7 +117,7 @@ class Earnings:
                 "report_kinds": list(REPORTS) if all_available else list(dict.fromkeys(r["kind"] for r in selected))}
 
     def require_idle(self):
-        if any(t["kind"] in KINDS and t["status"] in {"queued", "running", "cancelling"} for t in self.db.all("task")):
+        if any(t["kind"] in KINDS and t["status"] in {"queued", "running", "cancelling"} for t in self.db.task_summaries(kinds=('earnings_options','earnings_capture'))):
             raise ValueError("薪資查詢已在處理中，請等待完成或先暫停。")
 
     def catalog(self, sdk, kind, credentials):
@@ -170,6 +172,8 @@ class Earnings:
                 except AuthenticationError:
                     raise  # Do not repeat a rejected secondary password for the next report.
                 except Exception as exc:
+                    if should_pause(exc):
+                        raise
                     message, code = safe_failure(exc)
                     self.db.item(task["id"], "catalog:"+kind, {"status": "error", "kind": kind, "message": message, "code": code})
                     self.app.review.report(state, task, stage="月份未取得，可重試")
@@ -221,6 +225,8 @@ class Earnings:
                     except (Cancelled, StorageError, AuthenticationError):
                         raise
                     except Exception as exc:
+                        if should_pause(exc):
+                            raise
                         message, code = safe_failure(exc)
                         self.db.item(task["id"], key, {"status": "error", "kind": kind, "period": period,
                                                      "message": message, "code": code})
@@ -235,8 +241,8 @@ class Earnings:
         known = {(r["kind"], r["period"]) for r in reports}
         catalogs = [{**c, "periods": [{**p, "saved": (c["id"], p["value"]) in known} for p in c["periods"]]}
                     for c in self.db.all("earnings_catalog")]
-        return {"reports": rows, "catalogs": catalogs, "credentials": self.public_credentials(), "monitor": self.monitor.overview(),
-                "kinds": REPORTS, "tasks": [t for t in self.db.all("task") if t["kind"] in KINDS],
+        return {"reports": slice_rows(rows, values), "total": len(rows), "catalogs": catalogs, "credentials": self.public_credentials(), "monitor": self.monitor.overview(),
+                "kinds": REPORTS, "tasks": self.db.task_list(KINDS, values),
                 "months": sorted({r["month"] for r in reports if r["month"]}, reverse=True)}
 
     def detail(self, values):
@@ -244,16 +250,28 @@ class Earnings:
         version = self.db.get("earnings_version", values.get("version") or report["latest"])
         if version["report_id"] != report["id"]:
             raise ValueError("報表與版本不符。")
-        ids = {c["version"] for c in self.db.all("earnings_content") if c["report_id"] == report["id"]}
-        versions = [{k: v[k] for k in ("id", "fetched_at")} for v in self.db.all("earnings_version") if v["id"] in ids]
+        ids = {c["version"] for c in self.db.headers("earnings_content", ("version",), filters={"report_id": report["id"]})}
+        versions = [v for v in self.db.headers("earnings_version", ("id", "fetched_at"), filters={"report_id": report["id"]}) if v["id"] in ids]
         return {"report": report, "version": version, "versions": versions,
-                "fetches": [f for f in self.db.all("earnings_fetch") if f["report_id"] == report["id"]]}
+                "fetches": self.db.documents("earnings_fetch", filters={"report_id": report["id"]})}
 
     def export(self, values):
         ids = values.get("ids")
         if not isinstance(ids, list) or not ids or len(ids) > 2400:
             raise ValueError("請選取要匯出的報表。")
-        versions = [self.detail({"id": key})["version"] for key in dict.fromkeys(ids)]
+        if any(not isinstance(key, str) for key in ids):
+            raise ValueError("請選取要匯出的報表。")
+        with self.db.library.read_snapshot():
+            reports = {r["id"]: r for r in self.db.documents("earnings_report", keys=ids)}
+            if set(ids) != set(reports):
+                raise ValueError("資料不存在於此帳號工作區。")
+            saved = {v["id"]: v for v in self.db.documents("earnings_version", keys=[r["latest"] for r in reports.values()])}
+            versions = []
+            for key in dict.fromkeys(ids):
+                version = saved.get(reports[key]["latest"])
+                if not version or version["report_id"] != key:
+                    raise ValueError("報表與版本不符。")
+                versions.append(version)
         kind = values.get("format", "json")
         if kind not in {"csv", "json"}:
             raise ValueError("匯出格式不正確。")
@@ -275,7 +293,6 @@ class Earnings:
                     db.execute("INSERT OR REPLACE INTO bot_documents VALUES(?,?,?,?)", (
                         "earnings_deleted", key, json.dumps(tombstone), tombstone["deleted_at"]))
                     db.execute("DELETE FROM bot_documents WHERE kind='earnings_report' AND id=?", (key,))
-                for row in db.execute("SELECT kind,id,payload FROM bot_documents WHERE kind IN ('earnings_version','earnings_content','earnings_fetch')").fetchall():
-                    if json.loads(row["payload"])["report_id"] in ids:
-                        db.execute("DELETE FROM bot_documents WHERE kind=? AND id=?", (row["kind"], row["id"]))
+                db.execute("DELETE FROM bot_documents WHERE kind IN ('earnings_version','earnings_content','earnings_fetch') "
+                           "AND json_extract(payload,'$.report_id') IN (SELECT value FROM json_each(?))", (json.dumps(ids),))
         return {"ok": True}

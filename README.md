@@ -20,7 +20,7 @@ VGHKS 院內系統的本機工作台。使用 Windows 單檔 EXE、瀏覽器介�
 | 門診 | 含掛號序號的日期掛號清單、多筆手動病人輸入、病人集合、結構化 SOAP、歷年數值／醫囑／掃描病歷、病人備註與檔案比較 |
 | 進階工具 | 視網膜比較、白內障術前分析與掃描病歷、Google 刀表差異預覽與明確套用 |
 | 手術 | 即時刀房自動內嵌、預設本人並可指定醫師卡號的手術排程、未來與過去分區 |
-| 審查 | 單一累積案件表、自動補查新增案件的醫囑名稱、變更歷史與持續監控 |
+| 審查 | 單一累積案件表、自動補查新增案件的醫囑名稱、變更歷史；每次啟動首次進入後才開始持續監控 |
 | 薪資 | 保存院方目前公布報表、內容版本、監控、CSV／JSON 匯出 |
 | 資料庫 | 本機保存、離線檢閱、備份、獨立匯入、多資料庫切換 |
 
@@ -46,6 +46,8 @@ VGHKS-bot-data/
 - [系統架構與資料範圍](docs/ARCHITECTURE.md)
 - [GitHub CI 與 Release 發布](docs/RELEASING.md)
 - [驗證範圍與院內驗收](docs/VALIDATION.md)
+- [效率驗收與量測紀錄](docs/PERFORMANCE.md)
+- [DEBUG 內容與 SDK 離線重現](docs/DEBUG.md)
 - [版本紀錄](CHANGELOG.md)
 
 ## 開發快速開始
@@ -59,3 +61,5 @@ VGHKS-bot-data/
 它會建立 Python 環境、安裝鎖定依賴，執行測試、打包、EXE 自測及封裝核對，輸出至 `dist/`。專案資料夾搬移或改名後，會自動重建含舊路徑的 `.venv`；也可用 `./build.ps1 -RebuildEnvironment` 明確重建。測試只使用合成資料，不需院內或 Google 帳密。SDK 與第三方依賴的授權聲明隨發布包提供，也內嵌於 EXE。
 
 `main` 的每次 push 也會在 GitHub Actions 產生可下載的測試 Artifact；正式 Release 只有推送與程式版本相符的標籤後才建立。本機 EXE 可先帶至內網驗收，不必等待 GitHub 建置。
+
+清理可重建檔案時，可執行 `./tools/clean.ps1 -KeepValidationReports -OldReleases -BrowserArtifacts -WhatIf` 預覽，再移除 `-WhatIf` 套用。它保留最新兩版 ZIP、EXE、驗證報告、Python 環境、資料庫與診斷原檔。[清理範圍](docs/DEVELOPMENT.md#清理與本機檔案)

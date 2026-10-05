@@ -31,7 +31,10 @@ def seed_patients(work, count=9, order_count=3):
             {'title': 'Va', 'headers': ['日期', 'OD', 'OS'],
              'rows': [['2026-09-11', str(index / 10), str(index / 10 + .1)]]}
         ]}, work.username)
-        store.save_step(mrn, 'visits', 'visits', [], work.username)
+        store.save_step(mrn, 'visits', 'visits', [
+            {'mrn': mrn, 'case_no': f'CASE{number}', 'case_type': 'O',
+             'visit_date': f'2026-09-{number + 1:02}', 'section_code': '70', 'section_name': '眼科'}
+            for number in range(order_count)], work.username)
         asset = store.save_asset(mrn, 'synthetic-asset',
                                  BinaryAsset(b'%PDF-1.4\n' + mrn.encode(), 'application/pdf'), work.username)
         orders = []

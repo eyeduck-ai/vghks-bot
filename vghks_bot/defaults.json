@@ -3,6 +3,7 @@
   "password": "",
   "categories": [
     {"id": "surgery", "name": "手術", "keywords": ["# Arrange"], "parser": "surgery", "scope": "ap"},
-    {"id": "review", "name": "審查", "keywords": ["# APPLY"], "parser": "none", "scope": "ap"}
+    {"id": "review", "name": "審查", "keywords": ["# APPLY"], "parser": "none", "scope": "ap"},
+    {"id": "followup", "name": "追蹤", "keywords": ["# FU"], "parser": "none", "scope": "all"}
   ]
 }

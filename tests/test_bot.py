@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from vghks_sdk import LoginRejectedError, RequestError
 
+from vghks_bot import __version__
 from vghks_bot.bot import BotApplication
 from vghks_bot.bot_gateway import AccountGateway, NetworkGate
 from vghks_bot.bot_server import BotServer
@@ -287,9 +288,9 @@ class BotTests(unittest.TestCase):
         self.assertEqual([c[-1] for c in BotSyntheticSDK.calls if c[1] == "soap"], ["EMPTY", "ONE"])
 
     def test_permission_error_does_not_label_patient_first_visit(self):
-        from vghks_sdk.core.errors import SDKError
+        from vghks_sdk import AuthorizationError
         group = self.group()
-        with patch.object(self.work.gateway.connection.records, "get_visit_cases", side_effect=SDKError("denied", http_status=403)):
+        with patch.object(self.work.gateway.connection.records, "get_visit_cases", side_effect=AuthorizationError("denied", http_status=403)):
             task = self.review(group)
         self.assertEqual(task["status"], "partial")
         self.assertEqual(task["items"][0]["status"], "forbidden")
@@ -323,6 +324,45 @@ class BotTests(unittest.TestCase):
         self.assertTrue(first_workspace.idle.wait(10))
         first_workspace.delete_records({"ids": [r["id"] for r in first["items"][0]["records"]]})
         self.assertEqual(self.work.library_search({})["total"], 2)
+
+    def test_versioned_icons_are_cached_without_caching_clinical_responses(self):
+        from vghks_sdk.models import BinaryAsset
+
+        asset = self.work.analysis.store.save_asset(
+            "TEST001", "report", BinaryAsset(b"%PDF-1.4\nsynthetic report", "application/pdf"), "TEST001")
+        with BotServer(0, self.app) as server:
+            thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": .01}, daemon=True)
+            thread.start()
+
+            def request(path):
+                connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=4)
+                connection.request("GET", path, headers={"Cookie": "opd_session=" + self.app.session_token})
+                response = connection.getresponse()
+                result = response.status, dict(response.getheaders()), response.read()
+                connection.close()
+                return result
+
+            try:
+                for path in ("/review-report-current.svg", "/review-note-add.svg", "/review-scan-current.svg"):
+                    with self.subTest(path=path):
+                        code, headers, body = request(path + "?v=" + __version__)
+                        self.assertEqual(code, 200)
+                        self.assertEqual(headers["Cache-Control"], "private, max-age=31536000, immutable")
+                        self.assertEqual(headers["Content-Type"], "image/svg+xml")
+                        self.assertIn(b"<svg", body)
+                        self.assertEqual(headers["X-Content-Type-Options"], "nosniff")
+                        for suffix in ("", "?v=old-version"):
+                            self.assertEqual(request(path + suffix)[1]["Cache-Control"], "no-store")
+                for path in ("/", "/bot.js", "/review-history.js", "/tools", "/favicon.svg",
+                             "/api/bootstrap", f"/api/accounts/{self.key}/workbench",
+                             f"/api/accounts/{self.key}/analysis/asset?id={asset['digest']}"):
+                    suffix = "&" if "?" in path else "?"
+                    code, headers, _ = request(path + suffix + "v=" + __version__)
+                    self.assertEqual(code, 200, path)
+                    self.assertEqual(headers["Cache-Control"], "no-store", path)
+            finally:
+                server.shutdown()
+                thread.join(2)
 
     def test_http_scope_csrf_and_cross_account_assets(self):
         other = self.app.login({"username": "OTHER", "password": "synthetic"})["account"]["id"]
@@ -375,7 +415,7 @@ class BotTests(unittest.TestCase):
 
 
 class GatewayTests(unittest.TestCase):
-    def test_safe_read_reconnects_once_after_network_failure(self):
+    def test_network_failure_never_replays_login_after_transport_retry(self):
         logins_before = sum(call[1] == "login" for call in BotSyntheticSDK.calls)
         gateway = AccountGateway(BotSyntheticSDK, NetworkGate())
         gateway.login(Settings(username="TEST", password="fake"))
@@ -383,12 +423,13 @@ class GatewayTests(unittest.TestCase):
         try:
             with patch.object(gateway.connection.opd, "get_doctor_patients",
                               side_effect=RequestError("temporary outage", code="NETWORK_TIMEOUT")):
-                rows = gateway.invoke("opd", "get_doctor_patients", "TEST", today())
-            self.assertEqual(len(rows), 4)
-            self.assertEqual(gateway.recovery_count, 1)
-            self.assertNotEqual(gateway.session_id, first_session)
-            self.assertTrue(gateway.online)
-            self.assertEqual(sum(call[1] == "login" for call in BotSyntheticSDK.calls) - logins_before, 2)
+                with self.assertRaises(RequestError):
+                    gateway.invoke("opd", "get_doctor_patients", "TEST", today())
+            self.assertEqual(gateway.recovery_count, 0)
+            self.assertEqual(gateway.session_id, first_session)
+            self.assertFalse(gateway.online)
+            self.assertEqual(gateway.connection_issue["action"], "network")
+            self.assertEqual(sum(call[1] == "login" for call in BotSyntheticSDK.calls) - logins_before, 1)
         finally:
             gateway.close()
 

@@ -124,7 +124,7 @@ class HistorySDK(BotSyntheticSDK):
     def history(self, mrn, options):
         if type(self).expire_once:
             type(self).expire_once = False
-            raise AuthenticationError("expired synthetic session", code="AUTH_EXPIRED")
+            raise AuthenticationError("expired synthetic session", code="AUTH_EXPIRED", retry_safe=True)
         return super().history(mrn, options)
 
     def order_history(self, mrn, options):
@@ -136,6 +136,9 @@ class HistorySDK(BotSyntheticSDK):
 
     def case_orders(self, case):
         self.calls.append((self.card, "case-orders", case.case_no))
+        if case.case_no == "LEGACY" and type(self).cataract_order_name:
+            return [ClinicalOrder(ALIAS, "LEGACY", "O", type(self).cataract_order_name, "2024-01-01", "2024-01-02",
+                                  detail_ref=DETAIL, report_ref=REPORT, pacs_ref=STUDY, pdf_refs=(PDF,))]
         return [ClinicalOrder(case.mrn, case.case_no, "O", "舊門診檢驗", "2012-01-01")]
 
     def order_detail(self, reference):
@@ -153,7 +156,7 @@ class HistorySDK(BotSyntheticSDK):
     def download_pdf(self, reference):
         if type(self).expire_pdf_once:
             type(self).expire_pdf_once = False
-            raise AuthenticationError("expired before attachment", code="AUTH_EXPIRED")
+            raise AuthenticationError("expired before attachment", code="AUTH_EXPIRED", retry_safe=True)
         self.calls.append((self.card, "pdf", reference.mrn))
         return BinaryAsset(b"%PDF-1.4\n%synthetic\n", "application/pdf")
 
@@ -286,6 +289,7 @@ class ReviewHistoryTests(unittest.TestCase):
         self.assertIn("numeric-history", stages)
         self.assertIn("soap", stages)
         self.assertIn("orders-history", stages)
+        self.assertEqual(stages.count("orders-history"), 1)
         self.assertIn("order-detail", stages)
         order_start = stages.index("orders-history")
         self.assertLess(stages.index("numeric-history"), stages.index("soap"))
@@ -458,11 +462,13 @@ class ReviewHistoryTests(unittest.TestCase):
         self.assertEqual(resumed["status"], "completed")
         self.assertIsNotNone(self.history.read(self.request("numeric"))["data"])
 
-    def test_auth_check_false_reconnects_but_non_read_is_not_replayed(self):
+    def test_unknown_readiness_pauses_without_login_replay_and_non_read_is_not_replayed(self):
         first = self.work.gateway.connection
         with patch.object(first.auth, "check", return_value=SimpleNamespace(ok=False)):
-            self.assertTrue(self.work.gateway.invoke("auth", "check", only=("prq",)).ok)
-        self.assertEqual(HistorySDK.logins, 2)
+            with self.assertRaises(AuthenticationError):
+                self.work.gateway.invoke("auth", "check", only=("prq",))
+        self.assertEqual(HistorySDK.logins, 1)
+        self.app.login({"id": self.key, "password": "memory-only", "remember": False})
         before = HistorySDK.logins
         self.work.gateway.connection.reviews.submit_case = lambda: (_ for _ in ()).throw(
             AuthenticationError("expired", code="AUTH_EXPIRED"))

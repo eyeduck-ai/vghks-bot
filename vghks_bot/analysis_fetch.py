@@ -6,7 +6,7 @@ from contextlib import ExitStack
 from dataclasses import fields
 from datetime import date, timedelta
 
-from vghks_sdk import AuthenticationError, SoapRecord
+from vghks_sdk import AuthenticationError, SoapRecord, assess_data
 from vghks_sdk.models import (
     NumericHistoryFilter,
     OrderDetailRef,
@@ -22,7 +22,15 @@ from vghks_sdk.order_status import classify_order_execution
 
 from .analysis_numeric import MODULES, iso_day, term_match
 from .analysis_store import digest
+from .connection_state import require_ready, should_pause
 from .library import current_cache
+from .ophthalmic_orders import (
+    SCOPE_KEY,
+    eye_order_contexts,
+    eye_visit_signature,
+    is_eye_visit,
+    order_in_eye_context,
+)
 from .scanner import Cancelled, safe_failure
 from .settings import today
 from .soap_data import snapshot as soap_snapshot
@@ -41,6 +49,10 @@ def clean(value):
 
 def model(cls, value):
     values = {k: v for k, v in value.items() if k in {f.name for f in fields(cls)}}
+    if cls is PdfAttachmentRef:
+        from .sdk_orders import pdf_reference
+
+        return pdf_reference(**values)
     if cls is VisitCase:
         values["visit_date"] = date.fromisoformat(values["visit_date"]) if values.get("visit_date") else None
     return cls(**values)
@@ -84,6 +96,13 @@ def validate_order_index(value, allowed_mrns):
         validate_patient(order, order["mrn"])
 
 
+def validate_case_orders(value, case):
+    validate_order_index(value, {case.mrn})
+    contexts = {(case.mrn, case.case_type, case.case_no)}
+    if any(not order_in_eye_context(order, contexts) for order in value):
+        raise ValueError("單次醫囑索引的就診識別不符。")
+
+
 def validate_case_report(value, lookup_mrn, case):
     validate_patient(value, case.mrn)
     returned = value.get("case") if isinstance(value, dict) else None
@@ -110,8 +129,7 @@ class RunSessions:
             self.connections[key] = self.stack.enter_context(self.factory(settings))
         connection = self.connections[key]
         if (key, target) not in self.ready:
-            if not connection.auth.check(only=(target,)).ok:
-                raise AuthenticationError("Authentication failed", code="AUTH_CHECK_FAILED")
+            require_ready(connection.auth.check(only=(target,)))
             self.ready.add((key, target))
         return connection
 
@@ -153,8 +171,7 @@ class PatientCollector:
                 raise ValueError("需要連線取得新資料，請先儲存所選帳號的密碼。")
             self.connection = self.stack.enter_context(self.factory(self.settings))
         if target not in self.ready:
-            if not self.connection.auth.check(only=(target,)).ok:
-                raise AuthenticationError("Authentication failed", code="AUTH_CHECK_FAILED")
+            require_ready(self.connection.auth.check(only=(target,)))
             self.ready.add(target)
         return self.connection
 
@@ -177,25 +194,29 @@ class PatientCollector:
             if cached:
                 self.state.count(analysis_cached=1)
                 self.seen[key] = cached["payload"]
+                self.note_assessment(key, kind, cached.get("assessment") or {})
                 return cached["payload"]
         try:
             self.state.update(stage="analysis", message=f"{self.member.get('name') or self.mrn} · {kind}")
             value = operation()
+            assessment = assess_data(value)
             # Persist completed requests even when cancellation arrives during I/O.
             if binary:
                 value = self.store.save_asset(self.mrn, key, value, self.settings.username)
             else:
                 value = clean(value)
                 (validator or validate_patient)(value, expected_mrn or self.mrn)
-                self.store.save_step(self.mrn, key, kind, value, self.settings.username)
+                self.store.save_step(self.mrn, key, kind, value, self.settings.username,
+                                     assessment=to_jsonable(assessment))
             self.state.count(analysis_fetched=1)
             self.seen[key] = value
+            self.note_assessment(key, kind, to_jsonable(assessment))
             self.state.checkpoint()
             return value
         except (Cancelled, StorageError, AnalysisYield):
             raise
         except Exception as exc:
-            if self.control and getattr(exc, "info", None) and exc.info.category in {"NETWORK", "AUTHENTICATION"}:
+            if should_pause(exc):
                 raise
             message, code = safe_failure(exc)
             if type(exc) is ValueError:
@@ -208,6 +229,18 @@ class PatientCollector:
             # Errors are not successful cache entries; the next run retries them.
             self.seen[key] = None
             return None
+
+    def note_assessment(self, key, kind, assessment):
+        if assessment.get("complete") is not False:
+            return
+        from .diagnostics import analysis_query_context
+
+        query = analysis_query_context(key, kind)
+        for issue in assessment.get("issues", []):
+            self.issues.append({"key": key, "message": "已保留資料；部分內容解析未完成。",
+                                "code": issue["code"], "query": query})
+            self.state.issue(kind, "已保留資料；部分內容解析未完成。", code=issue["code"],
+                             mrn=self.mrn, key=key, query=query)
 
     def run(self):
         try:
@@ -222,10 +255,14 @@ class PatientCollector:
 
     def examinations(self, terms, *, prioritize_soap=False):
         refresh = self.options["refresh"]
+        eye_only = self.options["modules"] == ["cataract"]
         visits = self.query("visits", "visits", lambda: self.sdk().records.get_visit_cases(self.mrn),
                             refresh=refresh, validator=validate_visits)
-        case_sources = {digest(model(VisitCase, raw).identity): raw["mrn"] for raw in visits or []}
+        cases = [model(VisitCase, raw) for raw in visits or []]
+        case_models = {digest(case.identity): case for case in cases}
+        case_sources = {key: case.mrn for key, case in case_models.items()}
         self.allowed_mrns = {self.mrn, *case_sources.values()}
+        eye_contexts = eye_order_contexts(visits, self.mrn)
         numeric = self.query("numeric-history", "numeric", lambda: self.sdk().records.get_numeric_history(
             self.mrn, NumericHistoryFilter()), refresh=refresh)
         if prioritize_soap:
@@ -245,7 +282,7 @@ class PatientCollector:
             day = raw.get("visit_date")
             if not day:
                 unknown_dates += 1
-            elif self.in_range(day):
+            elif self.in_range(day) and day <= today().isoformat():
                 eligible.append(raw)
 
         def backfill_case(raw):
@@ -280,33 +317,61 @@ class PatientCollector:
                        validator=lambda value, _, case=case: validate_case_report(value, self.mrn, case))
 
         sources = {}
-        for category in ("*", "OR"):
+        categories = ("*",) if eye_only else ("*", "OR")
+        for category in categories:
+            if eye_only and not eye_contexts:
+                continue
+            saved = self.store.step(self.mrn, "orders-history:" + category)
+            visit_step = self.store.step(self.mrn, "visits")
+            stale = bool(eye_only and saved and visit_step and saved["saved_at"] < visit_step["saved_at"])
             result = self.query("orders-history:" + category, "order_index",
                                 lambda category=category: self.sdk().orders.get_order_history(
-                                    self.mrn, OrderHistoryFilter(category=category)), refresh=refresh,
+                                    self.mrn, OrderHistoryFilter(category=category)), refresh=refresh or stale,
                                 validator=lambda value, _: validate_order_index(value, self.allowed_mrns))
             if result is not None:
                 sources[category] = result
-        history_incomplete = len(sources) < 2
+        history_incomplete = len(sources) < len(categories)
+        order_indices_complete = visits is not None
+        order_cases = set()
         for raw in eligible:
             self.state.check_cancel()
+            if eye_only and not is_eye_visit(raw):
+                continue
             if raw["visit_date"] >= order_cutoff and not history_incomplete:
                 continue
             selected = backfill_case(raw)
             if selected is None:
                 continue
             case, key = selected
+            order_cases.add(key)
             result = self.query("orders-case:" + key, "order_index",
-                                lambda case=case: self.sdk().orders.get_case_orders(case), expected_mrn=case.mrn)
+                                lambda case=case: self.sdk().orders.get_case_orders(case), expected_mrn=case.mrn, refresh=refresh,
+                                validator=lambda value, _, case=case: validate_case_orders(value, case))
             if result is not None:
                 sources[key] = result
+            else:
+                order_indices_complete = False
         # Include already cached per-case indices when a later run reuses history.
         for saved in self.store.steps(self.mrn, "order_index"):
-            if saved["key"] in case_sources:
-                sources.setdefault(saved["key"], saved["payload"])
+            source = saved["key"].removeprefix("orders-case:")
+            if source in order_cases:
+                case = case_models[source]
+                try:
+                    validate_case_orders(saved["payload"], case)
+                    sources.setdefault(source, saved["payload"])
+                except (TypeError, ValueError):
+                    pass
+        if eye_only:
+            self.store.save_step(self.mrn, SCOPE_KEY, "order_scope", {
+                "scope": "ophthalmology", "visit_signature": eye_visit_signature(visits, self.mrn),
+                "history_complete": "*" in sources, "case_keys": sorted(order_cases),
+                "complete": order_indices_complete and not (self.options.get("start") or self.options.get("end")),
+            }, self.settings.username)
         groups = defaultdict(list)
         for source, orders in sources.items():
             for order in orders:
+                if eye_only and not order_in_eye_context(order, eye_contexts):
+                    continue
                 expected = ((order.get("mrn") if order.get("mrn") in self.allowed_mrns else None)
                             if source in {"*", "OR"} else case_sources.get(source))
                 if not expected or order.get("mrn") != expected or not any(term_match(order.get("name", ""), t) for t in terms):
@@ -355,7 +420,9 @@ class PatientCollector:
             "backfilled_cases": len(backfilled), "unsupported_cases": list(unsupported.values()),
             "unknown_date_cases": unknown_dates, "issues": self.issues,
             "requested_start": self.options.get("start", ""), "requested_end": self.options.get("end", ""),
-            "note": "涵蓋院方回傳的歷史索引與可補查門診；無法補查的住院／急診另列。",
+            "order_scope": "ophthalmology" if eye_only else "all",
+            "note": ("批次取得歷年醫囑索引，僅抓取已核對眼科就診的相關報告與附件；超出歷年範圍或索引失敗時補查眼科門診，無法補查的住院／急診另列。"
+                     if eye_only else "涵蓋院方回傳的歷史索引與可補查門診；無法補查的住院／急診另列。"),
         }
         self.store.save_step(self.mrn, "coverage", "coverage", coverage, self.settings.username)
         return visits
@@ -420,6 +487,8 @@ class PatientCollector:
             except (Cancelled, StorageError, AuthenticationError, AnalysisYield):
                 raise
             except Exception as exc:
+                if should_pause(exc):
+                    raise
                 failed = True
                 self.seen["cataract-soap:" + key] = None
                 message, code = safe_failure(exc)

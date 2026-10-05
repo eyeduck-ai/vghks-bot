@@ -79,7 +79,7 @@ window.FileCompare = (() => {
     if (account !== value.account || mrn !== value.mrn) throw new Error("病人或帳號已切換，請從目前畫面重新選取檔案。");
     if (items.some(item => item.digest === value.digest)) {announce("此檔案已在比較清單中。"); return false;}
     if (items.length >= limit) {announce("比較清單最多可加入 6 份檔案。"); throw new Error("比較清單最多可加入 6 份檔案。");}
-    items.push({...value, zoom:1});
+    items.push({...value, zoom:1, selectionOrder:Math.max(0, ...items.map(item => item.selectionOrder)) + 1});
     activeIndex = items.length - 1;
     render();
     announce(`已加入比較清單（${items.length} / ${limit}）。`);
@@ -88,7 +88,8 @@ window.FileCompare = (() => {
   function sendState(frame, error = "") {
     frame?.contentWindow?.postMessage({type:"bot:compare-state", account, mrn, count:items.length,
       digests:items.map(item => item.digest),
-      items:items.map(({digest, mime, name, source, date, zoom}) => ({digest, mime, name, source, date, zoom})),
+      items:items.map(({digest, mime, name, source, date, zoom, fileIndex, fileCount, selectionOrder, reportId}) =>
+        ({digest, mime, name, source, date, zoom, fileIndex, fileCount, selectionOrder, reportId})),
       limit, error}, location.origin);
   }
   function receive(event, expectedFrame, activeAccount) {
@@ -236,8 +237,10 @@ window.FileCompare = (() => {
     const columns = collection.length <= 2 ? collection.length : collection.length === 4 ? 2 : 3;
     wrap.style.setProperty("--pane-span", String(collection.length === 5 && index >= 3 ? 3 : 6 / columns));
     const header = make("div", undefined, "file-compare-pane-head");
-    const name = make("strong", item.name || "檢查附件");
-    const caption = make("span", [item.source, item.date || "日期未提供"].filter(Boolean).join(" · "));
+    const label = ClinicalUI.comparisonName(item, collection);
+    const name = make("strong", label);
+    name.title = [label, item.name, item.source].filter(Boolean).join(" · ");
+    const caption = make("span", [item.name, item.source].filter(Boolean).join(" · "));
     const buttons = make("div", undefined, "file-compare-pane-actions");
     const itemIndex = () => collection.findIndex(row => row.digest === item.digest);
     const moveItem = delta => inline
@@ -254,7 +257,7 @@ window.FileCompare = (() => {
     for (const [i, el] of [...buttons.children].entries()) if (i < 2) el.setAttribute("aria-label", i ? "將檔案向右移" : "將檔案向左移");
     buttons.children[2].setAttribute("aria-label", "縮小檔案");
     buttons.children[4].setAttribute("aria-label", "放大檔案");
-    buttons.children[5].setAttribute("aria-label", `移除 ${item.name || "檢查附件"}`);
+    buttons.children[5].setAttribute("aria-label", `移除 ${label}`);
     buttons.children[5].title = "移除檔案";
     buttons.children[0].disabled = index === 0;
     buttons.children[1].disabled = index === collection.length - 1;
@@ -264,9 +267,9 @@ window.FileCompare = (() => {
       ? `/api/analysis/asset?id=${item.digest}` : `/api/accounts/${item.account}/analysis/asset?id=${item.digest}`;
     const documentNode = make(item.mime === "application/pdf" ? "iframe" : "img");
     documentNode.src = item.mime === "application/pdf" ? ClinicalUI.pdfURL(url) : url;
-    documentNode.title = item.name || "檢查附件";
+    documentNode.title = name.title;
     if (documentNode.tagName === "IMG") documentNode.alt = documentNode.title;
-    buttons.append(ClinicalUI.assetTools({url,asset:item,name:item.name || "檢查附件",image:documentNode,compact:true}));
+    buttons.append(ClinicalUI.assetTools({url,asset:item,name:[label,item.name].filter(Boolean).join(" "),image:documentNode,compact:true}));
     documentNode.style.width = (item.zoom * 100) + "%";
     documentNode.style.height = item.mime === "application/pdf" ? (item.zoom * 100) + "%" : "auto";
     scroll.append(documentNode);
@@ -292,7 +295,7 @@ window.FileCompare = (() => {
     tabs.setAttribute("aria-label", "比較檔案切換");
     const panes = make("div", undefined, "file-compare-inline-panes");
     for (const [index, item] of remoteItems.entries()) {
-      const tab = button(item.name || `檔案 ${index + 1}`, () => {
+      const tab = button(ClinicalUI.comparisonName(item, remoteItems), () => {
         inlineActive = index; inlineActiveDigest = item.digest; renderInline();
       });
       tab.setAttribute("aria-pressed", String(index === inlineActive));
@@ -326,11 +329,14 @@ window.FileCompare = (() => {
     const desired = new Set(items.map(item => item.digest));
     for (const existing of [...panes.children]) if (!desired.has(existing.dataset.digest)) existing.remove();
     for (const [index, item] of items.entries()) {
-      const tab = button(item.name || `檔案 ${index + 1}`, () => {activeIndex = index; render();});
+      const label = ClinicalUI.comparisonName(item, items);
+      const tab = button(label, () => {activeIndex = index; render();});
       tab.setAttribute("aria-pressed", String(index === activeIndex));
       tabs.append(tab);
       let current = [...panes.children].find(element => element.dataset.digest === item.digest);
       if (!current) {current = pane(item, index); panes.append(current);}
+      const name = current.querySelector(".file-compare-pane-head > strong");
+      name.textContent = label;name.title = [label, item.name, item.source].filter(Boolean).join(" · ");
       current.dataset.active = String(index === activeIndex);
       current.style.order = String(index);
       const columns = items.length <= 2 ? items.length : items.length === 4 ? 2 : 3;
@@ -338,7 +344,14 @@ window.FileCompare = (() => {
       const buttons = current.querySelectorAll(".file-compare-pane-actions button");
       buttons[0].disabled = index === 0;
       buttons[1].disabled = index === items.length - 1;
+      buttons[4].setAttribute("aria-label", `移除 ${label}`);
       const file = current.querySelector(".file-compare-scroll > :first-child");
+      file.title = name.title;
+      if (file.tagName === "IMG") file.alt = name.title;
+      const download = current.querySelector("a.attachment-control");
+      const downloadName = [label,item.name].filter(Boolean).join(" ");
+      if (download.download !== ClinicalUI.fileName(downloadName, item.mime))
+        download.replaceWith(ClinicalUI.downloadLink(download.href, downloadName, item.mime, true));
       file.style.width = (item.zoom * 100) + "%";
       file.style.height = item.mime === "application/pdf" ? (item.zoom * 100) + "%" : "auto";
       current.querySelector(".file-compare-pane-actions span").textContent = Math.round(item.zoom * 100) + "%";

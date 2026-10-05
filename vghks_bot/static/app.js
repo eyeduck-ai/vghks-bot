@@ -10,6 +10,14 @@ const active = new Set(["queued", "running", "cancelling"]);
 const statusLabels = {queued:"排隊中", running:"查詢中", cancelling:"停止中", completed:"完成", partial:"部分完成", failed:"失敗", cancelled:"已停止", interrupted:"上次中斷"};
 let config, accounts = new Map(), history = [], selectedRun = "", current = null;
 let categoryFilter = "", stopped = false, historySignature = "", toastTimer;
+let pollTimer=0,pollBusy=false,sharedStatus=null,workspaceVisible=true,historyOffset=0,historyTotal=0;
+const embedded=/^[a-f0-9]{32}$/.test(embeddedAccount||"")&&parent!==window;
+function watchedRuns(){return [...new Set([selectedRun,...(typeof analysisState!=="undefined"?analysisState.runs.filter(run=>run.cohort_id===currentCohort?.id).slice(0,5).map(run=>run.id):[])])].filter(Boolean);}
+window.addEventListener("message",event=>{
+ if(!embedded||event.source!==parent||event.origin!==location.origin||event.data?.account!==embeddedAccount)return;
+ if(event.data.type==="bot:workspace-visibility"){workspaceVisible=!!event.data.visible;if(!workspaceVisible)clearTimeout(pollTimer);}
+ if(event.data.type==="bot:workspace-status"){sharedStatus=event.data.status;if(config&&workspaceVisible&&!document.hidden&&!pollBusy){pollBusy=true;refresh().catch(error=>notify(error.message,true)).finally(()=>{pollBusy=false;});}}
+});
 const pageSizes = new Map();
 
 function el(tag, text, className) {
@@ -189,6 +197,11 @@ function renderHistory() {
   if (focusedId) nodes.find(n => n.dataset.id === focusedId)?.focus({preventScroll:true});
   $("#historyCount").textContent = rows.length;
   $("#historyEmpty").hidden = rows.length > 0;
+  let pager=$("#historyPager");if(!pager){pager=el("div",undefined,"pagination");pager.id="historyPager";$("#historyList").after(pager);}
+  const previous=button("上一頁",()=>action(async()=>{historyOffset=Math.max(0,historyOffset-40);historySignature="";await refresh();}));
+  const next=button("下一頁",()=>action(async()=>{historyOffset+=40;historySignature="";await refresh();}));
+  previous.disabled=historyOffset===0;next.disabled=historyOffset+40>=historyTotal;
+  pager.replaceChildren(previous,el("span",`${historyTotal?historyOffset+1:0}–${Math.min(historyOffset+40,historyTotal)} / ${historyTotal} 筆`),next);
 }
 async function selectRun(id) {
   showPane("history");
@@ -208,12 +221,18 @@ async function loadRun() {
   renderRun();
 }
 async function refresh() {
-  const result = await api("/api/history");
+  const result = embedded&&sharedStatus?sharedStatus:await api("/api/status?"+new URLSearchParams({run:watchedRuns().join(",")}));
   if (stopped) return;
-  history = result.runs;
-  if (!selectedRun && history.length) selectedRun = history[0].id;
+  const rows=new Map(history.map(run=>[run.id,run]));for(const run of result.runs||[])rows.set(run.id,{...rows.get(run.id),...run});
+  history=[...rows.values()];
+  if(activePane==="history"){
+    const saved=await api("/api/history?"+new URLSearchParams({limit:40,offset:historyOffset}));
+    history=saved.runs;historyTotal=saved.total;
+    if(!selectedRun&&history.length)selectedRun=history[0].id;
+    renderHistory();
+  }else history=history.filter(run=>active.has(run.status)||watchedRuns().includes(run.id)).slice(0,200);
+  if(embedded){parent.postMessage({type:"bot:workspace-watch",account:embeddedAccount,ids:watchedRuns()},location.origin);for(const run of result.runs||[])window.JobProgress?.publish(run,embeddedAccount);}
   updateAccountProgress();
-  renderHistory();
   if (result.warnings?.length) notify(result.warnings.join(" "), true);
   if (activePane === "history") await loadRun();
   await refreshWorkspace();
@@ -440,16 +459,16 @@ $("#exitButton").addEventListener("click",() => action(async () => {
   document.body.replaceChildren(el("p","程式已結束，查詢紀錄已保留。可以關閉此分頁。","closed"));
 }));
 async function poll() {
-  if (stopped) return;
-  try { await refresh(); } catch (error) { if (!stopped) notify(error.message === "Failed to fetch" ? "無法連線至本機程式，請重新執行 EXE。" : error.message,true); }
-  if (!stopped) setTimeout(poll,1800);
+  clearTimeout(pollTimer);if(stopped||document.hidden||!workspaceVisible)return;
+  if(!pollBusy){pollBusy=true;try { await refresh(); } catch (error) { if (!stopped) notify(error.message === "Failed to fetch" ? "無法連線至本機程式，請重新執行 EXE。" : error.message,true); }finally{pollBusy=false;}}
+  if(!stopped&&!embedded)pollTimer=setTimeout(poll,history.some(run=>active.has(run.status))?2000:10000);
 }
+document.addEventListener("visibilitychange",()=>{clearTimeout(pollTimer);if(!document.hidden&&!stopped&&!embedded)void poll();});
 async function initialize() {
   const token = location.hash.slice(1);
   if (/^[A-Za-z0-9_-]{43}$/.test(token)) { await api("/api/session",{token}); window.history.replaceState(null,"",location.pathname); }
   config = await api("/api/bootstrap");
   $("#version").textContent = `v${config.version}`;
-  $("#dataPath").textContent = config.data_dir;
   config.accounts.forEach(addAccount);
   await initializeWorkspace();
   window.dispatchEvent(new Event("workspace-ready"));

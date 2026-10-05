@@ -22,10 +22,10 @@ from vghks_bot.surgery_schedule import EBOARD_URL  # noqa: E402
 
 class LocalBoardHandler(BotHandler):
     """Explicit synthetic-only board target; never redirects to the hospital."""
-    def reply(self, status, payload, *, mime="application/json; charset=utf-8", cookie=None):
+    def reply(self, status, payload, *, mime="application/json; charset=utf-8", cookie=None, **options):
         if self.path == "/" and isinstance(payload, bytes) and mime.startswith("text/html"):
             payload = payload.replace(EBOARD_URL.encode(), (self.server.origin+"/synthetic-board").encode())
-        super().reply(status, payload, mime=mime, cookie=cookie)
+        super().reply(status, payload, mime=mime, cookie=cookie, **options)
 
     def do_GET(self):
         if self.path == "/synthetic-board":
@@ -63,14 +63,97 @@ class FollowUpSDK(BotSyntheticSDK):
         return super().surgery_schedule(card, start, end, **filters)
 
 
+class DemographicsSDK(FollowUpSDK):
+    def demographics(self, mrn):
+        return replace(super().demographics(mrn), birthday="047/01/01" if self.card == "TEST" else "0700101")
+
+
+class SessionSDK(DemographicsSDK):
+    expired = set()
+
+    def demographics(self, mrn):
+        from vghks_sdk import (
+            AuthExpiredError,
+            AuthorizationError,
+            LoginRejectedError,
+            NotFoundError,
+        )
+
+        self.calls.append((self.card, "lookup", mrn))
+        key = self.card, mrn
+        if mrn == "00011111" and key not in self.expired:
+            self.expired.add(key)
+            raise AuthExpiredError("synthetic expired session")
+        if mrn == "00000000":
+            raise NotFoundError("synthetic missing patient", code="WEBMAAS_PATIENT_NOT_FOUND")
+        if mrn == "00022222":
+            raise AuthorizationError("synthetic denied access", code="DEMOGRAPHICS_PERMISSION_DENIED")
+        if mrn == "00033333":
+            raise LoginRejectedError("synthetic rejected credentials")
+        return super().demographics(mrn)
+
+
+def synthetic_pdf(label):
+    content = f"BT /F1 18 Tf 50 770 Td ({label}) Tj ET\n".encode("ascii")
+    objects = [b"<< /Type /Catalog /Pages 2 0 R >>", b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        f"<< /Length {len(content)} >>\nstream\n".encode()+content+b"endstream"]
+    pdf = b"%PDF-1.4\n"
+    offsets = []
+    for index, value in enumerate(objects, 1):
+        offsets.append(len(pdf))
+        pdf += f"{index} 0 obj\n".encode()+value+b"\nendobj\n"
+    start = len(pdf)
+    pdf += f"xref\n0 {len(objects)+1}\n0000000000 65535 f \n".encode()
+    pdf += b"".join(f"{offset:010} 00000 n \n".encode() for offset in offsets)
+    return pdf+f"trailer\n<< /Size {len(objects)+1} /Root 1 0 R >>\nstartxref\n{start}\n%%EOF\n".encode()
+
+
+def seed_ophthalmic(workspace, mrn="TEST001"):
+    from vghks_sdk.models import BinaryAsset, ClinicalOrder
+
+    from vghks_bot.analysis_fetch import clean
+    from vghks_bot.selftest_exports import seed_report
+
+    seed_report(workspace, mrn)
+    store = workspace.analysis.store
+    store.save_step(mrn, "numeric-history", "numeric", {"mrn": mrn, "tables": [
+        {"title": "Va", "headers": ["日期", "OD", "OS"], "rows": [["2026-09-11", "0.6", "HM"]]},
+        {"title": "驗光-散瞳前", "headers": ["日期", "OD", "OS"], "rows": [
+            ["2026-09-11", "2.25 1.00 X 90", "1.25 -0.50 X 175"],
+            ["2026-08-14", "-1.25 -1.00 X 170", "0.00 -0.25 X 0"]]},
+        {"title": "KM", "headers": ["日期", "OD", "OS"], "rows": [["2026-09-11",
+            "K1 41.25 8.20 X 160 K2 42.50 7.96 X 70 CYL -1.25 X 160",
+            "K1 41.50 8.14 X 45 K2 42.25 7.98 X 135 CYL 0.75 X 45"]]},
+        {"title": "配鏡", "headers": ["日期", "側別", "SPH (D)", "CYL (D)", "SE (D)"],
+         "rows": [["2026-07-15", "OD", "1.50", "0.50", "1.75"]]},
+    ]}, workspace.username)
+    orders = [ClinicalOrder(mrn, f"SYN-{index}", "O", "DBR, free charge", day, day)
+              for index, day in enumerate(("2026-09-11", "2026-08-14", "2026-07-15"), 1)]
+    for kind in ("*", "OR"):
+        store.save_step(mrn, "orders-history:"+kind, "order_index", clean(orders), workspace.username)
+    for row in workspace.review.history._public_orders(workspace.review.history._groups(mrn, clean(orders))):
+        count = 2 if row["date"] == "2026-09-11" else 1
+        assets = [store.save_asset(mrn, f"history-asset:download_pdf:synthetic-{row['id']}-{index}",
+            BinaryAsset(synthetic_pdf(f"Synthetic exam {row['date']} - file {index}"), "application/pdf"),
+            workspace.username) for index in range(1, count+1)]
+        store.save_step(mrn, "history-order:"+row["id"], "history_order", {
+            "order": row, "assets": assets, "texts": [], "details": [], "issues": [], "status": "complete"}, workspace.username)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--followup", action="store_true")
     parser.add_argument("--library", action="store_true")
     parser.add_argument("--local-board", action="store_true")
+    parser.add_argument("--ophthalmic", action="store_true", help="Seed signed refraction and dated PDF comparison samples")
+    parser.add_argument("--demographics", action="store_true", help="Synthetic ROC birthdays and a numeric manual MRN")
+    parser.add_argument("--lookup-failures", action="store_true", help="Synthetic expired, missing, forbidden and rejected patient queries")
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="vghks-bot-synthetic-") as directory:
-        manager = DatabaseManager(Path(directory), Settings(), FollowUpSDK if args.followup else BotSyntheticSDK)
+        sdk = SessionSDK if args.lookup_failures else DemographicsSDK if args.demographics else FollowUpSDK if args.followup else BotSyntheticSDK
+        manager = DatabaseManager(Path(directory), Settings(), sdk)
         app = manager.current
         try:
             for user, label in (("SECOND", "合成帳號乙"), ("TEST", "合成帳號甲")):
@@ -94,6 +177,10 @@ def main():
                             case = VisitCase(record["mrn"], today()-timedelta(days=1), "O", "SYNTHETIC", "70", "眼科")
                             record.update(soap_snapshot(synthetic_soap(case, user)))
                         workspace.store.library.save_record(record, user, "fixture-library")
+                if args.ophthalmic:
+                    seed_ophthalmic(app.workspace(key))
+                    if args.demographics:
+                        seed_ophthalmic(app.workspace(key), "00012345")
             with BotServer(0, app, manager) as server:
                 if args.local_board:
                     server.RequestHandlerClass = LocalBoardHandler

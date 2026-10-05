@@ -101,6 +101,7 @@ class FollowUpTests(unittest.TestCase):
     def test_scheduler_respects_offline_readonly_preferences_and_pause(self):
         self.query()
         self.overdue()
+        self.tracker.monitor_started = True
         with patch.object(self.work.review, "start") as start:
             self.work.gateway.online = False
             self.app.follow_up_tick()
@@ -165,6 +166,7 @@ class FollowUpTests(unittest.TestCase):
     def test_disabled_monitor_and_active_refresh_never_queue_duplicates(self):
         self.query()
         self.overdue()
+        self.tracker.monitor_started = True
         self.tracker.preferences({"enabled": False, "automatic": True, "hours": 24})
         with patch.object(self.work.review, "start") as start:
             self.app.follow_up_tick()

@@ -16,6 +16,7 @@ from vghks_sdk.models import (
 
 from .analysis_fetch import clean, model, order_identity, unique_refs, validate_patient
 from .analysis_store import digest
+from .connection_state import should_pause
 from .scanner import safe_failure
 from .settings import today
 from .soap_data import snapshot as soap_snapshot
@@ -64,7 +65,7 @@ class ReviewHistory:
         elif resource in CASE_RESOURCES:
             self.case(mrn, reference)
         elif resource == "order_report":
-            self.order(mrn, reference)
+            self.order(mrn, reference, cataract=bool(values.get("cohort_id")))
         elif resource == "scan_asset":
             self.app.scans._verified_ref(mrn, reference)
         elif reference:
@@ -106,24 +107,29 @@ class ReviewHistory:
                 return case
         raise ValueError("就診不在已核對的病人索引。")
 
-    def _order_sources(self, mrn):
+    def _order_sources(self, mrn, *, visits=None, categories=("*", "OR"), case_keys=None):
         sources = []
-        for category in ("*", "OR"):
+        for category in categories:
             step = self.store.step(mrn, "orders-history:" + category)
             if step:
                 sources.extend(step["payload"])
-        visits, _ = self._visits(mrn)
+        if visits is None:
+            visits, _ = self._visits(mrn)
         for raw in visits or []:
             case = model(VisitCase, raw)
             if case.patient_mrn != mrn or case.case_type != "O":
                 continue
-            step = self.store.step(mrn, "orders-case:" + digest(case.identity))
+            key = digest(case.identity)
+            if case_keys is not None and key not in case_keys:
+                continue
+            step = self.store.step(mrn, "orders-case:" + key)
             if step:
                 sources.extend(step["payload"])
         return sources
 
-    def _allowed_mrns(self, mrn):
-        visits, _ = self._visits(mrn)
+    def _allowed_mrns(self, mrn, *, visits=None):
+        if visits is None:
+            visits, _ = self._visits(mrn)
         allowed = {mrn}
         for raw in visits or []:
             case = model(VisitCase, raw)
@@ -131,8 +137,8 @@ class ReviewHistory:
                 allowed.add(case.mrn)
         return allowed
 
-    def _groups(self, mrn, orders):
-        allowed = self._allowed_mrns(mrn)
+    def _groups(self, mrn, orders, *, visits=None):
+        allowed = self._allowed_mrns(mrn, visits=visits)
         groups = {}
         for order in orders:
             if not isinstance(order, dict) or order.get("mrn") not in allowed:
@@ -153,13 +159,17 @@ class ReviewHistory:
                          "status": order.get("status", ""), "requester": order.get("requester", "")})
         return sorted(rows, key=lambda row: (row["date"], row["name"], row["id"]), reverse=True)
 
-    def order(self, mrn, reference):
-        groups = self._groups(mrn, self._order_sources(mrn))
+    def order(self, mrn, reference, *, cataract=False):
+        if cataract:
+            sources, visits = self.app.analysis.cataract_sources(mrn)
+            groups = self._groups(mrn, sources, visits=visits)
+        else:
+            groups = self._groups(mrn, self._order_sources(mrn))
         if reference not in groups:
             raise ValueError("醫囑不在已核對的病人索引。")
         return groups[reference]
 
-    def _stored(self, mrn, resource, reference):
+    def _stored(self, mrn, resource, reference, *, cataract=False):
         if resource == "scans":
             step = self.store.step(mrn, "scans-history")
             return self.app.scans.history_data(mrn), step["saved_at"] if step else ""
@@ -219,7 +229,7 @@ class ReviewHistory:
                 return step["payload"], step["saved_at"]
             if old:
                 value = old["payload"]
-                return {"id": reference, "order": self._public_orders({reference: self.order(mrn, reference)})[0],
+                return {"id": reference, "order": self._public_orders({reference: self.order(mrn, reference, cataract=cataract)})[0],
                         "details": [], "texts": [{"text": row.get("text", ""), "fields": row.get("fields", {})}
                                                  for row in value.get("texts", [])],
                         "assets": [{key: asset[key] for key in ("digest", "mime", "size") if key in asset}
@@ -231,7 +241,7 @@ class ReviewHistory:
 
     def read(self, values):
         _, mrn, resource, reference = self.scope(values)
-        data, updated = self._stored(mrn, resource, reference)
+        data, updated = self._stored(mrn, resource, reference, cataract=bool(values.get("cohort_id")))
         complete = (all(self.store.step(mrn, "orders-history:" + category) is not None
                         for category in ("*", "OR")) if resource == "orders" else
                     data["history_loaded"] if resource == "scans" else data is not None)
@@ -264,7 +274,7 @@ class ReviewHistory:
         if resource == "scan_asset":
             return {**self.app.scans.download(mrn, reference), "resource": resource, "reference": reference}
         if not task.get("force"):
-            data, _ = self._stored(mrn, resource, reference)
+            data, _ = self._stored(mrn, resource, reference, cataract=bool(task.get("cohort_id")))
             complete = resource != "orders" or all(
                 self.store.step(mrn, "orders-history:" + category) is not None for category in ("*", "OR"))
             if data is not None and complete:
@@ -326,8 +336,15 @@ class ReviewHistory:
 
     def _collect_order_report(self, task):
         mrn, reference = task["mrn"], task["reference"]
-        variants = self.order(mrn, reference)
-        allowed = self._allowed_mrns(mrn)
+        if task.get("cohort_id"):
+            sources, visits = self.app.analysis.cataract_sources(mrn)
+            variants = self._groups(mrn, sources, visits=visits).get(reference)
+            if not variants:
+                raise ValueError("醫囑不在已核對的白內障檢查索引。")
+        else:
+            visits = None
+            variants = self.order(mrn, reference)
+        allowed = self._allowed_mrns(mrn, visits=visits)
         result = {"id": reference, "order": self._public_orders({reference: variants})[0],
                   "details": [], "texts": [], "assets": [], "issues": [], "status": "ready"}
         details = [order.get("detail_ref") for order in variants]
@@ -368,6 +385,8 @@ class ReviewHistory:
                 except (AuthenticationError, StorageError):
                     raise
                 except Exception as exc:
+                    if should_pause(exc):
+                        raise
                     message, code = safe_failure(exc)
                     result["issues"].append({"branch": method, "code": code, "message": message})
 

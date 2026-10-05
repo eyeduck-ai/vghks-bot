@@ -126,6 +126,7 @@ class PatientTagTests(unittest.TestCase):
 
     def test_invalid_bulk_inputs_do_not_partially_save(self):
         tag = self.add_group()
+        category_count = len(self.app.settings.categories)
         initial = self.app.store.library.manual_tags(self.app.settings)
         for payload in ({"mrns": "0000002 姓名", "new_tag": "invalid"},
                         {"mrns": "0000002", "tag_ids": [tag, "missing"]},
@@ -134,5 +135,5 @@ class PatientTagTests(unittest.TestCase):
             with self.subTest(payload=payload), self.assertRaises(ValueError):
                 self.app.patient_tags_update(payload)
         self.assertEqual(self.app.store.library.manual_tags(self.app.settings), initial)
-        self.assertEqual(len(self.app.settings.categories), 3)
+        self.assertEqual(len(self.app.settings.categories), category_count)
         self.assertEqual(ExamSDK.calls, [])

@@ -5,7 +5,9 @@ import hashlib
 import json
 import os
 import re
+import threading
 import uuid
+from contextlib import contextmanager
 
 from .library import encoded
 from .settings import timestamp
@@ -25,6 +27,7 @@ def identifier(value):
 class AnalysisStore:
     def __init__(self, library):
         self.library = library
+        self._status_cache = threading.local()
         self.assets = library.path.parent / "assets"
         self.assets.mkdir(exist_ok=True)
         with library.connect() as db:
@@ -49,7 +52,13 @@ class AnalysisStore:
                 CREATE TABLE IF NOT EXISTS sheet_previews (
                     id TEXT PRIMARY KEY, payload TEXT NOT NULL, updated_at TEXT NOT NULL);
             """)
-            for row in db.execute("SELECT id,payload FROM analysis_runs").fetchall():
+            columns = {row[1] for row in db.execute("PRAGMA table_info(analysis_steps)")}
+            if "assessment" not in columns:
+                db.execute("ALTER TABLE analysis_steps ADD COLUMN assessment TEXT NOT NULL DEFAULT '{}'")
+            from .analysis_metadata import initialize
+
+            initialize(db)
+            for row in db.execute("SELECT id,payload FROM analysis_runs WHERE json_extract(payload,'$.status') IN ('queued','running','cancelling')").fetchall():
                 value = json.loads(row["payload"])
                 if value.get("status") in {"queued", "running", "cancelling"}:
                     value.update(status="interrupted", message="上次中斷，可接續已保存資料。")
@@ -89,27 +98,96 @@ class AnalysisStore:
             raise ValueError("資料已刪除或不存在。")
         return json.loads(row[0])
 
-    def documents(self, table):
+    def documents(self, table, *, cohort_id=None, limit=None, offset=0):
         if table not in {"analysis_cohorts", "analysis_runs", "sheet_previews"}:
             raise ValueError("資料種類不正確。")
         with self.library.connect() as db:
-            return [json.loads(r[0]) for r in db.execute(f"SELECT payload FROM {table} ORDER BY updated_at DESC")]
+            clause, args = (" WHERE json_extract(payload,'$.cohort_id')=?", [cohort_id]) if cohort_id else ("", [])
+            suffix = " LIMIT ? OFFSET ?" if limit is not None else ""
+            if limit is not None:
+                args += [limit, offset]
+            return [json.loads(r[0]) for r in db.execute(f"SELECT payload FROM {table}" + clause + " ORDER BY updated_at DESC" + suffix, args)]
+
+    def run_summaries(self, cohort_id=None):
+        with self.library.connect() as db:
+            where, args = (" WHERE cohort_id=?", (cohort_id,)) if cohort_id else ("", ())
+            return [json.loads(r[0]) for r in db.execute("SELECT payload FROM analysis_run_metadata" + where + " ORDER BY updated_at DESC", args)]
+
+    @contextmanager
+    def status_cache(self, mrns):
+        """Prefetch one consistent cohort snapshot, including file existence."""
+        previous = getattr(self._status_cache, "value", None)
+        if previous is not None:
+            yield
+            return
+        selection = encoded(list(mrns))
+        steps, records, documents, deletions, refs, assets = {}, {}, {}, {}, {}, {}
+        with self.library.connect() as db:
+            for row in db.execute("SELECT * FROM analysis_step_metadata WHERE mrn IN (SELECT value FROM json_each(?))", (selection,)):
+                steps[(row["mrn"], row["key"])] = {**dict(row), "payload": json.loads(row["payload"]), "assessment": json.loads(row["assessment"])}
+            for row in db.execute("SELECT id,mrn,updated_at FROM records WHERE mrn IN (SELECT value FROM json_each(?)) AND id NOT IN (SELECT record_id FROM pending_deletions)", (selection,)):
+                records[row["id"]] = dict(row)
+            tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            if "bot_documents" in tables:
+                for row in db.execute("SELECT kind,id,updated_at FROM bot_documents WHERE kind IN ('visits','profile') AND id IN (SELECT value FROM json_each(?))", (selection,)):
+                    documents[(row["kind"], row["id"])] = row["updated_at"]
+            if "clinical_cache_deletions" in tables:
+                for row in db.execute("SELECT * FROM clinical_cache_deletions WHERE mrn IN (SELECT value FROM json_each(?))", (selection,)):
+                    deletions.setdefault(row["mrn"], []).append((row["category"], row["deleted_at"]))
+            for row in db.execute("SELECT DISTINCT r.mrn,r.digest,a.mime FROM analysis_asset_refs r LEFT JOIN analysis_assets a ON a.digest=r.digest WHERE r.mrn IN (SELECT value FROM json_each(?))", (selection,)):
+                refs.setdefault(row["mrn"], set()).add(row["digest"])
+                sha = row["digest"]
+                if sha not in assets:
+                    exists = bool(re.fullmatch(r"[a-f0-9]{64}", sha) and (self.assets / sha).is_file())
+                    assets[sha] = {"exists": exists, "mime": row["mime"]}
+        self._status_cache.value = {"steps": steps, "records": records, "documents": documents,
+                                    "deletions": deletions, "refs": refs, "assets": assets}
+        try:
+            yield
+        finally:
+            self._status_cache.value = None
+
+    def record_exists(self, mrn, key):
+        cache = getattr(self._status_cache, "value", None)
+        if cache is not None:
+            return cache["records"].get(key, {}).get("mrn") == mrn
+        with self.library.connect() as db:
+            return bool(db.execute("SELECT 1 FROM records WHERE id=? AND mrn=? AND id NOT IN (SELECT record_id FROM pending_deletions)", (key, mrn)).fetchone())
+
+    def cleared(self, mrn):
+        cache = getattr(self._status_cache, "value", None)
+        if cache is not None:
+            return bool(cache["deletions"].get(mrn))
+        with self.library.connect() as db:
+            return bool(db.execute("SELECT 1 FROM clinical_cache_deletions WHERE mrn=?", (mrn,)).fetchone())
 
     def step(self, mrn, key):
+        cache = getattr(self._status_cache, "value", None)
+        if cache is not None:
+            return cache["steps"].get((mrn, key))
         with self.library.connect() as db:
             row = db.execute("SELECT * FROM analysis_steps WHERE mrn=? AND key=?", (mrn, key)).fetchone()
         if row:
-            return {**dict(row), "payload": json.loads(row["payload"])}
+            return {**dict(row), "payload": json.loads(row["payload"]), "assessment": json.loads(row["assessment"])}
         return None
 
     def steps(self, mrn, kind=None):
         with self.library.connect() as db:
             rows = db.execute("SELECT * FROM analysis_steps WHERE mrn=?" + (" AND kind=?" if kind else ""),
                               (mrn, kind) if kind else (mrn,)).fetchall()
-        return [{**dict(r), "payload": json.loads(r["payload"])} for r in rows]
+        return [{**dict(r), "payload": json.loads(r["payload"]), "assessment": json.loads(r["assessment"])} for r in rows]
 
     def patient_revision(self, mrn):
         """A local cache token, including SOAP edits/deletions outside analysis."""
+        cache = getattr(self._status_cache, "value", None)
+        if cache is not None:
+            steps = sorted((key, row["saved_at"]) for (patient, key), row in cache["steps"].items() if patient == mrn)
+            records = sorted((key, row["updated_at"]) for key, row in cache["records"].items() if row["mrn"] == mrn)
+            visits = [(cache["documents"][("visits", mrn)],)] if ("visits", mrn) in cache["documents"] else []
+            profile = [(cache["documents"][("profile", mrn)],)] if ("profile", mrn) in cache["documents"] else []
+            cleared = sorted(cache["deletions"].get(mrn, []))
+            files = [(sha, cache["assets"][sha]["exists"]) for sha in sorted(cache["refs"].get(mrn, []))]
+            return digest([steps, records, visits, profile, cleared, files])
         with self.library.connect() as db:
             steps = [tuple(r) for r in db.execute(
                 "SELECT key,saved_at FROM analysis_steps WHERE mrn=? ORDER BY key", (mrn,))]
@@ -120,12 +198,15 @@ class AnalysisStore:
             visits = ([tuple(r) for r in db.execute(
                 "SELECT updated_at FROM bot_documents WHERE kind='visits' AND id=?", (mrn,))]
                 if "bot_documents" in tables else [])
+            profile = ([tuple(r) for r in db.execute(
+                "SELECT updated_at FROM bot_documents WHERE kind='profile' AND id=?", (mrn,))]
+                if "bot_documents" in tables else [])
             cleared = ([tuple(r) for r in db.execute(
                 "SELECT category,deleted_at FROM clinical_cache_deletions WHERE mrn=? ORDER BY category", (mrn,))]
                 if "clinical_cache_deletions" in tables else [])
             files = [r[0] for r in db.execute(
                 "SELECT DISTINCT digest FROM analysis_asset_refs WHERE mrn=? ORDER BY digest", (mrn,))]
-        return digest([steps, records, visits, cleared,
+        return digest([steps, records, visits, profile, cleared,
                        [(sha, bool(isinstance(sha, str) and re.fullmatch(r"[a-f0-9]{64}", sha)
                                    and (self.assets / sha).is_file())) for sha in files]])
 
@@ -137,13 +218,13 @@ class AnalysisStore:
             value["payload"] = json.loads(value["payload"])
         return {"steps": self.steps(mrn), "versions": versions}
 
-    def save_step(self, mrn, key, kind, payload, account):
+    def save_step(self, mrn, key, kind, payload, account, *, assessment=None):
         content, saved = encoded(payload), timestamp()
         with self.library.connect() as db:
             db.execute("INSERT OR IGNORE INTO analysis_versions VALUES(?,?,?,?,?)",
                        (mrn, key, digest(payload), content, saved))
-            db.execute("INSERT OR REPLACE INTO analysis_steps VALUES(?,?,?,?,?,?)",
-                       (mrn, key, kind, content, saved, account))
+            db.execute("INSERT OR REPLACE INTO analysis_steps(mrn,key,kind,payload,saved_at,account,assessment) VALUES(?,?,?,?,?,?,?)",
+                       (mrn, key, kind, content, saved, account, encoded(assessment or {})))
             if kind == "numeric":
                 self._save_numeric_structure(db, mrn, key, payload, saved, account)
 
@@ -158,7 +239,7 @@ class AnalysisStore:
 
     def _save_numeric_structure(self, db, mrn, key, payload, saved, account):
         value = self._numeric_structure(key, payload, saved)
-        db.execute("INSERT OR REPLACE INTO analysis_steps VALUES(?,?,?,?,?,?)",
+        db.execute("INSERT OR REPLACE INTO analysis_steps(mrn,key,kind,payload,saved_at,account) VALUES(?,?,?,?,?,?)",
                    (mrn, "numeric-structured:" + key, "numeric_structured", encoded(value), saved, account))
         return value
 
@@ -177,7 +258,7 @@ class AnalysisStore:
                 current = db.execute("SELECT payload FROM analysis_steps WHERE mrn=? AND key=?", (mrn, key)).fetchone()
                 # A concurrent refresh/deletion must never restore a stale projection.
                 if current and digest(json.loads(current[0])) == expected:
-                    db.execute("INSERT OR REPLACE INTO analysis_steps VALUES(?,?,?,?,?,?)",
+                    db.execute("INSERT OR REPLACE INTO analysis_steps(mrn,key,kind,payload,saved_at,account) VALUES(?,?,?,?,?,?)",
                                (mrn, "numeric-structured:" + key, "numeric_structured", encoded(value),
                                 step["saved_at"], step["account"]))
         return value["rows"]
@@ -221,6 +302,12 @@ class AnalysisStore:
     def asset(self, sha):
         if not isinstance(sha, str) or not re.fullmatch(r"[a-f0-9]{64}", sha):
             raise ValueError("附件代碼不正確。")
+        cache = getattr(self._status_cache, "value", None)
+        if cache is not None:
+            value = cache["assets"].get(sha)
+            if value and value["exists"] and value["mime"]:
+                return self.assets / sha, value["mime"]
+            raise ValueError("附件已刪除或尚未取得。")
         with self.library.connect() as db:
             row = db.execute("""SELECT * FROM analysis_assets WHERE digest=?
                 AND EXISTS(SELECT 1 FROM analysis_asset_refs WHERE digest=?)""", (sha, sha)).fetchone()

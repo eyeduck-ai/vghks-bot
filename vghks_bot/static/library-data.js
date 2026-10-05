@@ -1,6 +1,6 @@
 "use strict";
 window.LibraryDataUI = (() => {
-  let mode = "soap", data = null, sequence = 0;
+  let mode = "soap", data = null, sequence = 0, offset = 0, queryTimer = 0;
   const patients = new Set(), lists = new Set();
   const page = document.querySelector("#libraryPage");
   const tabs = document.createElement("nav"); tabs.className = "library-data-tabs";
@@ -17,7 +17,7 @@ window.LibraryDataUI = (() => {
   const buttons = new Map();
   for (const [key, label] of [["soap", "SOAP 病歷"], ["patients", "病人檢查快取"], ["lists", "門診掛號清單"]]) {
     const control = document.createElement("button"); control.type = "button"; control.textContent = label;
-    control.addEventListener("click", () => act(async () => {mode = key; display(); await loadLibrary();}));
+    control.addEventListener("click", () => act(async () => {mode = key; offset=0; display(); await loadLibrary();}));
     buttons.set(key, control); tabs.append(control);
   }
   const bytes = value => value >= 1048576 ? (value / 1048576).toFixed(1) + " MB" : Math.ceil(value / 1024) + " KB";
@@ -52,10 +52,14 @@ window.LibraryDataUI = (() => {
       })));
       if (!data.lists.length) content.append(empty("沒有已保存的門診掛號清單。"));
     }
+    const total=mode==="lists"?data.list_total:data.total,pager=node("div",undefined,"pagination");
+    const previous=btn("上一頁",()=>{offset=Math.max(0,offset-40);return load();}),next=btn("下一頁",()=>{offset+=40;return load();});
+    previous.disabled=offset===0;next.disabled=offset+40>=total;
+    pager.append(previous,node("span",`${total?offset+1:0}–${Math.min(offset+40,total)} / ${total} 筆`),next);content.append(pager);
   }
   async function load() {
     const current = ++sequence;
-    const result = await api("/library/data/read", {q: query.value});
+    const result = await api("/library/data/read", {q: mode==="patients"?query.value:"",limit:40,offset});
     if (current !== sequence) return;
     data = result; render(); display();
   }
@@ -76,7 +80,7 @@ window.LibraryDataUI = (() => {
     const preview = await api("/library/data/preview-delete", request);
     if(targetAccount!==account)return;
     const names = new Map(data.categories.map(row => [row.id, row.name]));
-    const people = data.patients.filter(row => preview.mrns.includes(row.mrn)).map(row => `${row.name || "姓名未提供"}（${row.mrn}）`).join("、");
+    const people = `${preview.mrns.length} 位病人`;
     const message = preview.lists.length ? `清除 ${preview.lists.length} 天門診掛號清單快取？` :
       `清除 ${people} 的 ${preview.categories.map(key => names.get(key)).join("、")}？\n${preview.records} 筆資料、${preview.versions} 個版本；釋放 ${preview.attachments} 份附件（${bytes(preview.attachment_bytes)}）。`;
     const cascade = preview.cascaded.length ? "\n連帶清除：" + preview.cascaded.map(key => names.get(key)).join("、") + "。" : "";
@@ -86,8 +90,8 @@ window.LibraryDataUI = (() => {
     patients.clear(); lists.clear(); await changed(deleted); await load(); say("勾選資料已清除。");
   }));
   refreshButton.addEventListener("click", () => act(load));
-  query.addEventListener("input", () => act(load));
+  query.addEventListener("input", () => {clearTimeout(queryTimer);offset=0;queryTimer=setTimeout(()=>act(load),250);});
   window.addEventListener("clinicaldatacleared", () => {data = null;});
   display();
-  return {get mode(){return mode;}, load, changed, reset(){sequence++; patients.clear(); lists.clear(); data=null; query.value="";for(const input of categories.querySelectorAll("input"))input.checked=false;}};
+  return {get mode(){return mode;}, load, changed, reset(){sequence++; clearTimeout(queryTimer);offset=0;patients.clear(); lists.clear(); data=null; query.value="";for(const input of categories.querySelectorAll("input"))input.checked=false;}};
 })();

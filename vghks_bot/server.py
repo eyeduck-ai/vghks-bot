@@ -42,7 +42,8 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_):
         pass
 
-    def reply(self, status, payload, *, mime="application/json; charset=utf-8", cookie=None, filename=None):
+    def reply(self, status, payload, *, mime="application/json; charset=utf-8", cookie=None,
+              filename=None, cache_control="no-store"):
         if self.command == "POST" and not getattr(self, "_body_consumed", False):
             # Closing a Windows socket with an unread POST body can reset the
             # response before the browser receives a 401/403. Discard bounded
@@ -61,7 +62,7 @@ class Handler(BaseHTTPRequestHandler):
         if filename:
             self.send_header("Content-Disposition", disposition(filename, download=True))
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
+        self.send_header("Cache-Control", cache_control)
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "no-referrer")
@@ -132,24 +133,29 @@ class Handler(BaseHTTPRequestHandler):
         if path in files:
             filename, mime = files[path]
             self.reply(200, (STATIC / filename).read_bytes(), mime=mime)
-        elif path == "/api/analysis/asset":
+        elif path.startswith("/api/"):
             if self.authorized():
-                try:
-                    params = parse_qs(urlsplit(self.path).query)
-                    file, mime = self.server.application.analysis.store.asset(params.get("id", [""])[0])
-                    self.asset_reply(file, mime, filename=download_filename(params.get("name", ["附件"])[0], mime),
-                                     download=params.get("download", [""])[0] == "1")
-                except (ValueError, OSError):
-                    self.reply(404, {"error": "附件不存在或已刪除。"})
+                params = {key: value[0] for key, value in parse_qs(urlsplit(self.path).query).items()}
+                self.dispatch_get(self.server.application, path, params)
+        else:
+            self.reply(404, {"error": "找不到此頁面。"})
+
+    def dispatch_get(self, app, path, params):
+        if path == "/api/analysis/asset":
+            try:
+                file, mime = app.analysis.store.asset(params.get("id", ""))
+                self.asset_reply(file, mime, filename=download_filename(params.get("name", "附件"), mime),
+                                 download=params.get("download", "") == "1")
+            except (ValueError, OSError):
+                self.reply(404, {"error": "附件不存在或已刪除。"})
+        elif path == "/api/status":
+            self.reply(200, app.status(params))
         elif path in {"/api/bootstrap", "/api/history", "/api/run"}:
-            if self.authorized():
-                app = self.server.application
-                params = parse_qs(urlsplit(self.path).query)
-                try:
-                    value = app.bootstrap() if path == "/api/bootstrap" else app.history() if path == "/api/history" else app.snapshot(params.get("id", [""])[0], params.get("revision", [""])[0])
-                    self.reply(200, value)
-                except (ValueError, StorageError):
-                    self.reply(400, {"error": "無法讀取此紀錄，原檔已保留。"})
+            try:
+                value = app.bootstrap() if path == "/api/bootstrap" else app.history(params) if path == "/api/history" else app.snapshot(params.get("id", ""), params.get("revision", ""))
+                self.reply(200, value)
+            except (ValueError, StorageError):
+                self.reply(400, {"error": "無法讀取此紀錄，原檔已保留。"})
         else:
             self.reply(404, {"error": "找不到此頁面。"})
 
@@ -218,64 +224,7 @@ class Handler(BaseHTTPRequestHandler):
         if path != "/api/session" and not self.authorized(mutation=True):
             return
         try:
-            values = self.read_json()
-            if path == "/api/session":
-                token = values.get("token")
-                if not isinstance(token, str) or not hmac.compare_digest(token, app.launch_token):
-                    self.reply(401, {"error": "啟動連結已失效，請重新執行 EXE。"})
-                    return
-                self.reply(200, {"ok": True}, cookie=f"opd_session={app.session_token}; HttpOnly; SameSite=Strict; Path=/")
-            elif path == "/api/settings":
-                self.reply(200, app.save_settings(values))
-            elif path == "/api/accounts/save":
-                self.reply(200, app.save_accounts(values))
-            elif path == "/api/accounts/delete":
-                self.reply(200, app.delete_account(values.get("id")))
-            elif path == "/api/start":
-                self.reply(202, app.start(values))
-            elif path == "/api/lists/browse":
-                self.reply(202, app.browse(values))
-            elif path == "/api/lists":
-                self.reply(200, app.patient_list(values))
-            elif path == "/api/lists/delete":
-                self.reply(200, app.delete_list(values))
-            elif path == "/api/fetch":
-                self.reply(202, app.fetch_selected(values))
-            elif path == "/api/library/data/read":
-                self.reply(200, app.library_data.read(values))
-            elif path == "/api/library/data/preview-delete":
-                self.reply(200, app.library_data.preview(values))
-            elif path == "/api/library/data/delete":
-                self.reply(200, app.library_data.delete(values))
-            elif path == "/api/library/search":
-                self.reply(200, app.library_search(values))
-            elif path == "/api/library/record":
-                self.reply(200, app.library_record(values.get("id")))
-            elif path == "/api/library/delete":
-                self.reply(200, app.delete_records(values))
-            elif path == "/api/patient-tags/search":
-                self.reply(200, app.tag_patients(values))
-            elif path == "/api/patient-tags/update":
-                self.reply(200, app.patient_tags_update(values))
-            elif path == "/api/analysis/export/read":
-                from .analysis_export import listing
-                self.reply(200, listing(app.analysis, values))
-            elif path == "/api/analysis/export":
-                from .analysis_export import archive
-                with archive(app.analysis, values) as (file, name):
-                    self.asset_reply(file, "application/zip", filename=name, download=True)
-            elif path.startswith("/api/analysis/"):
-                self.reply(200, app.analysis.handle(path.removeprefix("/api/analysis/"), values))
-            elif path == "/api/reclassify":
-                self.reply(202, app.reclassify(values.get("id")))
-            elif path == "/api/stop":
-                self.reply(200, app.stop(values.get("id")))
-            elif path == "/api/shutdown":
-                app.request_close()
-                self.reply(200, {"ok": True})
-                threading.Thread(target=self.server.shutdown, daemon=True).start()
-            else:
-                self.reply(404, {"error": "找不到此功能。"})
+            self.dispatch_post(app, path, self.read_json())
         except BusyError as exc:
             self.reply(409, {"error": str(exc)})
         except SheetError as exc:
@@ -287,3 +236,62 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(400, {"error": message})
         except Exception:
             self.reply(500, {"error": "本機程式發生錯誤，請重新啟動。"})
+
+    def dispatch_post(self, app, path, values):
+        if path == "/api/session":
+            token = values.get("token")
+            if not isinstance(token, str) or not hmac.compare_digest(token, app.launch_token):
+                self.reply(401, {"error": "啟動連結已失效，請重新執行 EXE。"})
+                return
+            self.reply(200, {"ok": True}, cookie=f"opd_session={app.session_token}; HttpOnly; SameSite=Strict; Path=/")
+        elif path == "/api/settings":
+            self.reply(200, app.save_settings(values))
+        elif path == "/api/accounts/save":
+            self.reply(200, app.save_accounts(values))
+        elif path == "/api/accounts/delete":
+            self.reply(200, app.delete_account(values.get("id")))
+        elif path == "/api/start":
+            self.reply(202, app.start(values))
+        elif path == "/api/lists/browse":
+            self.reply(202, app.browse(values))
+        elif path == "/api/lists":
+            self.reply(200, app.patient_list(values))
+        elif path == "/api/lists/delete":
+            self.reply(200, app.delete_list(values))
+        elif path == "/api/fetch":
+            self.reply(202, app.fetch_selected(values))
+        elif path == "/api/library/data/read":
+            self.reply(200, app.library_data.read(values))
+        elif path == "/api/library/data/preview-delete":
+            self.reply(200, app.library_data.preview(values))
+        elif path == "/api/library/data/delete":
+            self.reply(200, app.library_data.delete(values))
+        elif path == "/api/library/search":
+            self.reply(200, app.library_search(values))
+        elif path == "/api/library/record":
+            self.reply(200, app.library_record(values.get("id")))
+        elif path == "/api/library/delete":
+            self.reply(200, app.delete_records(values))
+        elif path == "/api/patient-tags/search":
+            self.reply(200, app.tag_patients(values))
+        elif path == "/api/patient-tags/update":
+            self.reply(200, app.patient_tags_update(values))
+        elif path == "/api/analysis/export/read":
+            from .analysis_export import listing
+            self.reply(200, listing(app.analysis, values))
+        elif path == "/api/analysis/export":
+            from .analysis_export import archive
+            with archive(app.analysis, values) as (file, name):
+                self.asset_reply(file, "application/zip", filename=name, download=True)
+        elif path.startswith("/api/analysis/"):
+            self.reply(200, app.analysis.handle(path.removeprefix("/api/analysis/"), values))
+        elif path == "/api/reclassify":
+            self.reply(202, app.reclassify(values.get("id")))
+        elif path == "/api/stop":
+            self.reply(200, app.stop(values.get("id")))
+        elif path == "/api/shutdown":
+            app.request_close()
+            self.reply(200, {"ok": True})
+            threading.Thread(target=self.server.shutdown, daemon=True).start()
+        else:
+            self.reply(404, {"error": "找不到此功能。"})

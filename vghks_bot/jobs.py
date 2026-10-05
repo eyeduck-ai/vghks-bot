@@ -14,6 +14,7 @@ from vghks_sdk import __version__ as sdk_version
 
 from . import __version__
 from .clinical_identity import classify_opd_registration
+from .connection_state import should_pause
 from .library import current_cache, registration_id
 from .scanner import Cancelled, ScanState, create_sdk, run_scan, safe_failure
 from .settings import Account, Settings, parse_mrns, parse_range, today
@@ -51,6 +52,9 @@ class Application:
         self.csrf_token = secrets.token_urlsafe(32)
         self.states = {}
         self.queue = queue.Queue()
+        from .task_manager import TaskManager
+
+        self.task_manager = TaskManager(self.queue)
         self.idle = threading.Event()
         self.idle.set()
         self.closing = False
@@ -82,12 +86,25 @@ class Application:
                 "library": self.store.library.stats(),
             }
 
-    def history(self):
+    def history(self, values=None):
+        from .pagination import slice_rows
+
         with self.lock:
             rows = {r["id"]: r for r in self.store.summaries()}
             rows.update({key: state.snapshot(detail=False) for key, state in self.states.items()})
             self.analysis.label_history(rows.values())
-            return {"runs": sorted(rows.values(), key=lambda r: (r["created_at"], r["id"]), reverse=True), "warnings": self.store.warnings}
+            ordered = sorted(rows.values(), key=lambda r: (r["created_at"], r["id"]), reverse=True)
+            return {"runs": slice_rows(ordered, values or {}), "total": len(ordered), "warnings": self.store.warnings}
+
+    def status(self, values):
+        watched = list(dict.fromkeys(str(values.get("run", "")).split(",")))[:20]
+        with self.lock:
+            rows = {key: state.snapshot(detail=False) for key, state in self.states.items()}
+        for key in watched:
+            if key and key not in rows:
+                rows[key] = self.store.metadata(key)
+        return {"runs": list(rows.values()), "tasks": [],
+                "active_count": sum(row["status"] in ACTIVE for row in rows.values()), "warnings": self.store.warnings}
 
     def snapshot(self, run_id, revision=""):
         with self.lock:
@@ -196,6 +213,10 @@ class Application:
         return force
 
     def _enqueue_workflows(self, prepared):
+        with self.task_manager.admission(len(prepared)):
+            return self._enqueue_prepared(prepared)
+
+    def _enqueue_prepared(self, prepared):
         jobs = []
         try:
             for account, start, end, rows, force in prepared:
@@ -357,7 +378,7 @@ class Application:
         keys = values.get("account_ids")
         if not isinstance(keys, list) or not keys or len(keys) > 50 or any(not isinstance(k, str) for k in keys) or len(set(keys)) != len(keys):
             raise ValueError("請選擇要查詢的帳號。")
-        with self.lock:
+        with self.lock, self.task_manager.admission(len(keys)):
             self._available()
             accounts = []
             for key in keys:
@@ -390,7 +411,7 @@ class Application:
             return {"run_ids": [s.data["id"] for s, _, _ in jobs]}
 
     def reclassify(self, run_id):
-        with self.lock:
+        with self.lock, self.task_manager.admission():
             self._available()
             source = self.snapshot(run_id)
             if source["status"] in ACTIVE:
@@ -430,7 +451,7 @@ class Application:
                 break
             state, settings, source = job
             try:
-                context = self.gateway.task_context(state.data["id"], (source or {}).get("bot_task", {}).get("kind", state.data.get("kind", ""))) if hasattr(self, "gateway") else nullcontext()
+                context = self.gateway.task_context(state.data["id"], (source or {}).get("bot_task", {}).get("kind", state.data.get("kind", "")), state.cancel) if hasattr(self, "gateway") else nullcontext()
                 with context:
                     if source and source.get("bot_task"):
                         self.review.execute(state, source["bot_task"])
@@ -454,7 +475,7 @@ class Application:
                 try:
                     message, code = safe_failure(exc)
                     state.issue("查詢", message, code=code)
-                    state.update(status="failed", message=message)
+                    state.update(status="paused" if should_pause(exc) else "failed", message=message)
                 except StorageError:
                     self._storage_failure(state)
             finally:
@@ -490,16 +511,28 @@ class Application:
                 with state.lock:
                     if state.data["status"] in ACTIVE:
                         state.cancel.set()
+                        queued = self.task_manager.remove_queued(run_id)
+                        if queued is not None:
+                            state.update(status="cancelled", message="已停止，先前資料已保留。")
+                            source = queued[2]
+                            if source and source.get("bot_task"):
+                                self.review.finish(state)
+                            self.analysis.finish(state)
+                            self.states.pop(run_id, None)
+                            if not any(s.data["status"] in ACTIVE for s in self.states.values()):
+                                self.idle.set()
+                            return {"ok": True}
                         state.update(status="cancelling", message="正在停止…")
             return {"ok": True}
 
     def request_close(self):
         self.analysis.cataract_queue.close()
+        self.task_manager.cancel_pending()
         with self.lock:
             if self.closing:
                 return
             self.closing = True
-            for key in self.states:
+            for key in list(self.states):
                 try:
                     self.stop(key)
                 except StorageError:

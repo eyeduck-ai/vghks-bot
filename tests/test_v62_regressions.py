@@ -109,8 +109,8 @@ class ContextTests(unittest.TestCase):
                                                       sdk_managed_prq=True))
         self.assertFalse(AccountGateway._can_recover("orders", "get_order_history", failure,
                                                       sdk_managed_prq=True))
-        self.assertTrue(AccountGateway._can_recover("records", "get_visit_cases", failure))
-        self.assertTrue(AccountGateway._can_recover("patients", "get_registration_history", failure))
+        self.assertFalse(AccountGateway._can_recover("records", "get_visit_cases", failure))
+        self.assertFalse(AccountGateway._can_recover("patients", "get_registration_history", failure))
 
     def test_wrong_header_never_reads_index_and_stops_after_two_attempts(self):
         sdk, calls = self.runtime(["TEST002", "TEST002"], [])
@@ -256,6 +256,8 @@ class WorkspaceRegressions(unittest.TestCase):
     def test_schedule_discovers_new_cases_with_no_pending_case(self):
         with patch.object(self.work.review, "start") as start:
             self.work.approvals.tracker.schedule()
+            start.assert_not_called()
+            self.work.approvals.tracker.enter()
         start.assert_called_once_with({"kind": "approval_sync", "automatic": True})
         self.task(kind="approval_sync")
         with patch.object(self.work.review, "start") as start:

@@ -8,3 +8,4 @@ details{margin:6px 0}summary{cursor:pointer}.soap-section{padding:6px 0}table{wi
 @media print{body,main{background:#fff}main{max-width:none;padding:0}nav,.cataract-eye-picker,.export-files,.export-preview{display:none}h2,h3,h4{break-after:avoid}tr{break-inside:avoid}a{color:inherit}.soap-original,.cataract-raw-group{display:none}}
 
 .cataract-numeric-table tr.measurement-continuation td{border-bottom:0}.cataract-numeric-table tr.measurement-end td{border-bottom:1px solid #d4e0dd}.cataract-numeric-table td[rowspan]{vertical-align:top}.cataract-numeric-table strong{font-weight:600}
+.measurement-label{display:inline-block;padding:0 3px;border-radius:3px;background:#e6efed;color:#3b615b;font-size:.9em;font-weight:600;line-height:1.45;white-space:nowrap;vertical-align:baseline}

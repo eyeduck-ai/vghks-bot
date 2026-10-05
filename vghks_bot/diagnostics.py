@@ -2,23 +2,24 @@
 import hashlib
 import io
 import json
+import platform
 import re
-import threading
+import sys
 import zipfile
 from dataclasses import asdict
 from pathlib import Path
 from traceback import extract_tb
-from urllib.parse import urlsplit
 
 from vghks_sdk import __version__ as sdk_version
-from vghks_sdk.core.diagnostics import DiagnosticRecorder
 from vghks_sdk.core.errors import error_info
 
 from . import __version__
+from .debug_trace import TraceRecorder
 from .settings import timestamp
 
 PHASE_NAMES = {
     "auth.check": "登入與連線檢查", "auth.login": "登入", "auth.reconnect": "重新連線",
+    "patients.get_demographics": "病人基本資料", "patients.resolve_identity": "病人身分核對",
     "records.get_visit_cases": "就診索引", "records.get_soap": "SOAP 病歷",
     "records.get_numeric_history": "歷年數值報告", "records.get_numeric_report": "該次數值報告",
     "orders.get_order_history": "歷年醫囑索引", "orders.get_case_orders": "該次醫囑索引",
@@ -37,93 +38,6 @@ _PARSER_VARIABLES = {"orderStr", "qrcodeStr", "mydate", "rcpDt", "orspDept",
                      "rtNameStr", "freqnStr", "argfileStr"}
 _JS_TOKENS = re.compile(r"'(?:\\.|[^'\\])*'|\"(?:\\.|[^\"\\])*\"|`(?:\\.|[^`\\])*`|"
                         r"[\w$]+|\s+|.", re.DOTALL)
-_ENDPOINTS = {"/PRQWeb/QueryOrderResult.do", "/PRQWeb/QueryOrderDetail.do",
-              "/PRQWeb/QueryReportByOrder.do", "/PRQWeb/QueryBillingSOAP.do",
-              "/PRQWeb/QueryCaseList.do", "/PRQWeb/QueryCaseDetail.do",
-              "/PRQWeb/QueryPatientRecord.do", "/PRQWeb/QueryResNumCenter.do"}
-_CAPTURE_OPERATIONS = {"get_order_history", "get_case_orders", "get_order_report", "get_order_detail",
-                       "get_soap", "get_numeric_history", "get_numeric_report", "get_visit_cases",
-                       "get_upload_history", "get_scanned_records"}
-
-
-class TraceRecorder(DiagnosticRecorder):
-    """Keep SDK traces redacted; store clinical pages separately on parse failure."""
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.http_local = threading.local()
-        self.response_encoding = "auto"
-        self.contains_medical_response = False
-
-    def start_operation(self, *, name, app_key):
-        operation_id = super().start_operation(name=name, app_key=app_key)
-        self.http_local.current = {"operation": name, "operation_id": operation_id}
-        self.http_local.failure = {}
-        return operation_id
-
-    def record_http_request(self, **values):
-        request_id = super().record_http_request(**values)
-        current = getattr(self.http_local, "current", {})
-        if current:
-            path = urlsplit(values["url"]).path
-            self.http_local.current = {"operation": current["operation"], "operation_id": current["operation_id"],
-                                       "request_id": request_id, "attempt": values["attempt"],
-                                       "endpoint_path": path if path in _ENDPOINTS else ""}
-        return request_id
-
-    def record_http_response(self, **values):
-        super().record_http_response(**values)
-        current = getattr(self.http_local, "current", {})
-        if current.get("request_id") == values["request_id"]:
-            response = values["response"]
-            current.update(http_status=int(response.status_code), response_bytes=len(response.content or b""),
-                           elapsed_ms=round(max(0, values["elapsed_seconds"]) * 1000, 1))
-            if current["operation"] in _CAPTURE_OPERATIONS:
-                current["_response"] = response.content or b""
-                current["_content_type"] = response.headers.get("Content-Type", "")
-
-    def finish_operation(self, *, operation_id, name, status, exc=None):
-        super().finish_operation(operation_id=operation_id, name=name, status=status, exc=exc)
-        if exc is not None:
-            current = getattr(self.http_local, "current", {})
-            failure = {k: value for k, value in current.items() if not k.startswith("_")}
-            if error_info(exc).category == "PARSE" and "_response" in current:
-                from .encoding import decode_response
-
-                raw = current["_response"]
-                source = decode_response(raw, current.get("_content_type", ""), self.response_encoding).encode("utf-8")
-                files = []
-                try:
-                    for suffix, content in (("bin", raw), ("html", source)):
-                        name = f"response-{operation_id}-{current['request_id']}.{suffix}"
-                        target = self.directory / name
-                        temporary = self.directory / (name + ".tmp")
-                        temporary.write_bytes(content)
-                        temporary.replace(target)
-                        files.append({"name": name, "sha256": hashlib.sha256(content).hexdigest(),
-                                      "size_bytes": len(content)})
-                    failure["evidence"] = {"files": files, "contains_medical_values": True,
-                                           "source_encoding": "utf-8", "complete": True}
-                    self.contains_medical_response = True
-                except (OSError, ValueError):
-                    failure["capture_error"] = "RAW_EVIDENCE_SAVE_FAILED"
-            self.http_local.failure = {**failure, "error_code": error_info(exc).code}
-        self.http_local.current = {}
-
-    def failure_transport(self, exc):
-        context = getattr(self.http_local, "failure", {})
-        return {k: value for k, value in context.items() if k != "error_code"} if context.get("error_code") == error_info(exc).code else {}
-
-    def finalize(self, **values):
-        super().finalize(**values)
-        if self.contains_medical_response:
-            summary = json.loads(self.summary_path.read_text(encoding="utf-8"))
-            summary.update(contains_raw_request_or_response=True, contains_clinical_response=True)
-            from .storage import atomic_json
-
-            atomic_json(self.summary_path, summary)
-
-
 def analysis_query_context(key, kind):
     """Only store known query types; hashed report keys remain separate identifiers."""
     if key in {"orders-history:*", "orders-history:OR"}:
@@ -193,7 +107,9 @@ def _parser_details(exc):
 
 
 def failure_details(exc):
-    return {**asdict(error_info(exc)), "exception_type": type(exc).__name__,
+    from .connection_state import failure_state
+
+    return {**asdict(error_info(exc)), **failure_state(exc), "exception_type": type(exc).__name__,
             "reason": JS_REASONS.get(error_info(exc).code, ""), "parser_context": _parser_details(exc),
             "stack": [{"file": Path(frame.filename).name, "function": frame.name, "line": frame.lineno}
                       for frame in extract_tb(exc.__traceback__)[-10:]]}
@@ -201,17 +117,27 @@ def failure_details(exc):
 
 def failure_summary(row):
     error = row.get("error") or {}
-    code = error.get("code") or row.get("code", "")
+    outcome = row.get("outcome") or error
+    code = outcome.get("code") or row.get("code", "")
     query = row.get("query") or analysis_query_context(row.get("key", ""), row.get("stage", ""))
     phase = row.get("phase") or query.get("phase", "")
     label = query.get("label") or PHASE_NAMES.get(phase, STAGE_NAMES.get(row.get("stage"), row.get("stage") or phase))
     if phase == "orders.get_order_history" and not query.get("category"):
         label = "歷年醫囑索引 · 查詢類別未記錄"
-    category = error.get("category", "")
-    reason = JS_REASONS.get(code) or error.get("reason") or row.get("message") or {
+    from .patient_lookup import MESSAGES
+
+    category = outcome.get("category", "")
+    from .connection_state import failure_message, failure_state, stored_error_info
+
+    info = stored_error_info({**outcome, "code": code, "category": category})
+    decision = failure_state(info)
+    reason = MESSAGES.get(code) or JS_REASONS.get(code) or error.get("reason") or row.get("message") or {
         "PARSE": "院方回應內容無法由 SDK 確認。", "NETWORK": "院內連線中斷或逾時。",
         "HTTP": "院方回應 HTTP 錯誤。", "AUTHENTICATION": "登入或授權檢查未通過。",
+        "AUTHORIZATION": "院方未授權此帳號讀取資料。", "NOT_FOUND": "回應未包含可核對的資料，需確認查詢條件。",
     }.get(category, "未保存更具體的原因，請核對錯誤碼與程式位置。")
+    if category in {"AUTHENTICATION", "NETWORK", "HTTP", "AUTHORIZATION"}:
+        reason = failure_message(info)
     index_failure = phase == "orders.get_order_history"
     impact = ("這份歷年醫囑索引未確認，醫囑清單可能不完整；已保存的 SOAP、數值、報告與附件仍可檢閱。"
               if index_failure else "此項讀取未完成；其他已成功保存的資料保留。")
@@ -219,10 +145,28 @@ def failure_summary(row):
               if code in JS_REASONS else
               "恢復院內連線後可續跑；已保存資料會優先重用。" if category in {"NETWORK", "HTTP", "AUTHENTICATION"} else
               "核對錯誤碼及程式位置後續跑；若仍失敗，可匯出 DEBUG 提供查核。")
+    if code == "PATIENT_NOT_FOUND":
+        action = "請核對病歷號及院區；院內登入與基本資料查詢已重新確認。"
+    elif decision["action"] == "password_change":
+        action = "先至院方入口變更密碼，再以新密碼重新連線及續跑；已保存資料保留。"
+    elif decision["action"] == "credentials":
+        action = "確認此帳號的登入資料及院方限制後重新連線，再續跑未完成查詢。"
+    elif decision["action"] == "network":
+        action = "先恢復院內網路、VPN 或連線設定，再重新連線及續跑；網路錯誤不代表密碼錯誤。"
+    elif category == "AUTHORIZATION":
+        action = "請確認此帳號的院內讀取權限，再重試查詢。"
+    if row.get("recovered") and "reconnected" in row:
+        reason = "查詢曾失敗；已確認登入並重新取得正確病人基本資料。"
+        action = "基本資料已保存，可繼續使用；此紀錄保留供查核。"
+    elif row.get("recovered"):
+        reason = "查詢曾發生異常，後續重試或連線恢復後已取得結果。"
+        action = "可繼續使用；詳細失敗與恢復過程保留於 DEBUG。"
     stack = error.get("stack") or []
     transport = row.get("transport") or {}
     return {"id": row.get("id", ""), "mrn": row.get("mrn", ""), "phase": phase, "label": label or "未記錄階段",
             "query": query, "code": code, "category": category, "reason": reason, "impact": impact,
+            "root_cause": decision["root_cause"], "error_phase": info.phase,
+            "retry_safe": info.retry_safe, "retry_recommended": info.retry_recommended,
             "next_step": action, "recovered": bool(row.get("recovered")), "recorded_at": row.get("recorded_at", ""),
             "parser_context": error.get("parser_context") or {}, "location": stack[-1] if stack else {},
             "detail_note": "未保存確切的 JavaScript 指定欄位或語法結構，無法從這份紀錄還原。"
@@ -277,7 +221,7 @@ class Diagnostics:
         return self.save({"task_id": task_id, "mrn": mrn, "phase": phase, "recovered": False,
                           "error": failure_details(exc), **values})
 
-    def query(self, values):
+    def query(self, values, *, export=False):
         mrn, task_id, session_id = (values.get(key, "") for key in ("mrn", "task_id", "session_id"))
         if any(not isinstance(value, str) or len(value) > 100 for value in (mrn, task_id, session_id)) or not (mrn or task_id or session_id):
             raise ValueError("請指定病歷號、任務或 SDK 工作階段。")
@@ -306,31 +250,42 @@ class Diagnostics:
                             for issue in run.get("issues", []) if not mrn or issue.get("mrn") == mrn]
                 self.app.analysis.label_history([task])
         events = self.db.sdk_events(task_id=task_id, session_id=session_id) if task_id or session_id else []
-        failures = failure_summaries(rows[:100], attempts, events, include_events=not mrn)
-        return {"items": rows[:100], "total": len(rows), "saved_attempts": attempts,
+        limit = 1000 if export else 100
+        selected = rows[:limit]
+        failures = failure_summaries(selected, attempts, events, include_events=not mrn)
+        return {"items": selected, "total": len(rows), "saved_attempts": attempts,
                 "sdk_events": events, "failures": failures,
                 "task": {k: task[k] for k in ("id", "kind", "name", "analysis_name", "modules", "status", "created_at", "finished_at", "message", "error_code")
                          if k in task} if task else None,
                 "storage": f"accounts/{self.app.account_id}/clinical.sqlite3",
                 "sdk_logs": f"accounts/{self.app.account_id}/diagnostics/",
-                "contains_raw_response": any(row.get("transport", {}).get("evidence", {}).get("files") for row in rows[:100]),
+                "contains_raw_response": any(file.get("name", "").endswith((".bin", ".html"))
+                    for row in selected for file in row.get("transport", {}).get("evidence", {}).get("files", [])),
                 "contains_medical_values": any(row.get("error", {}).get("parser_context", {}).get("expression")
-                                                or row.get("transport", {}).get("evidence", {}).get("files") for row in rows[:100])}
+                    or row.get("transport", {}).get("evidence", {}).get("contains_medical_values") for row in selected)}
 
     def export(self, values):
-        report = self.query(values)
+        report = self.query(values, export=True)
         buffer = io.BytesIO()
-        included, missing, runs = set(), [], set()
+        included, missing, runs = set(), [], {}
+        remaining = 128 * 1024 * 1024
         base = (self.app.store.directory / "diagnostics").resolve()
         with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
             for row in report["items"]:
                 run_id = row.get("sdk_run_id", "")
                 if not isinstance(run_id, str) or not re.fullmatch(r"[a-f0-9]{32}", run_id):
                     continue
-                runs.add(run_id)
+                operations = runs.setdefault(run_id, set())
+                if type(row.get("transport", {}).get("operation_id")) is int:
+                    operations.add(row["transport"]["operation_id"])
+                recovery = row.get("recovery", {})
+                recovery_run = recovery.get("sdk_run_id", "")
+                if isinstance(recovery_run, str) and re.fullmatch(r"[a-f0-9]{32}", recovery_run):
+                    runs.setdefault(recovery_run, set()).update(entry["operation_id"] for entry in
+                        recovery.get("operations", []) if type(entry.get("operation_id")) is int)
                 for file in row.get("transport", {}).get("evidence", {}).get("files", []):
                     name = file.get("name", "")
-                    if not isinstance(name, str) or not re.fullmatch(r"response-\d+-\d+\.(?:html|bin)", name):
+                    if not isinstance(name, str) or not re.fullmatch(r"(?:response-\d+-\d+\.(?:html|bin)|operation-\d+\.jsonl)", name):
                         continue
                     member = f"evidence/{run_id}/{name}"
                     if member in included:
@@ -339,22 +294,54 @@ class Diagnostics:
                     if not path.is_relative_to(base) or not path.is_file():
                         missing.append(member)
                         continue
+                    if path.stat().st_size > remaining:
+                        missing.append(member + "（超過匯出容量上限）")
+                        continue
                     content = path.read_bytes()
                     if hashlib.sha256(content).hexdigest() != file.get("sha256"):
                         missing.append(member + "（內容摘要不符）")
                         continue
                     archive.writestr(member, content)
                     included.add(member)
-            for run_id in sorted(runs):
-                for name in ("diagnostics.jsonl", "summary.json"):
-                    path = (base / run_id / name).resolve()
-                    if path.is_relative_to(base) and path.is_file():
-                        archive.writestr(f"evidence/{run_id}/{name}", path.read_bytes())
-            report["export"] = {"evidence_files": sorted(included), "missing_files": missing}
+                    remaining -= len(content)
+            for run_id, operations in sorted(runs.items()):
+                trace = (base / run_id / "diagnostics.jsonl").resolve()
+                if trace.is_relative_to(base) and trace.is_file():
+                    from .debug_bundle import selected_trace
+
+                    content, truncated = selected_trace(trace, operations, min(remaining, 4 * 1024 * 1024))
+                    archive.writestr(f"evidence/{run_id}/diagnostics.jsonl", content)
+                    remaining -= len(content)
+                    if truncated:
+                        missing.append(f"evidence/{run_id}/diagnostics.jsonl（時序達容量上限）")
+                summary = (base / run_id / "summary.json").resolve()
+                if summary.is_relative_to(base) and summary.is_file() and summary.stat().st_size <= remaining:
+                    content = summary.read_bytes()
+                    archive.writestr(f"evidence/{run_id}/summary.json", content)
+                    remaining -= len(content)
+            from .debug_trace import POLICY
+
+            report["export"] = {"evidence_files": sorted(included), "missing_files": missing,
+                "omitted_diagnostics": report["total"] - len(report["items"]), "recording_policy": POLICY,
+                "incomplete_evidence": [row["id"] for row in report["items"]
+                    if row.get("transport", {}).get("evidence", {}).get("complete") is False]}
+            archive.writestr("sdk-context.json", json.dumps({"recording_policy": POLICY,
+                "export_environment": {"app_version": __version__, "sdk_version": sdk_version,
+                    "python_version": platform.python_version(), "platform": sys.platform,
+                    "architecture": platform.machine(), "frozen": bool(getattr(sys, "frozen", False))},
+                "incidents": [{"diagnostic_id": row["id"], "phase": row.get("phase", ""),
+                    "app_version": row.get("app_version", ""), "sdk_version": row.get("sdk_version", ""),
+                    "sdk_run_id": row.get("sdk_run_id", ""), "transport": row.get("transport", {}),
+                    "recovered": row.get("recovered", False), "recovery": row.get("recovery", {})}
+                    for row in report["items"]]}, ensure_ascii=False, indent=2))
             archive.writestr("debug.json", json.dumps(report, ensure_ascii=False, indent=2))
             archive.writestr("README.txt", "VGHKS-bot DEBUG\n\n"
                 "debug.json：任務、查詢類別、失敗原因、程式位置與出錯表達式。\n"
-                "evidence/：解析失敗時的完整回應 bytes（.bin）、UTF-8 HTML（.html）及 SDK 請求時序。\n"
-                "醫療資料值保留，可將 .html 交給相同版本 SDK 的純解析函式重現問題。\n"
+                "sdk-context.json：程式／SDK／Python 版本、平台、證據限制、操作與請求編號、重連前後的關聯與恢復摘要。\n"
+                "evidence/operation-*.jsonl：失敗、重試或 session 恢復的詳細時序，含 HTTP、轉址、錯誤與頁面結構。\n"
+                "evidence/response-*.bin／.html：失敗回應與必要的前置登入檢查；帳密、token 等會遮罩，可能含醫療資料。\n"
+                "成功查詢平時只保留彙總，成功的臨床回應不另存；恢復後保留精簡操作摘要。\n"
+                "可將 .html 交給相同版本 SDK 的純解析函式重現問題；原始內容不會執行。\n"
+                "遮罩、截斷、容量限制與保存失敗請核對 transport.evidence 及 export，不應將缺少內容視為院方空回應。\n"
                 "只包含目前帳號及所選任務／病人的失敗證據；舊版未保存的內容無法補回。\n")
         return buffer.getvalue()

@@ -120,7 +120,7 @@ class JobTests(unittest.TestCase):
 
         self.app.sdk_factory = factory
         first, second = self.start([self.account("DOC1"),self.account("DOC2")])
-        self.assertEqual(first["status"],"failed")
+        self.assertEqual(first["status"],"paused")
         self.assertEqual(second["status"],"completed")
 
     def test_storage_failure_stops_further_reads_and_preserves_current_soap_in_memory(self):

@@ -4,14 +4,17 @@ from __future__ import annotations
 import hmac
 import re
 import threading
-from types import SimpleNamespace
 from urllib.parse import parse_qs, urlsplit
 
+from . import __version__
+from .activity import search as search_activity
 from .google_sheets import SheetError
 from .jobs import BusyError
+from .request_gate import RequestGate
 from .server import STATIC, Handler, LocalServer
 from .storage import StorageError
 from .surgery_schedule import EBOARD_URL
+from .workbench import snapshot, status
 
 
 class BotServer(LocalServer):
@@ -19,7 +22,7 @@ class BotServer(LocalServer):
         super().__init__(port, application)
         self.RequestHandlerClass = BotHandler
         self.database_manager = database_manager
-        self.api_lock = threading.RLock()
+        self.request_gate = RequestGate()
 
 
 class BotHandler(Handler):
@@ -53,8 +56,14 @@ class BotHandler(Handler):
             self.reply(500, {"error": "操作未完成，已保存資料保留。"})
 
     def do_GET(self):
-        with self.server.api_lock:
+        if not urlsplit(self.path).path.startswith("/api/"):
             self._get()
+            return
+        try:
+            with self.server.request_gate.lease():
+                self._get()
+        except BusyError as exc:
+            self.failure(exc)
 
     def _get(self):
         if not self.local_request():
@@ -72,6 +81,7 @@ class BotHandler(Handler):
                   "/file-compare.css": ("file-compare.css", "text/css; charset=utf-8"),
                   "/adaptive-identifiers.js": ("adaptive-identifiers.js", "text/javascript; charset=utf-8"),
                   "/review-notes.js": ("review-notes.js", "text/javascript; charset=utf-8"),
+                  "/task-activity.js": ("task-activity.js", "text/javascript; charset=utf-8"),
                   "/soap-view.js": ("soap-view.js", "text/javascript; charset=utf-8"),
                   "/bot.css": ("bot.css", "text/css; charset=utf-8"),
                   "/choices.js": ("choices.js", "text/javascript; charset=utf-8"),
@@ -95,7 +105,12 @@ class BotHandler(Handler):
         })
         if url.path in assets:
             name, mime = assets[url.path]
-            self.reply(200, (STATIC / name).read_bytes(), mime=mime)
+            # Versioned UI icons contain no clinical data and can be reused
+            # across patients. HTML, scripts and clinical responses stay fresh.
+            versioned_icon = (mime == "image/svg+xml"
+                              and parse_qs(url.query).get("v") == [__version__])
+            self.reply(200, (STATIC / name).read_bytes(), mime=mime,
+                       cache_control="private, max-age=31536000, immutable" if versioned_icon else "no-store")
             return
         if not url.path.startswith("/api/"):
             return super().do_GET()
@@ -117,38 +132,27 @@ class BotHandler(Handler):
             workspace, path = scoped
             params = {k: v[0] for k, v in parse_qs(url.query).items()}
             if path == "/api/workbench":
-                self.reply(200, {"sets": workspace.review.db.all("set"), "tasks": workspace.review.db.all("task"),
-                    "sdk_sessions": workspace.review.db.sdk_sessions(),
-                    "preferences": workspace.review.preferences(), "categories": workspace.settings.public()["categories"],
-                    "approval_counts": workspace.approvals.tracker.overview()["counts"],
-                    "approval_monitor_enabled": workspace.approvals.tracker.preferences().get("enabled", True),
-                    "draft": workspace.review.db.get("draft", "current", required=False), "online": workspace.gateway.online,
-                    "offline_mode": workspace.offline_mode, "recovery_count": workspace.gateway.recovery_count})
+                self.reply(200, snapshot(workspace, compact=params.get("compact") == "1"))
+            elif path == "/api/status":
+                self.reply(200, status(workspace, params.get("watch", "").split(","), params.get("run", "")))
+            elif path == "/api/activity":
+                self.reply(200, search_activity(workspace, params))
             elif path == "/api/tasks/detail":
-                self.reply(200, workspace.review.task(params.get("id")))
+                self.reply(200, workspace.review.task(params.get("id"), summary=params.get("summary") == "1"))
             elif path == "/api/reviews/diagnostics/export":
                 self.reply(200, workspace.diagnostics.export(params), mime="application/zip",
                            filename="VGHKS-debug.zip")
             else:
-                self.delegate(workspace, path + ("?" + url.query if url.query else ""), "GET")
+                self.dispatch_get(workspace, path, params)
         except Exception as exc:
             self.failure(exc)
 
-    def delegate(self, workspace, path, method):
-        original_server, original_path = self.server, self.path
-        try:
-            self.server = SimpleNamespace(application=workspace, origin=original_server.origin, shutdown=original_server.shutdown)
-            self.path = path
-            if method == "GET":
-                super().do_GET()
-            else:
-                super().do_POST()
-        finally:
-            self.server, self.path = original_server, original_path
-
     def do_POST(self):
-        with self.server.api_lock:
-            self._post()
+        try:
+            with self.server.request_gate.lease(exclusive=urlsplit(self.path).path.startswith("/api/databases/")):
+                self._post()
+        except BusyError as exc:
+            self.failure(exc)
 
     def _post(self):
         if not self.local_request():
@@ -176,17 +180,21 @@ class BotHandler(Handler):
                     "/api/reviews/results", "/api/reviews/history/read", "/api/reviews/notes/read", "/api/extensions/read", "/api/analysis/results", "/api/analysis/raw",
                     "/api/analysis/google", "/api/analysis/cataract/status", "/api/analysis/surgery/candidates", "/api/analysis/surgery/history",
                     "/api/analysis/export", "/api/analysis/export/read",
-                    "/api/approvals/overview", "/api/approvals/results", "/api/approvals/detail", "/api/approvals/tracking",
+                    "/api/approvals/enter", "/api/approvals/overview", "/api/approvals/results", "/api/approvals/detail", "/api/approvals/tracking",
                     "/api/earnings/overview", "/api/earnings/detail", "/api/earnings/export",
                     "/api/approvals/cases", "/api/approvals/sync-history", "/api/approvals/history",
-                    "/api/reviews/diagnostics", "/api/tools/state", "/api/surgery/overview"}
+                    "/api/reviews/diagnostics", "/api/reviews/notes/search", "/api/activity", "/api/tools/state", "/api/surgery/overview"}
                 if root.read_only and local not in readonly_routes:
                     raise ValueError("目前是唯讀檢閱；請建立可編輯副本後操作。")
+                if local == "/api/reviews/notes/search":
+                    self.reply(200, workspace.review.search_notes(self.read_json()))
+                    return
                 if local == "/api/surgery/overview":
                     self.reply(200, workspace.surgery_schedule.overview(self.read_json()))
                     return
                 if local.startswith("/api/approvals/"):
-                    routes = {"overview": lambda _: workspace.approvals.overview(), "results": workspace.approvals.results,
+                    routes = {"enter": workspace.approvals.tracker.enter,
+                              "overview": lambda _: workspace.approvals.overview(), "results": workspace.approvals.results,
                               "detail": workspace.approvals.detail, "tracking": workspace.approvals.tracker.overview,
                               "tracking/preferences": workspace.approvals.tracker.preferences,
                               "tracking/change": workspace.approvals.tracker.change,
@@ -213,27 +221,22 @@ class BotHandler(Handler):
                     raise ValueError("請先登入此帳號，再使用網路功能。")
                 custom = {"/api/sets/save", "/api/sets/delete", "/api/sets/cohort", "/api/draft/save",
                           "/api/tasks/start", "/api/tasks/stop", "/api/reviews/results", "/api/reviews/history/read",
-                          "/api/reviews/notes/read", "/api/reviews/notes/save", "/api/reviews/reclassify",
+                          "/api/reviews/notes/read", "/api/reviews/notes/save", "/api/reviews/notes/clear", "/api/reviews/reclassify",
                           "/api/reviews/preferences", "/api/accounts/save", "/api/extensions/read"}
                 custom |= {"/api/reviews/diagnostics", "/api/tools/state", "/api/tools/state/save"}
                 if local in {"/api/accounts/delete", "/api/shutdown", "/api/session"}:
                     raise ValueError("此操作需使用帳號入口。")
                 if local not in custom:
-                    self.delegate(workspace, local, "POST")
+                    self.dispatch_post(workspace, local, self.read_json())
                     return
                 values = self.read_json()
                 review = workspace.review
                 if local == "/api/reviews/diagnostics":
                     result = workspace.diagnostics.query(values)
                 elif local == "/api/tools/state":
-                    result = review.db.get("draft", "tools", required=False) or {"modules": {}}
+                    result = review.tool_state()
                 elif local == "/api/tools/state/save":
-                    kind = values.get("module")
-                    if kind not in {"review", "retina", "cataract", "surgery"}:
-                        raise ValueError("工具種類不正確。")
-                    group = review.db.get("set", values.get("set_id")) if values.get("set_id") else None
-                    previous = review.db.get("draft", "tools", required=False) or {"modules": {}}
-                    result = review.db.save("draft", {"id": "tools", "modules": {**previous["modules"], kind: {"set_id": group["id"] if group else ""}}})
+                    result = review.save_tool_state(values)
                 elif local == "/api/sets/save":
                     result = review.save_set(values)
                 elif local == "/api/sets/cohort":
@@ -255,6 +258,8 @@ class BotHandler(Handler):
                     result = review.read_notes(values)
                 elif local == "/api/reviews/notes/save":
                     result = review.save_note(values)
+                elif local == "/api/reviews/notes/clear":
+                    result = review.clear_notes(values)
                 elif local == "/api/reviews/reclassify":
                     result = review.reclassify(values.get("id"))
                 elif local == "/api/reviews/preferences":

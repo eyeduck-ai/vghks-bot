@@ -14,6 +14,11 @@ window.ReviewHistoryUI=(()=>{
  function active(){return modal().open&&modal().dataset.view==="history"&&context;}
  function assetUrl(asset){return "/api/accounts/"+encodeURIComponent(account)+"/analysis/asset?id="+encodeURIComponent(asset.digest);}
  function action(label,callback){const button=btn(label,callback,"quiet");button.classList.add("history-action");return button;}
+ function showError(error){
+  const content=panel();content.querySelector(".clinical-loading")?.remove();
+  const message=error.message||"報告讀取失敗，請稍後再試。",previous=content.querySelector(".history-load-error");
+  if(previous)previous.textContent=message;else content.append(node("p",message,"error history-load-error"));
+ }
  async function load(next,{push=false,force=false}={}){
   if(push&&context)stack.push(context);
   if(!same(context,next)){orderQuery="";orderGroup=next.resource==="orders"?"name":"date";orderPage=visitPage=0;}
@@ -22,19 +27,25 @@ window.ReviewHistoryUI=(()=>{
   window.FileCompare?.context(account,next.mrn,reviewPatientIdentity(next.mrn,next.review_task_id).name);
   dialog("dataDialog");modal().dataset.view="history";$("#dataTitle").textContent=titles[next.resource];
   setPatientDialogContext("dataDialog",next.mrn,"",next.review_task_id);
-  panel().replaceChildren(node("p","正在讀取已存資料…","muted"));
-  const result=await api("/reviews/history/read",next);
-  if(request!==sequence||!active())return;
-  render(result);
-  if((force||!result.complete)&&work?.online&&!root.read_only){
-   const status=node("div");
-   panel().prepend(status);
-   JobProgress.pending(status,titles[next.resource],"正在送出歷史資料查詢…");
-   let started;
-   try{started=await api("/tasks/start",{kind:"history",...next,force});}
-   finally{status.remove();}
+  panel().replaceChildren(ClinicalUI.loading("正在讀取已存報告…"));
+  try{
+   const result=await api("/reviews/history/read",next);
    if(request!==sequence||!active())return;
-   taskId=started.task_id;await poll();
+   const fetching=(force||!result.complete)&&work?.online&&!root.read_only;
+   render(result,{loading:fetching});
+   if(fetching){
+    const status=node("div");
+    panel().prepend(status);
+    JobProgress.pending(status,titles[next.resource],"正在送出歷史資料查詢…");
+    let started;
+    try{started=await api("/tasks/start",{kind:"history",...next,force});}
+    finally{status.remove();}
+    if(request!==sequence||!active())return;
+    taskId=started.task_id;await poll();
+   }
+  }catch(error){
+   if(request===sequence&&active())showError(error);
+   throw error;
   }
  }
  function open(resource,mrn,reference=""){stack=[];const next={review_task_id:currentReview,mrn,resource,reference};return scans.has(resource)?openScans(next):load(next);}
@@ -69,11 +80,13 @@ window.ReviewHistoryUI=(()=>{
   if(context.resource==="numeric")content.append(node("p","歷年數值索引約自 "+value.numeric_start+" 起；更早門診可由歷次就診選取後補查。","caption"));
   if(context.resource==="orders")content.append(node("p","歷年醫囑索引約自 "+value.orders_start+" 起；更早門診可由歷次就診選取後補查。","caption"));
  }
- function render(result){
+ function render(result,{loading=false}={}){
   if(!active())return;
   const content=panel();content.replaceChildren();navigation(content,result);coverage(content,result);
   const data=result.data;
-  if(data===null){content.append(empty(work?.online?"尚無已存資料，正在準備取得。":"沒有已存資料；重新連線後可查詢。"));return;}
+  if(data===null){
+   content.append(loading?ClinicalUI.loading():empty(result.complete?"沒有可顯示的資料。":root.read_only?"沒有已存資料；此資料庫為唯讀。":work?.online?"尚未取得資料，可按「更新資料」重試。":"沒有已存資料；重新連線後可查詢。"));return;
+  }
   if(context.resource==="numeric"||context.resource==="case_numeric"){
    appendNumericTables(content,data.tables||[]);
    if(context.resource==="numeric")content.append(action("從歷次就診選擇更早報告",()=>jump("visits")));
@@ -140,7 +153,7 @@ window.ReviewHistoryUI=(()=>{
    const name=[order.date,order.name||"醫囑附件",index+1].filter(Boolean).join(" ");
    const controls=node("div",undefined,"attachment-toolbar");
    controls.append(ClinicalUI.comparisonChoice({account,mrn:context.mrn,digest:asset.digest,mime:asset.mime,
-     name,source:"醫囑報告",date:order.date||""}),ClinicalUI.assetTools({url:link.href,asset,name,image:file}),link);
+     name:order.name||"醫囑附件",source:"醫囑報告",date:order.date||"",fileIndex:index+1,fileCount:data.assets.length,reportId:order.id}),ClinicalUI.assetTools({url:link.href,asset,name,image:file}),link);
    controls.addEventListener("change",syncCompare);
    wrapper.append(controls);content.append(wrapper);
   }
@@ -152,16 +165,23 @@ window.ReviewHistoryUI=(()=>{
  }
  async function poll(){
   if(!taskId||!active())return;
-  const id=taskId,task=await api("/tasks/detail?id="+encodeURIComponent(id));
-  if(id!==taskId||!active())return;
-  const current=task.status+"/"+task.updated_at;
-  if(current===signature)return;signature=current;
-  const result=await api("/reviews/history/read",context);
-  if(id!==taskId||!active())return;
-  render(result);JobProgress.publish(task);
-  if(!inProgress.has(task.status)){
-   taskId="";
-   if(["failed","paused","partial"].includes(task.status))panel().append(node("p",task.message||"部分資料未取得，可稍後再試。","error"));
+  const id=taskId;
+  try{
+   const task=await api("/tasks/detail?summary=1&id="+encodeURIComponent(id));
+   if(id!==taskId||!active())return;
+   const current=task.status+"/"+task.updated_at;
+   if(current===signature)return;
+   const result=await api("/reviews/history/read",context);
+   if(id!==taskId||!active())return;
+   signature=current;
+   render(result,{loading:inProgress.has(task.status)});JobProgress.publish(task);
+   if(!inProgress.has(task.status)){
+    taskId="";
+    if(["failed","paused","partial"].includes(task.status))panel().append(node("p",task.message||"部分資料未取得，可稍後再試。","error"));
+   }
+  }catch(error){
+   if(id===taskId&&active())showError(error);
+   throw error;
   }
  }
  modal().addEventListener("close",reset);

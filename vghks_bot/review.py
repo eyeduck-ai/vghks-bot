@@ -17,6 +17,8 @@ from .analysis_store import digest
 from .approvals import KINDS as APPROVAL_KINDS
 from .bot_store import WorkbenchStore, fresh
 from .bounded_search import search as regex_search
+from .connection_state import should_pause
+from .demographics import merge_demographics
 from .earnings import KINDS as EARNINGS_KINDS
 from .library import current_cache, registration_id
 from .progress import progress
@@ -35,7 +37,7 @@ def case_key(case):
 
 
 def failure_status(exc):
-    return "forbidden" if error_info(exc).http_status == 403 else "error"
+    return "forbidden" if error_info(exc).category == "AUTHORIZATION" else "error"
 
 
 def checked_department_keyword(value):
@@ -98,6 +100,23 @@ class Review:
             parse_range({"start": options.get("cutoff"), "end": options.get("cutoff")})
         return self.db.save("preferences", {"id": "review", "review_options": options})
 
+    def tool_state(self):
+        return self.db.get("draft", "tools", required=False) or {"modules": {}}
+
+    def save_tool_state(self, values):
+        kind, set_id = values.get("module"), values.get("set_id", "")
+        if not isinstance(kind, str) or kind not in {"review", "retina", "cataract", "surgery"}:
+            raise ValueError("工具種類不正確。")
+        if not isinstance(set_id, str) or len(set_id) > 128:
+            raise ValueError("病人集合代碼不正確。")
+        # Validate the selected set and merge the module in one short write
+        # transaction. Independent API requests must not overwrite other tools.
+        with self.app.store.library.batch():
+            group = self.db.get("set", set_id) if set_id else None
+            previous = self.tool_state()
+            return self.db.save("draft", {"id": "tools", "modules": {
+                **previous["modules"], kind: {"set_id": group["id"] if group else ""}}})
+
     def save_set(self, values):
         if values.get("id"):
             old = self.db.get("set", values["id"])
@@ -117,9 +136,11 @@ class Review:
                 if member["mrn"] in requested:
                     members[member["mrn"]] = copy.deepcopy(member)
 
-        def add(mrn, name="", registration=None, record=None, origin="manual"):
+        def add(mrn, name="", registration=None, record=None, origin="manual", demographics=None):
             mrn = normalize_mrn(mrn)
             profile = self.db.get("profile", mrn, required=False) or {}
+            if profile.get("status") != "resolved" or profile.get("mrn") != mrn:
+                profile = {}
             member = members.setdefault(mrn, {"mrn": mrn, "name": name or profile.get("name", ""),
                 "sex": profile.get("sex", ""), "age": profile.get("age", ""), "birthday": profile.get("birthday", ""),
                 "registrations": [], "source_records": [], "origins": []})
@@ -131,6 +152,8 @@ class Review:
                 member["source_records"].append(record)
             if origin not in member["origins"]:
                 member["origins"].append(origin)
+            if demographics:
+                member.update(merge_demographics(member, member, demographics))
 
         refs = values.get("registrations", [])
         if not isinstance(refs, list) or len(refs) > 20000:
@@ -149,7 +172,7 @@ class Review:
             if mrn in members:
                 continue
             profile = self.db.get("profile", mrn, required=False)
-            if not profile or profile.get("status") != "resolved":
+            if not profile or profile.get("status") != "resolved" or profile.get("mrn") != mrn:
                 raise ValueError("手動病人須先取得基本資料並核對。")
             add(mrn)
         source = values.get("source")
@@ -169,13 +192,13 @@ class Review:
             selected = set(values.get("selected", []))
             for record in records:
                 if values.get("all") or record["id"] in selected:
-                    add(record["mrn"], record.get("name", ""), record=record["id"], origin="library")
+                    add(record["mrn"], record.get("name", ""), record=record["id"], origin="library", demographics=record)
         elif source == "review":
             result = self.results({"id": values.get("task_id"), **values.get("filters", {})})
             selected = set(values.get("selected", []))
             for patient in result["patients"]:
                 if values.get("all") or patient["mrn"] in selected:
-                    add(patient["mrn"], patient.get("name", ""), origin="review")
+                    add(patient["mrn"], patient.get("name", ""), origin="review", demographics=patient)
                     for registration in patient.get("registrations", []):
                         add(patient["mrn"], registration=registration, origin="registration")
                     for record in patient.get("records", []):
@@ -183,14 +206,22 @@ class Review:
         if not 1 <= len(members) <= 20000:
             raise ValueError("請選取 1–20000 位已確認的病人。")
         name = str(values.get("name") or f"{today().isoformat()} 病人集合 · {len(members)} 位")[:100]
-        return self.db.save("set", {"name": name, "members": list(members.values()), "created_at": timestamp(),
+        return self.db.save("set", {"name": name, "members": [self.member_demographics(m) for m in members.values()], "created_at": timestamp(),
             "source_range": values.get("source_range", {}), "account_id": self.app.account_id})
 
     def start(self, values, *, foreground=False):
-        with self.app.root.lock:
-            return self._start(values, foreground=foreground)
+        from .task_manager import request_key
 
-    def _start(self, values, *, foreground=False):
+        with self.app.root.lock:
+            kind = self.db.get("task", values["resume"])["kind"] if values.get("resume") else values.get("kind", "review")
+            foreground = foreground or kind in FOREGROUND_KINDS
+            key = request_key(values) if foreground else ""
+            if key and (existing := self.app.task_manager.existing(key)):
+                return {"task_id": existing}
+            with self.app.lock, self.app.task_manager.admission(foreground=foreground):
+                return self._start(values, foreground=foreground, request_key=key)
+
+    def _start(self, values, *, foreground=False, request_key=""):
         if self.app.root.read_only:
             raise ValueError("唯讀資料庫不能啟動網路任務。")
         if self.app.closing:
@@ -238,7 +269,7 @@ class Review:
                     department = {"department_keywords": checked_department_keywords(preferred["department_keywords"])}
                 else:
                     department = {"department_keyword": checked_department_keyword(preferred.get("department_keyword", "眼科"))}
-                task.update(name=group["name"], members=copy.deepcopy(group["members"]), set_id=group["id"],
+                task.update(name=group["name"], members=[self.member_demographics(m) for m in group["members"]], set_id=group["id"],
                     **department, mode=mode, cutoff=cutoff,
                     categories=self.app.settings.public()["categories"])
             elif kind in APPROVAL_KINDS:
@@ -262,6 +293,13 @@ class Review:
             else:
                 mrn = normalize_mrn(values.get("mrn"))
                 task.update(name="本次數值報告" if kind == "numeric" else "掛號紀錄", mrn=mrn)
+                if parent_id := values.get("review_task_id"):
+                    if not isinstance(parent_id, str):
+                        raise ValueError("檢閱任務代碼不正確。")
+                    parent = self._note_task({"task_id": parent_id})
+                    if mrn not in {member["mrn"] for member in parent["members"]}:
+                        raise ValueError("病人不在此檢閱任務中。")
+                    task["review_task_id"] = parent["id"]
                 if kind == "numeric":
                     record = self.app.library_record(values.get("record_id"))
                     if record["mrn"] != mrn:
@@ -279,9 +317,20 @@ class Review:
         if foreground:
             with self.lock:
                 self.foreground[task["id"]] = state
-                thread = threading.Thread(target=self._foreground, args=(state, task), daemon=True)
-                self.threads[task["id"]] = thread
-                thread.start()
+            def launch():
+                with self.lock:
+                    thread = threading.Thread(target=self._foreground, args=(state, task), daemon=True)
+                    self.threads[task["id"]] = thread
+                    thread.start()
+
+            def cancel():
+                state.cancel.set()
+                state.update(status="cancelled", message="已暫停，待續跑")
+                self.finish(state)
+                with self.lock:
+                    self.foreground.pop(task["id"], None)
+
+            self.app.task_manager.submit(task["id"], request_key, launch, cancel)
         else:
             with self.app.lock:
                 self.app.states[state.data["id"]] = state
@@ -291,14 +340,14 @@ class Review:
 
     def _foreground(self, state, task):
         try:
-            with self.app.gateway.foreground(), self.app.gateway.task_context(task["id"], task["kind"]):
+            with self.app.gateway.foreground(), self.app.gateway.task_context(task["id"], task["kind"], state.cancel):
                 self.execute(state, task)
         except Cancelled:
             state.update(status="cancelled", message="已暫停，待續跑")
         except Exception as exc:
             message, code = safe_failure(exc)
             state.issue("查詢", message, code=code)
-            state.update(status="failed", message=message)
+            state.update(status="paused" if should_pause(exc) else "failed", message=message)
         finally:
             try:
                 self.finish(state)
@@ -308,6 +357,7 @@ class Review:
                 with self.lock:
                     self.foreground.pop(task["id"], None)
                     self.threads.pop(task["id"], None)
+                self.app.task_manager.complete(task["id"])
 
     def finish(self, state):
         task = self.db.get("task", state.data["id"], required=False)
@@ -321,55 +371,56 @@ class Review:
                                  "progress": self.task_progress(task, stage=state.data.get("message", ""))})
 
     def task_progress(self, task, *, stage=None):
-        items = self.db.items(task["id"])
-        kind, unit = task["kind"], "項"
-        total = 1
-        counted = [i for i in items if not i.get("processing")]
+        kind, unit, counter = task["kind"], "項", "default"
+        total, checked_at, failed_counted = 1, None, False
+
+        def count(field):
+            return len(task[field]) if field in task else task.get(field + "_count", 0)
+
         if kind in {"review", "resolve"}:
-            total, unit = len(task.get("members", task.get("identifiers", []))), "位病人"
+            total, unit = count("members" if kind == "review" else "identifiers"), "位病人"
         elif kind == "approval_refresh":
-            total, unit = len(task["references"]), "件"
+            total, unit = count("references"), "件"
         elif kind == "approval_sync":
-            total = (task["case_total"] + task["order_total"]
-                     if "case_total" in task and "order_total" in task else None)
-            unit = "項作業"
-            counted = [i for i in counted if i.get("checked_at") == task.get("sync_checked_at")]
+            total = task["case_total"] + task["order_total"] if "case_total" in task and "order_total" in task else None
+            unit, checked_at, failed_counted = "項作業", task.get("sync_checked_at"), True
         elif kind == "approval_case":
-            total = len(task["parts"])
+            total = count("parts")
         elif kind == "earnings_options":
-            total, unit = len(task["report_kinds"]), "種報表"
-            counted = [i for i in items if i.get("status") == "ready"]
+            total, unit, counter = count("report_kinds"), "種報表", "ready"
         elif kind == "earnings_capture":
-            total, unit = len(task["reports"]), "份報表"
-            if task["all_available"] and set(task.get("discovered", [])) != set(task["report_kinds"]):
+            total, unit, counter = count("reports"), "份報表", "period"
+            discovered = (set(task.get("discovered", [])) != set(task["report_kinds"]) if "report_kinds" in task else
+                          count("discovered") != count("report_kinds"))
+            if task.get("all_available") and discovered:
                 total = None
-            counted = [i for i in items if "period" in i]
         elif kind == "history" and task.get("resource") == "scans" and task.get("backfill"):
-            unit = "次眼科就診"
+            unit, counter = "次眼科就診", "reference"
             try:
                 total = len(self.app.scans._eye_cases(task["mrn"]))
             except (ValueError, TypeError, KeyError):
                 total = None
-            counted = [i for i in items if i.get("reference")]
-        failed_items = counted if kind == "approval_sync" else items
-        return progress(len(counted), total, unit=unit,
-                        failed=sum(not i.get("processing") and i.get("status") in {"error", "partial", "forbidden"} for i in failed_items),
+        done, failed = self.db.item_counts(task["id"], counter=counter, checked_at=checked_at,
+                                           check_current=kind == "approval_sync", failed_counted=failed_counted)
+        return progress(done, total, unit=unit, failed=failed,
                         stage=task.get("message", "") if stage is None else stage)
 
     def report(self, state, task, *, stage):
         value = self.task_progress(task, stage=stage)
-        # Preserve dynamically discovered months and other durable task fields.
-        current = self.db.get("task", task["id"])
-        self.db.save("task", {**current, "progress": value, "message": stage})
+        self.db.update_task(task["id"], {"progress": value, "message": stage})
         state.update(progress=value, message=stage)
 
     def stop(self, key):
+        if self.app.task_manager.cancel(key):
+            return {"ok": True}
         with self.lock:
             state = self.foreground.get(key)
-            if state:
-                state.cancel.set()
-            else:
-                self.app.stop(key)
+        # Launch takes the application lock before the foreground lock. Release
+        # the latter before delegating to the sequential queue's stop path.
+        if state:
+            state.cancel.set()
+        else:
+            self.app.stop(key)
         return {"ok": True}
 
     def execute(self, state, task):
@@ -391,7 +442,7 @@ class Review:
                 except (Cancelled, StorageError):
                     raise
                 except Exception as exc:
-                    if not self.app.gateway.online:
+                    if not self.app.gateway.online or should_pause(exc):
                         raise
                     message, code = safe_failure(exc)
                     status = failure_status(exc)
@@ -424,10 +475,11 @@ class Review:
                 except StorageError:
                     raise
                 except Exception as exc:
-                    if not self.app.gateway.online:
-                        raise
                     message, code = safe_failure(exc)
                     result = {"status": "error", "message": message, "code": code}
+                    if not self.app.gateway.online or should_pause(exc):
+                        self.db.item(task["id"], identifier, {**result, "input": identifier, "identifier_kind": input_kind})
+                        raise
                 self.db.item(task["id"], identifier, {**result, "input": identifier, "identifier_kind": input_kind})
                 self.report(state, task, stage="病人資料已處理")
         elif task["kind"] == "history":
@@ -445,17 +497,23 @@ class Review:
 
     def profile(self, mrn, *, force=False):
         cached = self.db.get("profile", mrn, required=False)
-        if cached and not force and fresh(cached["updated_at"], 86400):
-            return cached
+        if (cached and cached.get("status") == "resolved" and cached.get("mrn") == mrn
+                and cached.get("name", "").strip() and not force and fresh(cached["updated_at"], 86400)):
+            return merge_demographics(cached)
         with self.app.sdk_factory(self.app.settings) as sdk:
             value = clean(sdk.patients.get_demographics(mrn))
         validate_patient(value, mrn)
         if value.get("mrn") != mrn or not value.get("name", "").strip():
             raise ValueError("未取得可確認的病人基本資料。")
-        birthday = value.get("birthday", "")
-        return self.db.save("profile", {"id": mrn, "mrn": mrn, "status": "resolved", "name": value["name"],
-            "sex": value.get("sex", ""), "birthday": birthday, "age": value.get("age", ""),
-            "mobile_phone": value.get("mobile_phone", ""), "home_phone": value.get("home_phone", "")})
+        return self.db.save("profile", merge_demographics({"id": mrn, "mrn": mrn, "status": "resolved", "name": value["name"],
+            "sex": value.get("sex", ""), "birthday": value.get("birthday", ""), "age": value.get("age", ""),
+            "mobile_phone": value.get("mobile_phone", ""), "home_phone": value.get("home_phone", "")}))
+
+    def member_demographics(self, member):
+        profile = self.db.get("profile", member["mrn"], required=False) or {}
+        if profile.get("status") != "resolved" or profile.get("mrn") != member["mrn"]:
+            profile = {}
+        return merge_demographics(member, profile)
 
     def cases(self, mrn, force=False):
         cached = self.db.get("visits", mrn, required=False)
@@ -469,6 +527,7 @@ class Review:
         return cases, saved["updated_at"]
 
     def patient(self, task, member, state):
+        member = self.member_demographics(member)
         mrn = member["mrn"]
         result = {**member, "records": [], "attempts": [], "status": "ready", "message": ""}
         if task["mode"] == "registration" and not member["registrations"]:
@@ -546,7 +605,8 @@ class Review:
                             result["attempts"].append({**attempt, "status": "empty", "message": "SOAP 尚無內容"})
                             continue
                         record = {"id": key, "mrn": mrn, "name": member.get("name", ""), "sex": member.get("sex", ""),
-                            "age": member.get("age", ""), "date": day.isoformat(), "section": case.section_name,
+                            "age": member.get("age", ""), "birthday": member.get("birthday", ""),
+                            "birthday_raw": member.get("birthday_raw", ""), "date": day.isoformat(), "section": case.section_name,
                             "section_code": case.section_code, "case_no": case.case_no,
                             "source_mrn": case.mrn, "case_index": case.index, "doctor": case.doctor_name,
                             "doctor_card": case.doctor_card, **soap_snapshot(soap)}
@@ -567,7 +627,7 @@ class Review:
                     if not getattr(self.app.gateway.local, "diagnostic_emitted", False):
                         self.app.diagnostics.failure(exc, task_id=task["id"], mrn=mrn,
                             phase="soap_validation", visit=attempt)
-                    if not self.app.gateway.online:
+                    if not self.app.gateway.online or should_pause(exc):
                         raise
                     message, code = safe_failure(exc)
                     status = failure_status(exc)
@@ -608,19 +668,34 @@ class Review:
                 validate_patient(payload, mrn)
         return self.db.save(kind, {"id": key, "mrn": mrn, "record_id": key if kind == "numeric" else "", "status": "ready", "payload": payload, "cached": False, "queried_on": today().isoformat()})
 
-    def task(self, key):
+    def task(self, key, *, summary=False):
+        with self.app.store.library.read_snapshot():
+            return self._task(key, summary=summary)
+
+    def _task(self, key, *, summary=False):
+        if summary:
+            rows = self.db.task_summaries(key=key)
+            if not rows:
+                raise ValueError("資料不存在於此帳號工作區。")
+            task = rows[0]
+            value = self.task_progress(task)
+            return {**task, "progress": value, "done": value["done"], "total": value["total"]}
         task = self.db.get("task", key)
         items = self.db.items(key)
         value = self.task_progress(task)
         return {**task, "items": items, "progress": value, "done": value["done"], "total": value["total"]}
 
     def results(self, values):
+        with self.app.store.library.read_snapshot():
+            return self._results(values)
+
+    def _results(self, values):
         task = self.db.get("task", values.get("id"))
         if task["kind"] != "review":
             raise ValueError("此任務不是病歷檢閱。")
         saved = {p["mrn"]: p for p in self.db.items(task["id"])}
-        patients = [saved.get(m["mrn"], {**m, "status": "pending", "records": [], "message": "待處理"}) for m in task["members"]]
-        manual = self.app.store.library.manual_tags(self.app.settings)
+        patients = [self.member_demographics(saved.get(m["mrn"], {**m, "status": "pending", "records": [], "message": "待處理"})) for m in task["members"]]
+        manual = self.app.store.library.manual_tags(self.app.settings, mrns=[p["mrn"] for p in patients])
         query, mode, tag = values.get("q", ""), values.get("search_mode", "text"), values.get("tag", "")
         if not isinstance(query, str) or len(query) > 500 or mode not in {"text", "regex"}:
             raise ValueError("搜尋格式不正確。")
@@ -696,6 +771,10 @@ class Review:
         return next(iter(numbers)) if len(numbers) == 1 else ""
 
     def read_notes(self, values):
+        with self.app.store.library.batch():
+            return self._read_notes(values)
+
+    def _read_notes(self, values):
         task = self._note_task(values)
         patients = []
         for member in task["members"]:
@@ -705,6 +784,26 @@ class Review:
                 "sequence_no": self._registration_sequence(member), "text": note.get("text", ""),
                 "updated_at": note.get("updated_at", "")})
         return {"task_id": task["id"], "patients": patients}
+
+    def search_notes(self, values):
+        mrn = normalize_mrn(values.get("mrn", ""))
+        try:
+            offset, limit = int(values.get("offset", 0)), int(values.get("limit", 40))
+        except (TypeError, ValueError):
+            raise ValueError("分頁不正確。") from None
+        if offset < 0 or not 1 <= limit <= 100:
+            raise ValueError("分頁不正確。")
+        with self.app.store.library.batch() as db:
+            query = """FROM bot_documents n JOIN bot_documents t ON t.kind='task'
+                AND t.id=substr(n.id,1,instr(n.id,':')-1)
+                WHERE n.kind='review_note' AND substr(n.id,instr(n.id,':')+1)=?
+                AND json_extract(t.payload,'$.kind')='review'"""
+            total = db.execute("SELECT count(*) " + query, (mrn,)).fetchone()[0]
+            rows = db.execute("SELECT t.id AS task_id,json_extract(t.payload,'$.name') AS task_name,"
+                "json_extract(t.payload,'$.created_at') AS created_at,json_extract(n.payload,'$.text') AS text,"
+                "n.updated_at " + query + " ORDER BY n.updated_at DESC,t.id LIMIT ? OFFSET ?",
+                (mrn, limit, offset)).fetchall()
+        return {"mrn": mrn, "notes": [dict(row) for row in rows], "total": total, "offset": offset, "limit": limit}
 
     def save_note(self, values):
         task = self._note_task(values)
@@ -722,6 +821,15 @@ class Review:
         saved = self.db.save("review_note", {"id": key, "text": text})
         return {"task_id": task["id"], "mrn": mrn, "text": saved["text"], "updated_at": saved["updated_at"]}
 
+    def clear_notes(self, values):
+        with self.app.root.lock:
+            if self.app.root.read_only:
+                raise ValueError("目前是唯讀檢閱；請建立可編輯副本後操作。")
+            task = self._note_task(values)
+            keys = [task["id"] + ":" + member["mrn"] for member in task["members"]]
+            cleared = self.db.delete_many("review_note", keys)
+            return {"task_id": task["id"], "cleared_count": cleared}
+
     def reclassify(self, key):
         task = self.db.get("task", key)
         if task["status"] in {"running", "queued"}:
@@ -735,9 +843,9 @@ class Review:
 
     def cohort(self, values):
         group = self.db.get("set", values.get("set_id"))
-        members = [{"mrn": m["mrn"], "name": m["name"], "account_id": self.app.account_id,
+        members = [{**{key: m.get(key, "") for key in ("mrn", "name", "sex", "age", "birthday", "birthday_raw")}, "account_id": self.app.account_id,
                     "accounts": [self.app.username], "source_records": m["source_records"],
-                    "source_registrations": m["registrations"], "origins": m["origins"]} for m in group["members"]]
+                    "source_registrations": m["registrations"], "origins": m["origins"]} for m in map(self.member_demographics, group["members"])]
         value = {"id": uuid.uuid4().hex, "name": group["name"], "members": members, "created_at": timestamp(),
                  "source_set": group["id"]}
         self.app.analysis.store.save_document("analysis_cohorts", value)

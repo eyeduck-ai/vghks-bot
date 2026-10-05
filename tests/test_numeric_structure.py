@@ -1,5 +1,6 @@
 """Compound measurements retain their raw source and durable, versioned decimal derivations."""
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -25,6 +26,10 @@ def report(mrn="TEST001"):
 
 
 class NumericStructureTests(unittest.TestCase):
+    def test_shared_clinical_display_and_comparison_dates(self):
+        subprocess.run(["node", "tests/ophthalmic_ui.js"], cwd=Path(__file__).resolve().parents[1], check=True,
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=10)
+
     def test_supplied_samples_decimal_derivations_and_raw_preserved(self):
         rows = enrich_rows(extract_tables(report(), "synthetic"))
         values = [m["values"] for row in rows for m in row["measurements"]]

@@ -121,7 +121,8 @@ class StructuredSoapTests(unittest.TestCase):
         self.assertEqual(ap_preview(snapshot(replace(soap, assessment_plan=None, present_sections=()))), [])
 
     def test_scope_round_trip_and_invalid_values(self):
-        self.assertTrue(all(tag.scope == "ap" for tag in Settings().categories))
+        self.assertEqual({tag.id: tag.scope for tag in Settings().categories},
+                         {"surgery": "ap", "review": "ap", "followup": "all"})
         for scope in ("all", "s", "o", "ap", "medications", "orders"):
             settings = rule(scope, "sample")
             self.assertEqual(Settings().update(settings.public()).categories[0].scope, scope)

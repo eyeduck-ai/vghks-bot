@@ -30,6 +30,16 @@ class ApprovalTracker:
     def __init__(self, approvals):
         self.approvals, self.db, self.app = approvals, approvals.db, approvals.app
         self.lock = threading.RLock()
+        # Each account waits for an explicit visit during this process. Saving
+        # this flag would restart monitoring before the next visit after launch.
+        self.monitor_started = False
+
+    def enter(self, _values=None):
+        with self.app.root.lock:
+            with self.lock:
+                self.monitor_started = True
+            self.schedule()
+        return {"monitor_started": True}
 
     def preferences(self, values=None):
         current = self.db.get("preferences", "approval_tracking", required=False) or {
@@ -126,13 +136,28 @@ class ApprovalTracker:
             raise ValueError("追蹤篩選不正確。")
         if mode == "closed":
             rows = [r for r in rows if r["closed"]]
-        tasks = [t for t in self.db.all("task") if t["kind"] in {
-            "approval_refresh", "approval_sync", "approval_options", "approval_case"}]
+        tasks = self.db.task_list(("approval_refresh", "approval_sync", "approval_options", "approval_case"), values)
         # A paused task blocks automatic monitoring. Its resume control must
         # remain reachable even after many newer manual jobs have completed.
         visible = [t for i, t in enumerate(tasks) if i < 20 or t["status"] in {
             "queued", "running", "cancelling", "paused", "partial", "failed"}]
-        return {"rows": rows, "counts": counts, "preferences": self.preferences(), "tasks": visible}
+        from .pagination import slice_rows
+
+        return {"rows": slice_rows(rows, values or {}), "total": len(rows), "counts": counts, "preferences": self.preferences(), "tasks": visible,
+                "monitor_started": self.monitor_started}
+
+    def counts(self):
+        """Badges need tracking flags, never complete clinical case documents."""
+        with self.db.library.connect() as db:
+            row = db.execute("""SELECT
+                coalesce(sum(NOT json_extract(t.payload,'$.closed') AND NOT json_extract(t.payload,'$.paused')),0),
+                coalesce(sum(NOT json_extract(t.payload,'$.closed') AND NOT json_extract(t.payload,'$.paused')
+                    AND json_extract(t.payload,'$.next_check')<=?),0),
+                coalesce(sum(coalesce(json_extract(t.payload,'$.unread'),0)),0),
+                coalesce(sum(json_extract(t.payload,'$.closed')),0)
+                FROM bot_documents t JOIN bot_documents c ON c.kind='approval_case' AND c.id=t.id
+                WHERE t.kind='approval_tracking'""", (timestamp(),)).fetchone()
+        return dict(zip(("pending", "due", "unread", "closed"), row, strict=True))
 
     def change(self, values):
         refs = values.get("ids")
@@ -171,7 +196,7 @@ class ApprovalTracker:
 
     def require_idle(self):
         if any(t["kind"] in {"approval_refresh", "approval_sync"} and t["status"] in {"queued", "running", "cancelling"}
-               for t in self.db.all("task")):
+               for t in self.db.task_summaries(kinds=('approval_refresh','approval_sync','approval_options','approval_case'))):
             raise ValueError("追蹤更新已在執行或排隊，請等待完成。")
 
     def execute(self, sdk, state, task):
@@ -204,17 +229,25 @@ class ApprovalTracker:
                     self.db.save("approval_tracking", {**track, "error": message, "failures": failures,
                         "last_attempt": timestamp(), "next_check": later(timestamp(), max(self.preferences()["hours"], min(24, 2 ** min(failures-1, 5))))})
                 self.db.item(task["id"], ref, {"status": "error", "apply_seq": ref, "message": message, "code": code})
-                if not self.app.gateway.online:
+                from .connection_state import should_pause
+
+                if not self.app.gateway.online or should_pause(exc):
                     raise
             self.app.review.report(state, task, stage="更新結果已保存")
 
     def schedule(self):
+        with self.lock:
+            self._schedule()
+
+    def _schedule(self):
+        if not self.monitor_started:
+            return
         if self.app.root.read_only or self.app.closing or not self.app.gateway.online or not self.app.entered:
             return
         if not self.preferences().get("enabled", True) or not self.preferences()["automatic"]:
             return
         if any(t["kind"] in {"approval_refresh", "approval_sync"} and t["status"] in {"queued", "running", "cancelling", "paused"}
-               for t in self.db.all("task")):
+               for t in self.db.task_summaries(kinds=('approval_refresh','approval_sync','approval_options','approval_case'))):
             return
         if self.preferences().get("next_check", "") <= timestamp():
             self.app.review.start({"kind": "approval_sync", "automatic": True})

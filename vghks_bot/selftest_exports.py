@@ -33,6 +33,9 @@ def seed_report(workspace, mrn="EXPORT01"):
     orders = [ClinicalOrder(mrn, "EX-1", "O", "DBR, free charge", "2026-09-11", "2026-09-11"),
               ClinicalOrder(mrn, "EX-2", "O", "Keratomery", "2026-08-14", "2026-08-14"),
               ClinicalOrder(mrn, "EX-3", "O", "其他非術前醫囑", "2026-08-13")]
+    store.save_step(mrn, "visits", "visits", [
+        {"mrn": mrn, "case_no": order.case_no, "case_type": "O", "visit_date": order.order_date,
+         "section_code": "70", "section_name": "眼科"} for order in orders], workspace.username)
     # Repeated history sources and shared attachment bytes must appear once.
     for kind in ("*", "OR"):
         store.save_step(mrn, "orders-history:" + kind, "order_index", clean(orders), workspace.username)

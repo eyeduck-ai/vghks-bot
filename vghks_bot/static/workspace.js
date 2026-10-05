@@ -11,6 +11,7 @@ function showPane(name) {
   activePane = name;
   for (const item of ["list", "library", "analysis", "history", "tags"]) {const pane=$("#" + item + "Pane");if(pane)pane.hidden = item !== name;}
   $$('[data-pane]').forEach(node => node.setAttribute("aria-pressed", String(node.dataset.pane === name)));
+  if(name==="history"&&config)action(refresh);
 }
 
 function syncWorkspaceAccounts() {

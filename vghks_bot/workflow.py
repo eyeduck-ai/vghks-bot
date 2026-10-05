@@ -7,8 +7,9 @@ from dataclasses import asdict, fields
 from datetime import date
 from types import SimpleNamespace
 
-from vghks_sdk import AuthenticationError, OutpatientPatient
+from vghks_sdk import OutpatientPatient
 
+from .connection_state import require_ready
 from .scanner import _checked_list, _collect, _read_patients, create_sdk
 from .settings import parse_range
 from .tags import classification
@@ -37,8 +38,7 @@ def run_workflow(state, settings, library, *, rows=None, force=False, sdk_factor
                 connection = stack.enter_context(sdk_factory(settings))
                 report = connection.auth.check(only=("prq",))
                 state.check_cancel()
-                if not report.ok:
-                    raise AuthenticationError("Authentication failed", code="AUTH_CHECK_FAILED")
+                require_ready(report)
             return connection
 
         state.check_cancel()

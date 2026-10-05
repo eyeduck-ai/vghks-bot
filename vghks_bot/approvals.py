@@ -10,6 +10,7 @@ from .analysis_fetch import clean
 from .analysis_store import digest
 from .approval_tracker import ApprovalTracker, case_content
 from .bot_store import fresh
+from .connection_state import should_pause
 from .scanner import Cancelled, safe_failure
 from .settings import timestamp
 from .storage import StorageError
@@ -45,7 +46,7 @@ class Approvals:
         """Index existing captures while leaving the original observations intact."""
         if self.db.get("preferences", "approval_content_index_v1", required=False):
             return
-        tasks = {t["id"]: t["kind"] for t in self.db.all("task")}
+        tasks = {t["id"]: t["kind"] for t in self.db.task_summaries(kinds=KINDS)}
         versions, sources = {}, {}
         for row in sorted(self.db.all("approval_observation"), key=lambda r: r["checked_at"]):
             ref, case = row["apply_seq"], row["case"]
@@ -174,7 +175,7 @@ class Approvals:
                     except (Cancelled, StorageError):
                         raise
                     except Exception as exc:
-                        if not self.app.gateway.online:
+                        if not self.app.gateway.online or should_pause(exc):
                             raise
                         message, code = safe_failure(exc)
                         self.db.item(task["id"], part, {"part": part, "status": "error", "message": message, "code": code})
@@ -268,7 +269,7 @@ class Approvals:
                     self.db.item(task["id"], "orders:" + ref, {"status": "error", "apply_seq": ref,
                                                                  "checked_at": checked, "message": message, "code": code})
                     run["orders_failed"] += 1
-                    if not self.app.gateway.online:
+                    if not self.app.gateway.online or should_pause(exc):
                         raise
                 self.db.save("approval_sync_run", {**run, "fetched_at": checked, "total": len(cases)})
                 self.app.review.report(state, task, stage="案件醫囑已處理")
@@ -307,7 +308,7 @@ class Approvals:
 
     def cases(self, values=None):
         values = values or {}
-        data = self.tracker.overview({"mode": values.get("mode", "all")})
+        data = self.tracker.overview({"mode": values.get("mode", "all"), "summary": values.get("summary", "")})
         rows = data.pop("rows")
         saved_orders = self.saved_orders()
         for row in rows:
@@ -343,10 +344,12 @@ class Approvals:
                        reverse=sort == "order_desc")
             unnamed.sort(key=lambda r: (r["case"]["application_date"], r["id"]), reverse=True)
             filtered = named + unnamed
-        return {**data, "rows": filtered, "total": len(filtered),
+        from .pagination import slice_rows
+
+        return {**data, "rows": slice_rows(filtered, values), "total": len(filtered),
                 "orders_fetched": sum(r["orders_fetched"] for r in filtered),
                 "options": self.db.get("approval_options", "all", required=False),
-                "runs": self.db.all("approval_sync_run")[:20]}
+                "runs": self.db.documents("approval_sync_run", limit=20)}
 
     def saved_orders(self):
         """Read only order parts so list filtering also works offline."""

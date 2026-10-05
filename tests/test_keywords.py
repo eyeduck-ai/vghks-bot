@@ -10,6 +10,17 @@ FULL_TEXT_SETTINGS = Settings().update({"categories": [
 
 
 class KeywordTests(unittest.TestCase):
+    def test_followup_is_case_insensitive_literal_substring_in_full_soap(self):
+        for marker in ("# FU", "# fu", "# Fu", "# FUNDUS"):
+            with self.subTest(marker=marker):
+                text = "S: " + marker + " subjective\nO: exam\nA+P: stable"
+                record = {"soap": text, "soap_structure": {"subjective": marker,
+                    "objective": "exam", "assessment_plan": "stable"}}
+                matches = extract_keywords(record, Settings())
+                self.assertEqual([match["category"] for match in matches], ["followup"])
+                self.assertEqual(matches[0]["source_field"], "soap")
+        self.assertEqual(extract_keywords("S: #FU\nO: #  FU", Settings()), [])
+
     def test_default_categories_only_match_their_complete_literal_keywords(self):
         ap = "# arbitrary\n# APPLY Cataract\n# Arrange CATA OD\narrange CATA"
         outside = "# Arrange outside AP\n# APPLY outside AP"

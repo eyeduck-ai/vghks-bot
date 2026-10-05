@@ -31,9 +31,12 @@ class Tag:
 
 Category = Tag  # v2 configuration/API compatibility
 
+FOLLOWUP_TAG = Tag("followup", "追蹤", ("# FU",), scope="all")
+
 DEFAULT_TAGS = (
     Tag("surgery", "手術", ("# Arrange",), "surgery", "ap"),
     Tag("review", "審查", ("# APPLY",), scope="ap"),
+    FOLLOWUP_TAG,
 )
 
 

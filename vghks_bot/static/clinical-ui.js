@@ -1,5 +1,12 @@
 "use strict";
 window.ClinicalUI = (() => {
+  function loading(label = "正在載入報告…") {
+    const area = document.createElement("div"), icon = document.createElement("span"), text = document.createElement("span");
+    area.className = "clinical-loading";area.setAttribute("role", "status");
+    icon.className = "clinical-loading-icon";icon.setAttribute("aria-hidden", "true");
+    text.className = "clinical-loading-label";text.textContent = label;
+    area.append(icon, text);return area;
+  }
   function pdfURL(path) {
     const url = new URL(path, location.href);
     const options = new URLSearchParams(url.hash.slice(1));
@@ -25,6 +32,30 @@ window.ClinicalUI = (() => {
       }
     });
     return button;
+  }
+  function patientAge(patient, now = new Date()) {
+    const records = (patient.records || []).filter(record => !record.mrn || record.mrn === patient.mrn);
+    for (const source of [patient, ...records]) {
+      const birthday = String(source.birthday ?? "").trim();
+      const parts = birthday.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (!parts) continue;
+      const [year, month, day] = parts.slice(1).map(Number), born = new Date(Date.UTC(year, month - 1, day));
+      if (born.toISOString().slice(0, 10) !== birthday) continue;
+      const current = Object.fromEntries(new Intl.DateTimeFormat("en", {timeZone:"Asia/Taipei", calendar:"gregory",
+        numberingSystem:"latn", year:"numeric", month:"2-digit", day:"2-digit"}).formatToParts(now)
+        .map(part => [part.type, Number(part.value)]));
+      const age = current.year - year - (current.month < month || current.month === month && current.day < day ? 1 : 0);
+      return age >= 0 && age <= 130 ? age + " 歲" : "未提供";
+    }
+    const supplied = [patient, ...records].map(source => source.age)
+      .find(value => value != null && String(value).trim() !== "");
+    const text = String(supplied ?? "").trim();
+    return text ? (/^\d+$/.test(text) ? text + " 歲" : text) : "未提供";
+  }
+  function ageBadge(patient) {
+    const badge = document.createElement("span");badge.className = "patient-age-badge";
+    badge.textContent = "年齡 " + patientAge(patient);
+    return badge;
   }
   function fileName(name, mime) {
     const ext = {"application/pdf":"pdf", "image/jpeg":"jpg", "image/png":"png", "image/gif":"gif"}[mime] || "txt";
@@ -142,6 +173,15 @@ window.ClinicalUI = (() => {
     label.append(input, document.createTextNode("加入比較"), message);
     return label;
   }
+  function comparisonName(item, collection = []) {
+    const date = item.date || "日期未提供";
+    const sameDate = collection.filter(peer => peer.date === item.date)
+      .sort((a, b) => a.selectionOrder - b.selectionOrder);
+    const multiple = sameDate.length > 1 || item.fileCount > 1;
+    const sameReport = item.reportId && sameDate.every(peer => peer.reportId === item.reportId);
+    const index = sameDate.length > 1 && !sameReport ? sameDate.findIndex(peer => peer.digest === item.digest) + 1 : item.fileIndex || 1;
+    return date + (multiple ? ` · 檔案 ${index}` : "");
+  }
   window.addEventListener("filecomparechange", syncComparison);
-  return {pdfURL, mrnBadge, fileName, downloadLink, saveBlob, reportText, textDownload, assetTools, comparisonChoice};
+  return {loading, pdfURL, mrnBadge, patientAge, ageBadge, fileName, downloadLink, saveBlob, reportText, textDownload, assetTools, comparisonChoice, comparisonName};
 })();

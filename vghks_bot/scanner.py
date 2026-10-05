@@ -22,8 +22,10 @@ from vghks_sdk.core.errors import error_info
 from vghks_sdk.core.tls import create_requests_session
 
 from .clinical_identity import classify_opd_registration, select_registration_visits
+from .connection_state import failure_message, require_ready, should_pause
 from .encoding import ClinicalTransport
 from .progress import run_progress
+from .sdk_orders import configure_orders
 from .settings import Settings, timestamp
 from .soap_data import snapshot as soap_snapshot
 from .storage import StorageError
@@ -63,7 +65,7 @@ class ScanState:
 
     def update(self, **values):
         with self.lock:
-            if values.get("status") in {"completed", "partial", "failed", "cancelled"}:
+            if values.get("status") in {"completed", "partial", "failed", "cancelled", "paused"}:
                 values.setdefault("finished_at", timestamp())
             self.data.update(values)
             self.data["revision"] += 1
@@ -130,14 +132,22 @@ def create_sdk(settings: Settings):
     connections.apply_all(session)
     transport = ClinicalTransport(policy=policy, verify=sdk_settings.requests_verify,
         session=session, connections=connections, response_encoding=settings.response_encoding)
-    return VghksSDK(
+    return configure_orders(VghksSDK(
         settings=sdk_settings, transport=transport,
         credentials=PortalCredentials(settings.username, settings.password),
-    )
+    ))
 
 
 def safe_failure(exc: Exception) -> tuple[str, str]:
+    from .jobs import BusyError
+
+    if isinstance(exc, BusyError):
+        return str(exc), "ACCOUNT_BUSY"
     info = error_info(exc)
+    from .patient_lookup import MESSAGES
+
+    if info.code in MESSAGES:
+        return MESSAGES[info.code], info.code
     if info.code in {"JS_EXPRESSION_UNSUPPORTED", "JS_BRANCH_UNSUPPORTED", "PRQ_ORDER_EXPRESSION_UNSUPPORTED"}:
         return "院方 JavaScript 資料格式超出 SDK 解析支援範圍；此項查詢未確認，已存資料保留。", info.code
     earnings_messages = {
@@ -147,14 +157,7 @@ def safe_failure(exc: Exception) -> tuple[str, str]:
     }
     if info.code in earnings_messages:
         return earnings_messages[info.code], info.code
-    messages = {
-        "AUTHENTICATION": "登入或授權失敗，請檢查帳密與內網權限。",
-        "NETWORK": "無法連線至院內系統，請檢查院內網路或 VPN。",
-        "HTTP": "院內系統暫時無法完成請求。",
-        "PARSE": "院內回傳格式無法辨識，這筆資料尚未確認。",
-        "CONFIGURATION": "登入或連線設定有誤，請檢查設定。",
-    }
-    return messages.get(info.category, "查詢未完成，請依錯誤代碼檢查。"), info.code
+    return failure_message(info), info.code
 
 
 def _checked_list(value, model):
@@ -170,12 +173,7 @@ def run_scan(state: ScanState, settings: Settings, start: date, end: date, sdk_f
         with sdk_factory(settings) as sdk:
             report = sdk.auth.check(only=("prq",))
             state.check_cancel()
-            if not report.ok:
-                failed = next((target for target in report.targets if target.status != "OK"), None)
-                code = failed.error_code if failed else "AUTH_CHECK_FAILED"
-                state.issue("登入", "院內登入或 PRQ 連線未成功，請檢查帳密、內網與權限。", code=code)
-                state.update(status="failed", message="連線驗證未通過，尚未查詢病歷。")
-                return
+            require_ready(report)
             registrations = _collect(sdk, state, settings, start, end)
             _read_patients(sdk, state, settings, registrations)
             state.check_cancel()
@@ -198,7 +196,7 @@ def run_scan(state: ScanState, settings: Settings, start: date, end: date, sdk_f
     except Exception as exc:
         message, code = safe_failure(exc)
         state.issue("查詢", message, code=code)
-        state.update(status="failed", message=message)
+        state.update(status="paused" if should_pause(exc) else "failed", message=message)
 
 
 def _collect(sdk, state, settings, start, end):
@@ -218,7 +216,7 @@ def _collect(sdk, state, settings, start, end):
             message, code = safe_failure(exc)
             state.issue("門診清單", message, code=code, day=day.isoformat())
             state.count(days_failed=1, days_done=1)
-            if error_info(exc).category == "AUTHENTICATION":
+            if should_pause(exc):
                 raise
             continue
         for row in rows:
@@ -267,7 +265,7 @@ def _read_patients(sdk, state, settings, grouped, *, library=None, force=False):
             message, code = safe_failure(exc)
             state.issue("就診紀錄", message, code=code, mrn=mrn)
             state.count(unknown=len(rows), patients_done=1)
-            if error_info(exc).category == "AUTHENTICATION":
+            if should_pause(exc):
                 raise
             continue
         selected = select_registration_visits(rows, cases, doctor_card=settings.username)
@@ -336,7 +334,7 @@ def _read_patients(sdk, state, settings, grouped, *, library=None, force=False):
             except Exception as exc:
                 message, code = safe_failure(exc)
                 state.issue("SOAP", message, code=code, mrn=mrn, day=case.visit_date.isoformat())
-                if error_info(exc).category == "AUTHENTICATION":
+                if should_pause(exc):
                     raise
             finally:
                 state.count(soap_done=1)
