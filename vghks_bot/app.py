@@ -3,13 +3,46 @@ from __future__ import annotations
 import argparse
 import ctypes
 import sys
+import time
 import webbrowser
 from pathlib import Path
 
 from .bot_server import BotServer
-from .databases import DatabaseManager
+from .databases import DatabaseManager, ManagerInUseError
+from .launcher import publish_instance, running_url
 from .settings import load_defaults
 from .storage import StorageError
+
+
+def connect_or_start(home, settings, *, timeout=15):
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            return DatabaseManager(home, settings), None
+        except ManagerInUseError as exc:
+            url = running_url(home)
+            if url:
+                return None, url
+            if time.monotonic() >= deadline:
+                raise StorageError(
+                    "程式已在執行，但目前無法重新開啟網頁介面。"
+                    "若正在啟動或結束，請稍候再雙擊 EXE；若執行中的是舊版，請先結束舊版程式。"
+                ) from exc
+            # The first process may still be initializing or releasing its lock.
+            time.sleep(.2)
+
+
+def open_interface(url, *, no_browser=False):
+    if sys.stdout:
+        print(f"VGHKS-bot: {url}", flush=True)
+    if no_browser:
+        return
+    try:
+        opened = webbrowser.open(url)
+    except (webbrowser.Error, OSError):
+        opened = False
+    if not opened and sys.platform == "win32":
+        ctypes.windll.user32.MessageBoxW(0, f"請在瀏覽器開啟：\n{url}", "VGHKS-bot", 0)
 
 
 def main():
@@ -26,15 +59,14 @@ def main():
     manager = None
     try:
         base = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parents[1]
-        manager = DatabaseManager(args.data_dir or base / "VGHKS-bot-data", load_defaults())
+        manager, url = connect_or_start(args.data_dir or base / "VGHKS-bot-data", load_defaults())
+        if url:
+            open_interface(url, no_browser=args.no_browser)
+            return 0
         app = manager.current
-        with BotServer(args.port, app, manager) as server:
+        with BotServer(args.port, app, manager) as server, publish_instance(manager.home, server):
             url = f"{server.origin}/#{app.launch_token}"
-            if sys.stdout:
-                print(f"VGHKS-bot: {url}", flush=True)
-            if not args.no_browser and not webbrowser.open(url):
-                if sys.platform == "win32":
-                    ctypes.windll.user32.MessageBoxW(0, f"請在瀏覽器開啟：\n{url}", "VGHKS-bot", 0)
+            open_interface(url, no_browser=args.no_browser)
             server.serve_forever(poll_interval=0.3)
     except KeyboardInterrupt:
         pass

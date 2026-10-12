@@ -405,6 +405,16 @@ def self_test(report_path: Path) -> int:
             check_databases(Path(directory))
         result["checks"].append("database snapshots, portable copies, read-only source preservation, HTTP mutation guards and saved approval queries")
         result["checks"].append("approval follow-up, real task progress, both MIS earnings reports, portable secondary credentials, archive CSV and read-only API")
+        from .selftest_launcher import check_launcher
+
+        with tempfile.TemporaryDirectory() as directory:
+            check_launcher(Path(directory))
+        result["checks"].append("single-instance UI reconnect, current launch token after database switching, discovery cleanup and restart")
+        from .selftest_binary import check_sdk_binary
+
+        with tempfile.TemporaryDirectory() as directory:
+            check_sdk_binary(Path(directory))
+        result["checks"].append("native SDK DBR PDF through ClinicalTransport and compatible adapter, cataract attachment cache, offline restart without repeat download")
         assert "測試姓名" in decode_response("測試姓名 女".encode("cp950"))
         assert search("# Arrange", ["P: # Arrange CATA"])
         try:

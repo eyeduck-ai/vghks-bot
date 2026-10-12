@@ -41,7 +41,7 @@ def check_paths(paths):
         if (any(part in forbidden for part in path.parts) or path.suffix in
                 {".sqlite", ".sqlite3", ".db", ".exe", ".pem", ".key", ".p12", ".pfx", ".log", ".har", ".jsonl", ".zip"}
                 or re.search(r"\.(?:db|sqlite3?)-", path.name)
-                or path.name in {".env", "defaults.private.json"}
+                or path.name in {".env", "defaults.private.json", ".instance.json"}
                 or path.name.startswith(".env.") and path.name != ".env.example"
                 or re.match(r"(?:credentials|service[-_]account|client_secret).*\.json$", path.name)):
             raise ValueError("Local-only file is tracked: " + name)

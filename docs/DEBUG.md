@@ -12,6 +12,8 @@ SDK 在內部重試或重新登入後成功，也會留下異常診斷並標記�
 
 6.6.46 起使用 SDK 0.22.6。WebMAAS timeout 由 SDK 在原操作內重建一次 SSO，平台不另建帳號；`application_session_recovery_started` 記錄原 `WEBMAAS_SESSION_TIMEOUT` 及安全欄位，須與相同 `operation_id` 的完成狀態對照。成功診斷的 `ErrorInfo.cause` 保留原 timeout，恢復失敗則保存 SDK 的最終代碼與原因鏈。SDK 的 `capture_operation_id` 若存在也原樣保留於操作時序，便於連結 SDK 原始錄製；平台預設使用自己的失敗證據收集器。
 
+6.6.51／SDK 0.23.3 起，PDF／JPEG 依檔頭識別，失敗來源只保存原始 `.bin`，`binary_media_type` 標示格式、`binary_encoding` 為 `original`，`source_encoding` 為空；不解碼成 HTML，也不改寫二進位內容。HTTP 標頭錯誤仍依檔頭辨識；真正 HTML 的登入頁仍走文字與遮罩流程。容量及截斷標記照常適用。
+
 ## ZIP 內容
 
 6.6.50 使用 SDK 0.23.3，聯醫 `imgUrl` 與高榮 UID 參照原樣保存在帳號快取，由 SDK 驗證及下載。醫囑部分文字解析會保留 `text_extraction_notes` 與 assessment，顯示未完成；補查只重試未完成分支。下載失敗後重新核對病人上下文可能多一次就診索引讀取，成功文字與附件仍重用。院方明確圖片空結果與未知格式、登入頁分開處理。
@@ -21,8 +23,8 @@ SDK 在內部重試或重新登入後成功，也會留下異常診斷並標記�
 | `debug.json` | 所選任務／病人的診斷、查詢範圍、錯誤原因、程式位置、出錯欄位／表達式、恢復結果及證據完整性 |
 | `sdk-context.json` | 每筆診斷的程式／SDK 版本、操作及請求關聯、來源編碼、恢復工作階段；另含匯出環境的 Python、平台及架構 |
 | `evidence/<工作階段>/operation-*.jsonl` | 異常操作的詳細時序，依 `sequence` 排序；較晚才發現的資料驗證錯誤也會保存 |
-| `evidence/<工作階段>/response-*.html` | UTF-8 失敗來源；JSON 也沿用此副檔名，可交給 SDK 純解析函式 |
-| `evidence/<工作階段>/response-*.bin` | 無遮罩時為原始 bytes；遮罩後為 UTF-8 bytes，`binary_encoding` 會標示 |
+| `evidence/<工作階段>/response-*.html` | UTF-8 文字失敗來源；JSON 也沿用此副檔名，可交給 SDK 純解析函式。PDF／JPEG 不產生此檔 |
+| `evidence/<工作階段>/response-*.bin` | PDF／JPEG 為原始 bytes；文字無遮罩時為原始 bytes，遮罩後為 UTF-8 bytes，`binary_encoding` 會標示 |
 | `evidence/<工作階段>/diagnostics.jsonl`、`summary.json` | 所選事件的工作階段摘要與版本；未登出時可能尚無 `summary.json`。舊版時序保留相容內容 |
 
 密碼、Cookie／Authorization 值、token 與 session 值會遮罩；時序不保存原始請求內容或 URL 查詢值。失敗來源仍可能含病人醫療資料，留在本機，不會自動傳送至 SDK 或外部服務。原始 HTML 不在程式中執行。

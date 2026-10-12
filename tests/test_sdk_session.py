@@ -1,4 +1,4 @@
-"""Real SDK 0.23.3 protocol handling through the platform's ClinicalTransport."""
+"""Real SDK protocol handling through the platform's ClinicalTransport."""
 import io
 import json
 import tempfile
@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from vghks_sdk import ParseError
+from vghks_sdk import __version__ as sdk_version
 from vghks_sdk.core.errors import error_info
 
 from vghks_bot.bot import BotApplication
@@ -67,11 +68,11 @@ class NativeSDKSessionTests(unittest.TestCase):
         self.assertTrue(incident["recovered"])
         self.assertEqual(incident["error"]["code"], "SDK_APPLICATION_SESSION_RECOVERED")
         self.assertEqual(incident["error"]["cause"]["code"], "WEBMAAS_SESSION_TIMEOUT")
-        self.assertEqual(incident["sdk_version"], "0.23.3")
+        self.assertEqual(incident["sdk_version"], sdk_version)
         self.assertTrue(incident["transport"]["evidence"]["complete"])
         with zipfile.ZipFile(io.BytesIO(self.work.diagnostics.export({"task_id": task["id"]}))) as archive:
             manifest = json.loads(archive.read("sdk-context.json"))
-            self.assertEqual(manifest["incidents"][0]["sdk_version"], "0.23.3")
+            self.assertEqual(manifest["incidents"][0]["sdk_version"], sdk_version)
             self.assertFalse(json.loads(archive.read("debug.json"))["export"]["missing_files"])
             trace = next(archive.read(name).decode() for name in archive.namelist() if "/operation-" in name)
             events = [json.loads(line) for line in trace.splitlines()]

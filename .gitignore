@@ -37,5 +37,6 @@ service-account*.json
 service_account*.json
 client_secret*.json
 defaults.private.json
+.instance.json
 .DS_Store
 Thumbs.db
