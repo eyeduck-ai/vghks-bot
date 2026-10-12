@@ -205,6 +205,23 @@ class AnalysisTests(unittest.TestCase):
         self.assertEqual(sum(c[0] == "pdf" for c in ExamSDK.calls), 1)
         self.assertFalse(any(c[0] == "image" for c in ExamSDK.calls))
 
+    def test_partial_report_text_retries_without_redownloading_successful_assets(self):
+        original = ExamSDK.report
+        def partial(sdk, ref):
+            return replace(original(sdk, ref), report_text="", report_data_status="METADATA_ONLY",
+                           text_extraction_notes=("REPORT_SCRIPT_UNSUPPORTED",))
+        with patch.object(ExamSDK, "report", partial):
+            run = self.run_analysis()
+        self.assertEqual(run["status"], "partial")
+        steps = self.app.analysis.store.steps("0000001")
+        reports = [step["payload"] for step in steps if step["key"].startswith("collected-order:") and step["payload"].get("texts")]
+        self.assertTrue(reports)
+        self.assertTrue(all(report["status"] == "partial" for report in reports))
+        ExamSDK.calls.clear()
+        self.assertEqual(self.run_analysis(resume=run["id"])["status"], "completed")
+        self.assertTrue(any(call[0] == "report" for call in ExamSDK.calls))
+        self.assertFalse(any(call[0] in {"detail", "pacs", "pdf", "image"} for call in ExamSDK.calls))
+
     def test_empty_reports_refresh_and_foreign_patient_references_are_rejected(self):
         from vghks_sdk.models import OrderDetail, OrderReportRef
 

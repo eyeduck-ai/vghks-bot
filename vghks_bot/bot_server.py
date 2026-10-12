@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hmac
 import re
+import secrets
 import threading
 from urllib.parse import parse_qs, urlsplit
 
@@ -10,6 +11,7 @@ from . import __version__
 from .activity import search as search_activity
 from .google_sheets import SheetError, SheetUnavailable
 from .jobs import BusyError
+from .launcher import CHALLENGE_HEADER, REOPEN_HEADER, REOPEN_PATH, signature, valid_token
 from .request_gate import RequestGate
 from .server import STATIC, Handler, LocalServer
 from .storage import StorageError
@@ -23,6 +25,8 @@ class BotServer(LocalServer):
         self.RequestHandlerClass = BotHandler
         self.database_manager = database_manager
         self.request_gate = RequestGate()
+        # This credential follows the server, including when its database changes.
+        self.launcher_token = secrets.token_urlsafe(32)
 
 
 class BotHandler(Handler):
@@ -71,6 +75,18 @@ class BotHandler(Handler):
         if not self.local_request():
             return
         url = urlsplit(self.path)
+        if url.path == REOPEN_PATH:
+            challenge = self.headers.get(CHALLENGE_HEADER)
+            proof = self.headers.get(REOPEN_HEADER, "")
+            if (not valid_token(challenge) or not re.fullmatch(r"[a-f0-9]{64}", proof)
+                    or not hmac.compare_digest(proof, signature(self.server.launcher_token, challenge))):
+                self.reply(401, {"error": "請由 EXE 開啟的頁面進入。"})
+                return
+            launch_token = self.server.application.launch_token
+            self.reply(200, {"application": "VGHKS-bot",
+                             "launch_token": launch_token,
+                             "proof": signature(self.server.launcher_token, challenge + ":" + launch_token)})
+            return
         assets = {"/": ("bot.html", "text/html; charset=utf-8"),
                   "/bot.js": ("bot.js", "text/javascript; charset=utf-8"),
                   "/review-history.js": ("review-history.js", "text/javascript; charset=utf-8"),

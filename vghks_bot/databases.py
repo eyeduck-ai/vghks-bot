@@ -16,6 +16,10 @@ from .settings import timestamp
 from .storage import StorageError, atomic_json, read_json
 
 
+class ManagerInUseError(StorageError):
+    """Another process owns this catalog; it may have a UI we can reopen."""
+
+
 @contextmanager
 def readonly_connection(path):
     # SQLite mode=ro can still create/update WAL shared-memory files. Inspect
@@ -172,7 +176,7 @@ class DatabaseManager:
                 msvcrt.locking(self._catalog_lock.fileno(), msvcrt.LK_NBLCK, 1)
         except OSError as exc:
             self._catalog_lock.close()
-            raise StorageError("此資料庫管理目錄已有程式使用，請先結束另一個 EXE。") from exc
+            raise ManagerInUseError("此資料庫管理目錄已有程式使用，請先結束另一個 EXE。") from exc
         try:
             self.initialize(settings, sdk_factory)
         except Exception:

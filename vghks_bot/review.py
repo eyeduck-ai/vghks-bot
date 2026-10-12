@@ -23,6 +23,7 @@ from .earnings import KINDS as EARNINGS_KINDS
 from .library import current_cache, registration_id
 from .patient_handoff import public_document
 from .progress import progress
+from .review_incremental import inherit, ordered_members, source_task
 from .scanner import Cancelled, ScanState, safe_failure
 from .settings import parse_mrns, parse_range, timestamp, today
 from .soap_data import snapshot as soap_snapshot
@@ -335,6 +336,7 @@ class Review:
                 return self._start(values, foreground=foreground, request_key=key)
 
     def _start(self, values, *, foreground=False, request_key=""):
+        base = None
         if self.app.root.read_only:
             raise ValueError("唯讀資料庫不能啟動網路任務。")
         if self.app.closing:
@@ -367,14 +369,21 @@ class Review:
             task = {"id": uuid.uuid4().hex, "kind": kind, "created_at": timestamp(), "account_id": self.app.account_id,
                     "force": values.get("force") is True, "refresh": values.get("refresh") is True}
             if kind == "review":
-                group = self.db.get("set", values.get("set_id"))
-                mode = values.get("mode", "latest")
+                base = source_task(self, values)
+                single = base is not None and "refresh_mrn" in values
+                group = ({"id": base["set_id"], "name": base["name"], "members": base["members"]}
+                         if single else self.db.get("set", values.get("set_id")))
+                mode = base["mode"] if single else values.get("mode", "latest")
                 if mode not in {"latest", "registration"}:
                     raise ValueError("SOAP 模式不正確。")
-                cutoff = values.get("cutoff") or today().isoformat()
+                cutoff = base["cutoff"] if single else values.get("cutoff") or today().isoformat()
                 parse_range({"start": cutoff, "end": cutoff})
                 preferred = self.preferences().get("review_options", {})
-                if "department_keywords" in values:
+                if single:
+                    department = {key: copy.deepcopy(base[key]) for key in (
+                        "department_keywords", "department_keyword", "department_filter", "department") if key in base}
+                    task["refresh_mrn"] = normalize_mrn(values["refresh_mrn"])
+                elif "department_keywords" in values:
                     department = {"department_keywords": checked_department_keywords(values["department_keywords"])}
                 elif "department_keyword" in values:
                     department = {"department_keyword": checked_department_keyword(values["department_keyword"])}
@@ -420,8 +429,10 @@ class Review:
                     task["record_id"] = record["id"]
                 foreground = True
         task.update(status="queued", message="等待處理", error="", finished_at="")
-        task["progress"] = self.task_progress(task)
-        self.db.save("task", task)
+        with self.app.store.library.batch():
+            inherit(self, task, base)
+            task["progress"] = self.task_progress(task)
+            self.db.save("task", task)
         if task["kind"] in EARNINGS_KINDS:
             self.app.earnings.monitor.started(task)
         self.app.approvals.tracker.started(task)
@@ -542,7 +553,7 @@ class Review:
         state.update(status="running")
         self.report(state, task, stage="正在取得資料")
         if task["kind"] == "review":
-            for member in task["members"]:
+            for member in ordered_members(task):
                 state.check_cancel()
                 if task.get("retry_only") and member["mrn"] not in task["retry_only"]:
                     continue
@@ -551,7 +562,9 @@ class Review:
                     continue
                 self.report(state, task, stage="檢閱病人 " + member["mrn"])
                 try:
-                    result = self.patient(task, member, state)
+                    selected = ({**task, "force": True, "refresh": True}
+                                if task.get("refresh_mrn") == member["mrn"] else task)
+                    result = self.patient(selected, member, state)
                 except (Cancelled, StorageError):
                     raise
                 except Exception as exc:
@@ -562,6 +575,8 @@ class Review:
                     result = {**member, "status": status, "message": "此帳號沒有讀取權限" if status == "forbidden" else message, "code": code, "records": []}
                     if code == "PRQ_CASE_PATIENT_MISMATCH":
                         result["message"] = "就診索引的病人身分不符；重新核對後仍未確認。可單獨重試，或到爬蟲紀錄查看 DEBUG 資訊。"
+                result.update(checked_at=result.get("index_checked_at") or timestamp(),
+                              source_task_id=task["id"], reused=False)
                 self.db.item(task["id"], member["mrn"], result)
                 self.report(state, task, stage="病歷已處理")
         elif task["kind"] in APPROVAL_KINDS:
@@ -652,7 +667,7 @@ class Review:
             cases = [model(VisitCase, c) for c in checkpoint["index_cases"]]
             checked = checkpoint["index_checked_at"]
         else:
-            cases, checked = self.cases(mrn, task["force"] or task["refresh"])
+            cases, checked = self.cases(mrn, task["force"] or task["refresh"] or mrn in task.get("recheck_mrns", []))
         result["index_cases"] = clean(cases)
         result["index_checked_at"] = checked
         self.db.item(task["id"], mrn, {**result, "status": "partial", "processing": True})
@@ -694,7 +709,8 @@ class Review:
                 state.check_cancel()
                 key = case_key(case)
                 attempt = {"date": day.isoformat(), "case_no": case.case_no, "section": case.section_name, "record_id": key}
-                if self.db.deleted_since(key, task["created_at"]):
+                deleted_after = "" if task.get("base_task_id") and not task["force"] else task["created_at"]
+                if self.db.deleted_since(key, deleted_after):
                     result["attempts"].append({**attempt, "status": "deleted"})
                     continue
                 try:
@@ -839,7 +855,10 @@ class Review:
                 continue
             filtered.append(patient)
         return {"task": task, "patients": filtered, "total": len(filtered), "all_total": len(task["members"]), "tag_counts": dict(counts),
-                "scope_issue_count": sum(bool(record.get("tag_scope_issues")) for record in refs)}
+                "scope_issue_count": sum(bool(record.get("tag_scope_issues")) for record in refs),
+                "incremental": {"new": task.get("new_count", 0), "reused": task.get("reused_count", 0),
+                    "pending": sum(m["mrn"] not in saved or bool(saved[m["mrn"]].get("processing"))
+                                   for m in task["members"])} if task.get("base_task_id") else None}
 
     def _note_task(self, values):
         task = self.db.get("task", values.get("task_id"))

@@ -1,7 +1,7 @@
 "use strict";
 window.ToolWorkspace=(()=>{
   const names={review:"病歷檢閱",retina:"視網膜比較",cataract:"白內障術前分析",surgery:"刀表更新"};
-  const retrieval={cache:"重用已存病歷",refresh:"檢查新紀錄",force:"重新下載病歷"};
+  const retrieval={cache:"重用已存病歷",refresh:"檢查新紀錄",force:"重新抓取全部病人"};
   let kind="review",states={},drafts={},loaded=false,group=null,generation=0;
   let soapSetup=false,soapTask="",soapSetId="";
   const lookupErrors=window.PatientTokens.createErrors({
@@ -97,7 +97,7 @@ window.ToolWorkspace=(()=>{
     $("#toolEditSetup").hidden=!hasResult;setIcon($("#toolEditSetup"),"patients",setupOpen?"收起病人來源":"更換病人");$("#toolEditSetup").setAttribute("aria-expanded",String(setupOpen));
     $("#toolRunSummary").hidden=setupOpen;
     const taskDepartment=activeTask?.department_keywords?.length?"科別含任一：「"+activeTask.department_keywords.join("」、「")+"」":activeTask?.department_keyword?"科別含「"+activeTask.department_keyword+"」":activeTask?.department_filter==="all"?"不限科別":"同科別：「"+(activeTask?.department?.name||"眼科")+"」";
-    $("#toolRunSummary").textContent=activeTask?(activeTask.mode==="registration"?"該次門診的 SOAP":"最新 SOAP")+" · "+taskDepartment+" · 截至 "+activeTask.cutoff+" · "+retrieval[activeTask.force?"force":activeTask.refresh?"refresh":"cache"]:group?.name||"";
+    $("#toolRunSummary").textContent=activeTask?(activeTask.mode==="registration"?"該次門診的 SOAP":"最新 SOAP")+" · "+taskDepartment+" · 截至 "+activeTask.cutoff+" · "+(activeTask.refresh_mrn?"重新抓取 "+activeTask.refresh_mrn:retrieval[activeTask.force?"force":activeTask.refresh?"refresh":"cache"]):group?.name||"";
     $("#toolSettingsSummary").hidden=!(isReview||kind==="surgery"&&soapSetup);
     $("#toolSettingsSummary").textContent=[$("#soapMode").value==="registration"?"該次門診的 SOAP":"最新 SOAP","科別含任一：「"+departmentKeywords().join("」、「")+"」",retrieval[$("#forceReview").checked?"force":"cache"]].join(" · ");
     $("#toolStart").textContent=isReview?(starting?"正在建立檢閱…":activeTask?"開始新檢閱":"開始檢閱"):"開啟"+names[kind];
@@ -110,7 +110,7 @@ window.ToolWorkspace=(()=>{
   async function open(value,selectedGroup=null){
     if(group&&!group.id)drafts[kind]=group;
     lookup.reset();
-    const revision=++generation;soapSetup=false;activeTask=null;resultKind="";setupOpen=true;activate(value);
+    const revision=++generation;soapSetup=false;activeTask=null;resultKind="";setupOpen=true;starting=false;activate(value);
     if(!loaded){const data=await api("/tools/state",{});if(revision!==generation)return;states=data.modules;loaded=true;}
     await refresh();if(revision!==generation)return;
     // A refresh may deliver the previous task while the new workspace is opening.
@@ -142,15 +142,17 @@ window.ToolWorkspace=(()=>{
     let keywords;
     try{keywords=checkedKeywords();}catch(error){openRules();$("#departmentKeyword").focus();throw error;}
     if($("#soapMode").value==="registration"&&group.members.some(p=>!p.registrations?.length))throw new Error("此集合包含沒有掛號來源的病人，請使用最新 SOAP 模式。");
-    const revision=generation,force=$("#forceReview").checked;
+    const revision=generation,force=$("#forceReview").checked,baseId=inline?"":activeTask?.id;
     let pending;
     if(inline){soapSetId=group.id;render();pending=JobProgress.pending("#toolSoapProgress","SOAP 病歷","正在送出檢閱任務…");}
     let result;
     try{
+      if(baseId&&window.ReviewNotesUI&&!await window.ReviewNotesUI.flushAll())throw new Error("有備註尚未儲存，請重試後再開始檢閱。");
+      if(revision!==generation||baseId&&activeTask?.id!==baseId){pending?.remove();return;}
       const selected=await ensureSavedGroup();if(!selected||revision!==generation){pending?.remove();return;}
       if(inline){soapSetId=selected.id;render();}
       result=await api("/tasks/start",{kind:"review",set_id:selected.id,department_keywords:keywords,
-        mode:$("#soapMode").value,refresh:force,force});
+        mode:$("#soapMode").value,refresh:force,force,...(baseId?{base_task_id:baseId}:{})});
     }
     catch(error){pending?.remove();if(inline){soapSetId="";render();}throw error;}
     if(revision!==generation){pending?.remove();return;}
@@ -158,6 +160,18 @@ window.ToolWorkspace=(()=>{
     if(inline){soapTask=result.task_id;soapSetId=group.id;soapSetup=false;$("#toolSoapProgress").replaceChildren(node("p","正在取得此集合 SOAP…","caption"));render();}
     else{await openReview(result.task_id);if(revision!==generation)return;$("#toolWorkspaceTitle").focus({preventScroll:true});$("#toolSourcePanel").scrollIntoView({block:"start"});}
     await refresh();
+  }
+  async function refreshPatient(mrn){
+    if(starting||!activeTask||root.read_only||!work?.online)return;
+    const source=activeTask,revision=generation;starting=true;render();
+    try{
+      if(!await window.ReviewNotesUI.flushAll())throw new Error("有備註尚未儲存，請重試後再重新抓取。");
+      if(revision!==generation||activeTask?.id!==source.id)return;
+      const result=await api("/tasks/start",{kind:"review",base_task_id:source.id,refresh_mrn:mrn});
+      if(revision!==generation||activeTask?.id!==source.id)return;
+      await openReview(result.task_id);if(revision!==generation)return;
+      await selectReviewPatient(mrn);await refresh();
+    }finally{if(revision===generation){starting=false;render();}}
   }
   async function start(){
     if(starting)return;if(!group?.members.length)throw new Error("請先選擇病人。");
@@ -203,5 +217,5 @@ window.ToolWorkspace=(()=>{
   $("#toolEditSetup").addEventListener("click",()=>{setupOpen=!setupOpen;if(page==="review"){reviewSetupExpanded=setupOpen;updateReviewLayout();}render();if(setupOpen)$("#toolSourcePanel").scrollIntoView({block:"start"});});
   $("#toolStartForm").addEventListener("submit",e=>{e.preventDefault();act(start);});$("#toolRules").addEventListener("click",openRules);
   $("#toolFetchSoap").addEventListener("click",()=>act(async()=>{if(!soapSetup){soapSetup=true;render();}else await startReview(true);}));
-  return {reset,open,activate,visibility,adoptReview,adoptModule,receivedHandoff,poll,watched:()=>soapTask?[soapTask]:[],refreshSettings:render,beginSettings,commitSettings,cancelSettings,queryOptions};
+  return {reset,open,activate,visibility,adoptReview,adoptModule,receivedHandoff,poll,watched:()=>soapTask?[soapTask]:[],refreshSettings:render,beginSettings,commitSettings,cancelSettings,queryOptions,refreshPatient};
 })();

@@ -11,6 +11,7 @@ class ReleaseBoundaryTests(unittest.TestCase):
         for name in ("archive/accounts.sqlite3", "archive/clinical.sqlite3-wal", "copy/VGHKS-bot-data/database.json",
                      ".local/legacy-docs/report.md", "dist/VGHKS-bot.exe", ".env.production", "keys/service-account-real.json",
                      "captures/session.har", "captures/diagnostics.jsonl", "release/old-build.zip", "defaults.private.json",
+                     "custom-data/.instance.json",
                      ".playwright-cli/page.yml", ".ruff_cache/check", "output/playwright/patient.png"):
             with self.subTest(name=name), self.assertRaises(ValueError):
                 check_paths([name])

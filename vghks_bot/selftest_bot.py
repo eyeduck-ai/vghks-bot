@@ -346,6 +346,14 @@ def self_test(report_path: Path) -> int:
                 from .selftest_cataract import check_numeric_prefetch
                 check_numeric_prefetch(workspace)
                 result["checks"].append("durable decimal refraction/KM parsing, serial background wait and selected-patient priority")
+                from .selftest_incremental import (
+                    check_incremental_reviews,
+                    check_sdk_report_contract,
+                )
+
+                check_incremental_reviews(Path(directory) / "incremental")
+                check_sdk_report_contract()
+                result["checks"].append("same-day incremental review after cache expiry, independent notes, single refresh, immutable query time and SDK imgUrl/UID/empty/resVal reports")
                 from .selftest_library_data import check_clinical_clearing
                 check_clinical_clearing(workspace, other)
                 result["checks"].append("offline classified cache clearing, shared attachment retention, cache-only patients and account isolation")
@@ -397,6 +405,16 @@ def self_test(report_path: Path) -> int:
             check_databases(Path(directory))
         result["checks"].append("database snapshots, portable copies, read-only source preservation, HTTP mutation guards and saved approval queries")
         result["checks"].append("approval follow-up, real task progress, both MIS earnings reports, portable secondary credentials, archive CSV and read-only API")
+        from .selftest_launcher import check_launcher
+
+        with tempfile.TemporaryDirectory() as directory:
+            check_launcher(Path(directory))
+        result["checks"].append("single-instance UI reconnect, current launch token after database switching, discovery cleanup and restart")
+        from .selftest_binary import check_sdk_binary
+
+        with tempfile.TemporaryDirectory() as directory:
+            check_sdk_binary(Path(directory))
+        result["checks"].append("native SDK DBR PDF through ClinicalTransport and compatible adapter, cataract attachment cache, offline restart without repeat download")
         assert "測試姓名" in decode_response("測試姓名 女".encode("cp950"))
         assert search("# Arrange", ["P: # Arrange CATA"])
         try:

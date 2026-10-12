@@ -10,6 +10,7 @@ from urllib.parse import parse_qsl, unquote, urlsplit
 
 from vghks_sdk.core.diagnostics import _response_structure, _safe_field_name, _safe_path
 from vghks_sdk.core.operations import OPERATIONS
+from vghks_sdk.parsing.assets import binary_asset_media_type
 
 from .encoding import decode_response
 
@@ -138,6 +139,12 @@ def response_snapshot(request_id, response, elapsed_seconds, limit=RESPONSE_LIMI
 
 
 def response_shape(snapshot, encoding, redactor=None):
+    raw = snapshot.get("_raw", b"")
+    if binary_asset_media_type(raw):
+        sample = SimpleNamespace(content=raw, headers={"Content-Type": snapshot.get("headers", {}).get("content-type", "")})
+        result = dict(_response_structure(sample))
+        result.update(byte_length=snapshot["response_bytes"], shape_truncated=snapshot["truncated"])
+        return result
     source = decode_response(snapshot.get("_raw", b""), snapshot.get("headers", {}).get("content-type", ""), encoding)
     if redactor:
         source = redactor.text(source)
@@ -157,14 +164,21 @@ def file_reference(path):
 
 def save_response(directory, operation_id, snapshot, redactor, encoding, remaining):
     raw = snapshot.get("_raw", b"")
-    source = decode_response(raw, snapshot.get("headers", {}).get("content-type", ""), encoding)
-    sanitized = redactor.text(source)
-    changed = sanitized != source
-    content = sanitized.encode("utf-8")
-    binary = content if changed else raw
+    binary_type = binary_asset_media_type(raw)
+    changed = False
+    if binary_type:
+        # Preserve diagnostic attachment bytes; no HTML decoding or credential
+        # regex rewriting inside a PDF/JPEG stream. Evidence stays local.
+        values = (("bin", raw),)
+    else:
+        source = decode_response(raw, snapshot.get("headers", {}).get("content-type", ""), encoding)
+        sanitized = redactor.text(source)
+        changed = sanitized != source
+        content = sanitized.encode("utf-8")
+        values = (("bin", content if changed else raw), ("html", content))
     files, written = [], 0
     truncated = snapshot["truncated"]
-    for suffix, value in (("bin", binary), ("html", content)):
+    for suffix, value in values:
         allowed = min(RESPONSE_LIMIT, remaining - written)
         if allowed <= 0:
             truncated = True
@@ -182,7 +196,8 @@ def save_response(directory, operation_id, snapshot, redactor, encoding, remaini
         written += len(value)
     return {"request_id": snapshot["request_id"], "original_bytes": snapshot["response_bytes"],
             "redacted": changed, "truncated": truncated, "binary_encoding": "utf-8" if changed else "original",
-            "source_encoding": "utf-8", "files": files}, written
+            "source_encoding": "" if binary_type else "utf-8", "binary_media_type": binary_type,
+            "files": files}, written
 
 
 def json_line(row):
