@@ -110,6 +110,11 @@ jobs:
           node-version: '24'
       - name: Install pinned dependencies
         run: python -m pip install -r requirements-build.lock.txt
+      - name: Download source self-test reports from this run
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: tests-${{ github.sha }}
+          path: .build/ci/
       - name: Build, verify and package both executables
         run: python tools/run_checks.py --build-only
       - name: Upload validation reports

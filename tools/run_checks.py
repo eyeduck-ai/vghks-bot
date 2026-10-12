@@ -44,6 +44,11 @@ def main():
     if args.build_only:
         run([python, "tools/verify_repository.py"])
         run([python, "-m", "pip", "check"])
+        for filename in ("source-selftest.json", "monitor-source-selftest.json"):
+            path = REPORTS / filename
+            if not path.is_file():
+                raise RuntimeError("Run --tests-only or download this run's test artifact before --build-only: " + filename)
+            report_ok(path)
     if not (args.tests_only or args.build_only):
         run([python, "tools/verify_repository.py"])
         run([python, "-m", "pip", "check"])

@@ -16,6 +16,8 @@ Windows 主程式及獨立日曆監控 EXE 可先在本機執行 `./build.ps1` �
 
 6.9.0 起，原始碼／固定 GAS 契約與完整合成測試分開回報；雙 EXE 建置必須等待兩者成功，沒有略過原本的檢查。測試執行中回報進度，`tests-<SHA>` Artifact 提供 `tests.log`、`tests.xml` 及 `test-timings.json`。GAS checkout 的版本由 `tests/fixtures/gas_contract.json` 決定，會執行實際匯出器並核對 HEAD。
 
+建置工作下載同一 workflow run、相同 SHA 的測試 Artifact，取得兩個原始碼自測報告，再完成 EXE 自測及封裝；不依賴另一台 runner 的本機檔案。`--build-only` 會在建置前核對這些報告，缺少或失敗便停止。
+
 本機完整驗證仍使用 `python tools/run_checks.py --build --gas-repo .build/gas-contract`。需要分階段執行時可用 `--checks-only`、`--tests-only`，前兩者通過後才執行 `--build-only`；後者仍執行雙 EXE 自測與封裝驗證。
 
 ## 發布新版本
