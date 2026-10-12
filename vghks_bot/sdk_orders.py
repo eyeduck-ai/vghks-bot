@@ -1,4 +1,4 @@
-"""Phototherapy order compatibility alongside SDK 0.22.2; no JavaScript is executed.
+"""Phototherapy order compatibility alongside SDK 0.23.3; no JavaScript is executed.
 
 PRQ's phototherapy button uses a literal ``filepath`` and a SECTORD PDF
 whose patient identifier lives in the filename. Keep the SDK's request,

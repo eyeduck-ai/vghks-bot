@@ -21,6 +21,7 @@ from .ophthalmic_orders import (
     eye_visit_signature,
     order_in_eye_context,
 )
+from .report_cache import result_complete
 from .scanner import Cancelled, ScanState, safe_failure
 from .settings import parse_mrns, timestamp, today
 from .sheet_plan import Planner, fingerprint, verify
@@ -461,14 +462,7 @@ class Analysis:
             saved_history = self.store.step(mrn, "history-order:" + order["id"])
             saved_collected = self.store.step(mrn, "collected-order:" + order["id"])
             def complete(step):
-                if not step or step["payload"].get("status") not in {
-                    "complete", "ready", "missing", "not_executed", "no_data", "no_links"
-                }:
-                    return False
-                try:
-                    return all(available(asset["digest"]) for asset in step["payload"].get("assets") or [])
-                except (KeyError, TypeError, ValueError):
-                    return False
+                return bool(step and result_complete(step["payload"], self.store, asset_available=available))
 
             saved = next((step for step in (saved_history, saved_collected) if complete(step)),
                          saved_collected or saved_history)

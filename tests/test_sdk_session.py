@@ -1,4 +1,4 @@
-"""Real SDK 0.22.6 protocol handling through the platform's ClinicalTransport."""
+"""Real SDK 0.23.3 protocol handling through the platform's ClinicalTransport."""
 import io
 import json
 import tempfile
@@ -67,11 +67,11 @@ class NativeSDKSessionTests(unittest.TestCase):
         self.assertTrue(incident["recovered"])
         self.assertEqual(incident["error"]["code"], "SDK_APPLICATION_SESSION_RECOVERED")
         self.assertEqual(incident["error"]["cause"]["code"], "WEBMAAS_SESSION_TIMEOUT")
-        self.assertEqual(incident["sdk_version"], "0.22.6")
+        self.assertEqual(incident["sdk_version"], "0.23.3")
         self.assertTrue(incident["transport"]["evidence"]["complete"])
         with zipfile.ZipFile(io.BytesIO(self.work.diagnostics.export({"task_id": task["id"]}))) as archive:
             manifest = json.loads(archive.read("sdk-context.json"))
-            self.assertEqual(manifest["incidents"][0]["sdk_version"], "0.22.6")
+            self.assertEqual(manifest["incidents"][0]["sdk_version"], "0.23.3")
             self.assertFalse(json.loads(archive.read("debug.json"))["export"]["missing_files"])
             trace = next(archive.read(name).decode() for name in archive.namelist() if "/operation-" in name)
             events = [json.loads(line) for line in trace.splitlines()]

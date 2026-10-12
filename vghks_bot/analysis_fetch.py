@@ -31,6 +31,7 @@ from .ophthalmic_orders import (
     is_eye_visit,
     order_in_eye_context,
 )
+from .report_cache import branch_complete, result_complete
 from .scanner import Cancelled, safe_failure
 from .settings import today
 from .soap_data import snapshot as soap_snapshot
@@ -183,8 +184,10 @@ class PatientCollector:
         if cached and kind == "asset":
             try:
                 self.store.asset(cached["payload"]["digest"])
-            except ValueError:
+            except (KeyError, ValueError):
                 cached = None
+        if cached and kind == "report" and not branch_complete(cached["payload"], cached.get("assessment")):
+            cached = None
         if cached and not (refresh or self.options["force"]):
             if not binary:
                 try:
@@ -390,14 +393,7 @@ class PatientCollector:
             cached = self.store.step(self.mrn, "collected-order:" + key)
             reviewed = self.store.step(self.mrn, "history-order:" + key)
             def assets_available(step):
-                if not step:
-                    return False
-                try:
-                    for asset in step["payload"].get("assets") or []:
-                        self.store.asset(asset["digest"])
-                except (KeyError, ValueError):
-                    return False
-                return True
+                return bool(step and result_complete(step["payload"], self.store))
             if (reviewed and reviewed["payload"].get("status") in {"ready", "missing", "not_executed"}
                     and assets_available(reviewed) and not (self.options["force"] or refresh)):
                 self.state.count(analysis_cached=1)
@@ -504,7 +500,7 @@ class PatientCollector:
                     or (self.options.get("end") and day > self.options["end"]))
 
     def collect_order(self, variants, order_key, changed):
-        row = {"texts": [], "assets": [], "branches": [], "status": "complete"}
+        row = {"texts": [], "assets": [], "branches": [], "status": "complete", "report_cache_revision": 1}
         orders = [v["order"] for v in variants]
         if all(classify_order_execution(o.get("status", "")) == "NOT_EXECUTED" for o in orders):
             return {**row, "status": "not_executed"}
@@ -528,8 +524,9 @@ class PatientCollector:
                                operation,
                                refresh=changed and not binary, binary=binary,
                                expected_mrn=reference.get("mrn", ""))
-            row["branches"].append({"key": key, "status": "ok" if value is not None else "failed"})
-            if value is None:
+            complete = value is not None and (binary or branch_complete(value))
+            row["branches"].append({"key": key, "status": "ok" if complete else "failed"})
+            if not complete:
                 row["status"] = "partial"
             return value
 
@@ -544,7 +541,8 @@ class PatientCollector:
             if report:
                 if report.get("report_text") or report.get("fields"):
                     row["texts"].append({"text": report.get("report_text", ""), "fields": report.get("fields", {}),
-                                         "status": report.get("report_data_status", ""), "reference": ref})
+                                         "status": report.get("report_data_status", ""), "reference": ref,
+                                         "text_extraction_notes": report.get("text_extraction_notes", [])})
                 pdfs.extend(report.get("pdf_refs") or [])
                 studies.extend(report.get("pacs_refs") or [])
         for ref in unique_refs(studies):

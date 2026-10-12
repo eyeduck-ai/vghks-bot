@@ -1,14 +1,22 @@
 """Synthetic regressions for PRQ phototherapy order-index responses."""
+import html
 import json
 import unittest
 from datetime import date
 from types import SimpleNamespace
 from unittest.mock import Mock
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
-from vghks_sdk import ConfigurationError, ParseError, VisitCase
-from vghks_sdk.models import OrderHistoryFilter, PdfAttachmentRef, to_jsonable
-from vghks_sdk.parsing.clinical import parse_clinical_orders
+from vghks_sdk import ConfigurationError, ParseError, VisitCase, assess_data
+from vghks_sdk.models import (
+    OrderHistoryFilter,
+    OrderReportRef,
+    PacsImageRef,
+    PacsStudyRef,
+    PdfAttachmentRef,
+    to_jsonable,
+)
+from vghks_sdk.parsing.clinical import parse_clinical_orders, parse_order_report, parse_pacs_study
 
 from vghks_bot.analysis_fetch import model
 from vghks_bot.scanner import create_sdk
@@ -38,6 +46,53 @@ new KSCase('', orderStr, mydate, rcpDt, '合成醫師'+orspDept, '已執行', qr
 
 
 class OrderCompatibilityTests(unittest.TestCase):
+    def test_union_and_legacy_images_round_trip_through_the_compatible_adapter(self):
+        image_url = "http://192.168.20.137:800/xwado/PushWADO?" + urlencode({
+            "requestType": "WADO", "contentType": "image/jpeg", "rows": "512", "objectUID": "1.2.3"})
+        source = "/PRQWeb/Page/JSP/showPACSPic.jsp?" + urlencode({
+            "hhisnum": MRN, "hid": "OLD", "reqno": "SYNTHETIC", "imgUrl": image_url})
+        runtime = SimpleNamespace(settings=SimpleNamespace(prq_base_url="https://hospital.test/PRQWeb"),
+            auth=SimpleNamespace(hid_for=lambda _: "CURRENT"),
+            request_text=Mock(return_value='<img src="' + html.escape(source) + '">'),
+            request_binary=Mock(return_value=(b"\xff\xd8synthetic\xff\xd9", "image/jpeg")),
+            execute=lambda spec, operation, **kwargs: operation())
+        adapter = CompatibleOrderAdapter(runtime)
+        study = adapter.get_pacs_study(PacsStudyRef(MRN, "SYNTHETIC"))
+        reference = model(PacsImageRef, json.loads(json.dumps(to_jsonable(study.images[0]))))
+        self.assertEqual(reference.img_url, image_url)
+        for ref in (reference, PacsImageRef(MRN, "SYNTHETIC", "SERIES", "STUDY", "1.2.3")):
+            self.assertEqual(adapter.download_pacs_image(ref).media_type, "image/jpeg")
+            request = runtime.request_binary.call_args
+            self.assertTrue(request.args[1].endswith("/PRQWeb/Page/JSP/showPACSPic.jsp"))
+            self.assertEqual(request.kwargs["params"]["hid"], "CURRENT")
+            self.assertEqual(request.kwargs["params"].get("imgUrl"), ref.img_url or None)
+            self.assertEqual(request.kwargs["params"].get("uid"), ref.uid or None)
+
+    def test_pacs_empty_is_not_an_unknown_or_login_page(self):
+        reference = PacsStudyRef(MRN, "SYNTHETIC")
+        for content in ("查無資料!", "查無資料!!"):
+            study = parse_pacs_study(content, reference=reference)
+            self.assertEqual(study.images, ())
+            self.assertEqual(study.data_status, "EMPTY")
+        for content in ("", "<script>var x='查無資料!!';</script>", "<form>登入</form>"):
+            with self.subTest(content=content), self.assertRaises(ParseError):
+                parse_pacs_study(content, reference=reference)
+
+    def test_resval_text_and_unknown_templates_keep_sdk_completeness(self):
+        source = r'''resVal="First line\n第二行";
+while(resVal.indexOf("\n")>0){resVal=resVal.replace("\n","<br/>");}
+document.write(resVal);'''
+        reference = OrderReportRef(MRN, "SYNTHETIC", "O", "1")
+        def parse(script):
+            return parse_order_report('<table><tr><th>報告內容</th><td><pre><script>' + script +
+                                      '</script></pre></td></tr></table>', reference=reference)
+        report = parse(source)
+        self.assertEqual(report.report_text, "First line\n第二行")
+        self.assertTrue(assess_data(report).complete)
+        unknown = parse(source.replace('>0', '>=0'))
+        self.assertEqual(unknown.report_text, "")
+        self.assertFalse(assess_data(unknown).complete)
+
     def test_phototherapy_keeps_all_orders_and_a_validated_pdf(self):
         page = order_page() + order_page(photo=False)
         with self.assertRaises(ParseError) as failed:

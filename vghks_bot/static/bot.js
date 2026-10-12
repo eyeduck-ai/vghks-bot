@@ -215,7 +215,7 @@ async function openTools(group){return window.ToolWorkspace.open("review",group)
 function toolOptions(){
  const registration=$("#soapMode").value==="registration";
  $("#soapModeHelp").textContent=(registration?"依選取的掛號日期與科別取得該次門診 SOAP；未來掛號尚未到診。":"取得病人最新符合條件的門診 SOAP；若較新紀錄無內容，會往前補找。")+"就診日期以今天為上限；科別名稱或代碼包含任一關鍵字即符合，以逗號或頓號分隔。";
- $("#reviewRefreshHelp").textContent=$("#forceReview").checked?"本次重新查詢就診紀錄並下載 SOAP；舊版本保留。":"預設重用有效的已存病歷；索引或 SOAP 快取過期、資料缺漏時才補抓。";Choices.sync();
+ $("#reviewRefreshHelp").textContent=$("#forceReview").checked?"本次重新查詢清單內全部病人的就診紀錄並下載 SOAP；舊版本保留。":"同一天、相同條件的完整檢閱結果直接沿用，優先查詢新增病人；跨日或條件改變時重新檢查。";Choices.sync();
 }
 function captureCataractScroll(){
  const frame=$("#cataractFrame");
@@ -335,7 +335,7 @@ async function maybeRecoverConnection(){
  openReconnect(taskId,key,"院內登入狀態未能恢復或確認；請重新連線後續跑，已保存資料保留。");
 }
 const reviewFilters=()=>({q:$("#reviewQuery").value,search_mode:$("#reviewSearchMode").value,tag:$("#reviewTag").value});
-function reviewConditionSummary(task){const department=task.department_keywords?.length?"科別含任一：「"+task.department_keywords.join("」、「")+"」":task.department_keyword?"科別含「"+task.department_keyword+"」":task.department_filter==="all"?"不限科別":"同科別";return [task.mode==="registration"?"該次門診的 SOAP":"最新 SOAP",department,"截至 "+task.cutoff,task.force?"重新下載病歷":task.refresh?"檢查新紀錄":"重用已存病歷"].join(" · ");}
+function reviewConditionSummary(task){const department=task.department_keywords?.length?"科別含任一：「"+task.department_keywords.join("」、「")+"」":task.department_keyword?"科別含「"+task.department_keyword+"」":task.department_filter==="all"?"不限科別":"同科別";return [task.mode==="registration"?"該次門診的 SOAP":"最新 SOAP",department,"截至 "+task.cutoff,task.refresh_mrn?"重新抓取 "+task.refresh_mrn:task.force?"重新抓取全部病人":task.refresh?"檢查新紀錄":"重用已存病歷"].join(" · ");}
 function renderReviewHeader(value){
  const task=value.task;
  if(reviewHeaderTask!==task.id){reviewHeaderTask=task.id;reviewSetupExpanded=false;reviewHasResults=false;}
@@ -349,7 +349,7 @@ async function loadReview(){const sequence=++searchSequence;const value=await ap
  $("#reviewSummary").textContent=`${value.total} / ${value.all_total} 位`;
  const patients=$("#reviewPatients");patients.replaceChildren();if(!value.patients.some(p=>p.mrn===reviewPatient))reviewPatient=value.patients[0]?.mrn||"";
  for(const p of value.patients){const b=btn("",()=>selectReviewPatient(p.mrn),"patient-select"+(p.mrn===reviewPatient?" active":""));b.dataset.mrn=p.mrn;const heading=node("span",undefined,"review-patient-top"),sequenceNo=window.ReviewNotesUI.sequence(p.mrn);const sequenceBadge=node("span",sequenceNo||"未提供","review-sequence");sequenceBadge.title="掛號序號："+(sequenceNo||"未提供");heading.append(node("strong",p.name||p.mrn),sequenceBadge);b.append(heading,node("span",`${p.mrn} · ${labels[p.status]||p.status}`,"caption"));if(p.records?.length)b.append(node("span",p.records.map(r=>r.date).filter((v,i,a)=>a.indexOf(v)===i).join("、"),"caption"));const tags=new Map((p.records||[]).flatMap(r=>r.matches||[]).map(t=>[t.category,t]));b.append(badges([...tags.values()]),badges(p.manual_tags,true));patients.append(b);}
- if(!value.patients.length)patients.append(empty("沒有符合的病人。"));$("#reviewSummary").textContent=`${value.total} / ${value.all_total} 位`+(value.scope_issue_count?` · ${value.scope_issue_count} 份病歷的 tag 判定不完整`:"");$("#reviewSummary").title=$("#reviewSummary").textContent;renderReviewDetail();
+ if(!value.patients.length)patients.append(empty("沒有符合的病人。"));$("#reviewSummary").textContent=`${value.total} / ${value.all_total} 位`+(value.incremental?` · 新增 ${value.incremental.new} · 沿用 ${value.incremental.reused} · 待處理 ${value.incremental.pending}`:"")+(value.scope_issue_count?` · ${value.scope_issue_count} 份病歷的 tag 判定不完整`:"");$("#reviewSummary").title=$("#reviewSummary").textContent;renderReviewDetail();
 }
 function soapNode(record){return SOAPView.create(record);}
 async function selectReviewPatient(mrn){if(reviewPatient!==mrn&&!await window.ReviewNotesUI.flush(reviewPatient)){say("有備註尚未儲存，請重試後再切換病人。",true);return;}if(reviewPatient!==mrn)window.ScanBrowser?.reset();reviewPatient=mrn;renderReviewDetail();$("#reviewDetail").scrollTop=0;for(const n of $$(".patient-select"))n.classList.toggle("active",n.dataset.mrn===mrn);}
@@ -379,6 +379,7 @@ function renderReviewDetail(){
  demographics.append(mrn,ClinicalUI.ageBadge(p),node("span","性別 "+(p.sex||"未提供"),"muted"));
  const noteControl=window.ReviewNotesUI.control(p);
  name.append(node("h2",p.name||"姓名未提供"),demographics);panel.append(name);
+ if(p.checked_at)panel.append(node("p",[p.reused?p.reuse_label||"沿用已存結果":"最後查詢",time(p.checked_at)].join(" · "),"caption"));
  const controls=node("div",undefined,"review-controls"),shortcuts=node("div",undefined,"detail-shortcuts");
  shortcuts.append(btn("該次數值類報告",()=>window.ReviewHistoryUI.openCurrent("case_numeric",p.mrn,p.records)),
   btn("歷年數值類報告",()=>window.ReviewHistoryUI.open("numeric",p.mrn)),
@@ -392,7 +393,10 @@ function renderReviewDetail(){
  const divider=node("span",undefined,"review-control-divider");divider.setAttribute("role","separator");divider.setAttribute("aria-orientation","vertical");
  const index=reviewData.patients.indexOf(p),nav=node("div",undefined,"detail-actions");
  for(const [label,d] of [["上一位",-1],["下一位",1]]){const next=reviewData.patients[index+d],button=btn(label,()=>selectReviewPatient(next.mrn));button.disabled=!next;nav.append(button);}
- controls.append(shortcuts,divider,nav);
+ const reload=btn("重新抓取此病人",()=>window.ToolWorkspace.refreshPatient(p.mrn));
+ reload.disabled=root.read_only||!work?.online||!["completed","partial"].includes(reviewData.task.status);
+ reload.title="維持此份檢閱的科別、SOAP 模式與截至日，只更新此病人的就診索引及 SOAP。";
+ controls.append(shortcuts,divider,nav,reload);
  // Keep loaded image nodes while rebuilding patient-specific action handlers.
  for(const image of controls.querySelectorAll(".review-icon")){
   const previous=icons.get(image.getAttribute("src"))?.shift();if(previous)image.replaceWith(previous);

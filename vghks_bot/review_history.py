@@ -17,6 +17,7 @@ from vghks_sdk.models import (
 from .analysis_fetch import clean, model, order_identity, unique_refs, validate_patient
 from .analysis_store import digest
 from .connection_state import should_pause
+from .report_cache import branch_complete, result_complete
 from .scanner import safe_failure
 from .settings import today
 from .soap_data import snapshot as soap_snapshot
@@ -214,27 +215,21 @@ class ReviewHistory:
             step = self.store.step(mrn, "history-order:" + reference)
             old = self.store.step(mrn, "collected-order:" + reference)
             def complete(saved):
-                if not saved or saved["payload"].get("status") not in {
-                    "ready", "complete", "missing", "not_executed", "no_data", "no_links"
-                }:
-                    return False
-                try:
-                    for asset in saved["payload"].get("assets") or []:
-                        self.store.asset(asset["digest"])
-                except (KeyError, ValueError):
-                    return False
-                return True
+                return bool(saved and result_complete(saved["payload"], self.store))
 
             if step and (complete(step) or not complete(old)):
                 return step["payload"], step["saved_at"]
             if old:
                 value = old["payload"]
                 return {"id": reference, "order": self._public_orders({reference: self.order(mrn, reference, cataract=cataract)})[0],
-                        "details": [], "texts": [{"text": row.get("text", ""), "fields": row.get("fields", {})}
+                        "details": [], "texts": [{"text": row.get("text", ""), "fields": row.get("fields", {}),
+                                                  "status": row.get("status", ""), "text_extraction_notes": row.get("text_extraction_notes", [])}
                                                  for row in value.get("texts", [])],
                         "assets": [{key: asset[key] for key in ("digest", "mime", "size") if key in asset}
                                    for asset in value.get("assets", [])],
-                        "issues": [], "status": value.get("status", "ready")}, old["saved_at"]
+                        "issues": ([] if complete(old) else [{"branch": "report", "code": "BOT_REPORT_INCOMPLETE", "message": "已存報告未完整，仍需補查。"}]),
+                        "status": value.get("status", "ready"),
+                        "report_cache_revision": value.get("report_cache_revision", 0)}, old["saved_at"]
             return None, ""
         record = self.app.store.library.get_record(reference)
         return (record, record["updated_at"]) if record and record["mrn"] == mrn else (None, "")
@@ -244,7 +239,9 @@ class ReviewHistory:
         data, updated = self._stored(mrn, resource, reference, cataract=bool(values.get("cohort_id")))
         complete = (all(self.store.step(mrn, "orders-history:" + category) is not None
                         for category in ("*", "OR")) if resource == "orders" else
-                    data["history_loaded"] if resource == "scans" else data is not None)
+                    data["history_loaded"] if resource == "scans" else
+                    bool(data is not None and result_complete(data, self.store)) if resource == "order_report" else
+                    data is not None)
         return {"data": data, "updated_at": updated, "resource": resource,
                 "complete": complete,
                 "coverage": {"numeric_start": (today() - timedelta(days=3650)).isoformat(),
@@ -277,6 +274,8 @@ class ReviewHistory:
             data, _ = self._stored(mrn, resource, reference, cataract=bool(task.get("cohort_id")))
             complete = resource != "orders" or all(
                 self.store.step(mrn, "orders-history:" + category) is not None for category in ("*", "OR"))
+            if resource == "order_report":
+                complete = data is not None and result_complete(data, self.store)
             if data is not None and complete:
                 return {"status": "ready", "cached": True, "resource": resource, "reference": reference}
         if resource == "visits":
@@ -346,7 +345,7 @@ class ReviewHistory:
             variants = self.order(mrn, reference)
         allowed = self._allowed_mrns(mrn, visits=visits)
         result = {"id": reference, "order": self._public_orders({reference: variants})[0],
-                  "details": [], "texts": [], "assets": [], "issues": [], "status": "ready"}
+                  "details": [], "texts": [], "assets": [], "issues": [], "status": "ready", "report_cache_revision": 1}
         details = [order.get("detail_ref") for order in variants]
         reports = [order.get("report_ref") for order in variants]
         pdfs = [ref for order in variants for ref in order.get("pdf_refs") or []]
@@ -360,20 +359,24 @@ class ReviewHistory:
             key = "history-asset:" + method + ":" + digest(ref)
             saved = self.store.step(mrn, key)
             if saved and not task.get("force"):
-                if not binary:
+                if not binary and branch_complete(saved["payload"], saved.get("assessment")):
                     return saved["payload"]
-                try:
-                    self.store.asset(saved["payload"]["digest"])
-                    return saved["payload"]
-                except ValueError:
-                    pass
+                if binary:
+                    try:
+                        self.store.asset(saved["payload"]["digest"])
+                        return saved["payload"]
+                    except (KeyError, ValueError):
+                        pass
             with self.app.sdk_factory(self.app.settings) as sdk:
                 value = getattr(sdk.orders, method)(model(cls, ref))
             if binary:
                 return self.store.save_asset(mrn, key, value, self.app.username)
+            from vghks_sdk import assess_data
+
+            assessment = clean(assess_data(value))
             payload = clean(value)
             validate_patient(payload, source)
-            self.store.save_step(mrn, key, "report", payload, self.app.username)
+            self.store.save_step(mrn, key, "report", payload, self.app.username, assessment=assessment)
             return payload
 
         def collect(cls, method, refs, target, *, binary=False):
@@ -402,7 +405,11 @@ class ReviewHistory:
         for report in collected_reports:
             if report.get("report_text") or report.get("fields"):
                 result["texts"].append({"text": report.get("report_text", ""), "fields": report.get("fields", {}),
-                                        "status": report.get("report_data_status", "")})
+                                        "status": report.get("report_data_status", ""),
+                                        "text_extraction_notes": report.get("text_extraction_notes", [])})
+            if not branch_complete(report):
+                result["issues"].append({"branch": "get_order_report", "code": "BOT_REPORT_TEXT_PARTIAL",
+                                         "message": "已保留可讀內容；部分文字尚未完整解析。"})
             pdfs.extend(report.get("pdf_refs") or [])
             studies.extend(report.get("pacs_refs") or [])
         collected_studies = []

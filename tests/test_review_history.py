@@ -400,6 +400,98 @@ class ReviewHistoryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             other.review.history.read(self.request("order_report", ref))
 
+    def test_partial_report_retries_only_the_failed_image_branch(self):
+        self.fetch("orders")
+        ref = self.history.read(self.request("orders"))["data"][0]["id"]
+        orders = self.work.gateway.connection.orders
+        original = orders.download_pacs_image
+        with patch.object(orders, "download_pacs_image", side_effect=ValueError("synthetic image failure")):
+            failed = self.fetch("order_report", ref)
+        self.assertEqual(failed["status"], "partial")
+        self.assertFalse(self.history.read(self.request("order_report", ref))["complete"])
+        HistorySDK.calls.clear()
+        with patch.object(orders, "download_pacs_image", side_effect=original):
+            retried = self.fetch("order_report", ref)
+        self.assertEqual(retried["status"], "completed")
+        # A failed SDK operation invalidates PRQ's patient context. Restoring
+        # that identity guard is required; successful report branches stay local.
+        self.assertEqual([call[1] for call in HistorySDK.calls], ["index", "image"])
+        self.assertTrue(self.history.read(self.request("order_report", ref))["complete"])
+
+    def test_legacy_metadata_report_retries_incomplete_text_and_reuses_attachments(self):
+        self.fetch("orders")
+        ref = self.history.read(self.request("orders"))["data"][0]["id"]
+        orders = self.work.gateway.connection.orders
+        original = orders.get_order_report
+        partial = replace(original(REPORT), report_text="", report_data_status="METADATA_ONLY",
+                          text_extraction_notes=("REPORT_SCRIPT_UNSUPPORTED",))
+        with patch.object(orders, "get_order_report", return_value=partial):
+            self.assertEqual(self.fetch("order_report", ref)["status"], "partial")
+        key = "history-order:" + ref
+        legacy = self.work.analysis.store.step(MRN, key)["payload"]
+        legacy.pop("report_cache_revision")
+        legacy.update(status="ready", issues=[])
+        for text in legacy["texts"]:
+            text.pop("text_extraction_notes", None)
+        self.work.analysis.store.save_step(MRN, key, "order_report", legacy, self.work.username)
+        self.assertFalse(self.history.read(self.request("order_report", ref))["complete"])
+        HistorySDK.calls.clear()
+        self.assertEqual(self.fetch("order_report", ref)["status"], "completed")
+        self.assertEqual([call[1] for call in HistorySDK.calls], ["order-report"])
+        self.assertEqual(self.history.read(self.request("order_report", ref))["data"]["texts"][0]["text"], "合成文字報告")
+
+    def test_union_image_ref_survives_storage_and_cached_reopening(self):
+        self.fetch("orders")
+        ref = self.history.read(self.request("orders"))["data"][0]["id"]
+        image_url = ("http://192.168.20.137:800/xwado/PushWADO?requestType=WADO&"
+                     "contentType=image%2Fjpeg&rows=512&objectUID=1.2.3")
+        image = PacsImageRef(ALIAS, "REQUEST1", img_url=image_url)
+        orders = self.work.gateway.connection.orders
+        with patch.object(orders, "get_pacs_study", return_value=PacsStudy(STUDY, (image,))), \
+                patch.object(orders, "download_pacs_image", wraps=orders.download_pacs_image) as download:
+            self.assertEqual(self.fetch("order_report", ref)["status"], "completed")
+            download.assert_called_once_with(image)
+        saved = self.work.analysis.store.step(MRN, "history-asset:get_pacs_study:" + digest(clean(STUDY)))
+        self.assertEqual(saved["payload"]["images"][0]["img_url"], image_url)
+        HistorySDK.calls.clear()
+        self.assertTrue(self.fetch("order_report", ref)["items"][0]["cached"])
+        self.assertEqual(HistorySDK.calls, [])
+
+    def test_missing_saved_attachment_is_redownloaded_without_other_branches(self):
+        self.fetch("orders")
+        ref = self.history.read(self.request("orders"))["data"][0]["id"]
+        self.fetch("order_report", ref)
+        report = self.history.read(self.request("order_report", ref))["data"]
+        asset = next(asset for asset in report["assets"] if asset["mime"] == "image/png")
+        self.work.analysis.store.asset(asset["digest"])[0].unlink()
+        self.assertFalse(self.history.read(self.request("order_report", ref))["complete"])
+        HistorySDK.calls.clear()
+        self.assertEqual(self.fetch("order_report", ref)["status"], "completed")
+        self.assertEqual([call[1] for call in HistorySDK.calls], ["image"])
+
+    def test_cataract_union_image_is_saved_read_back_and_downloaded_once(self):
+        cohort = self.work.analysis.save_cohort({"source": "manual", "account_id": self.key,
+                                                 "name": "聯醫合成影像", "mrns": MRN})
+        HistorySDK.cataract_order_name = "DBR, free charge"
+        run_id = self.work.analysis.start({"cohort_id": cohort["id"], "modules": ["cataract"]})["run_ids"][0]
+        self.assertTrue(self.work.idle.wait(15))
+        self.assertEqual(self.work.analysis.store.document("analysis_runs", run_id)["status"], "completed")
+        order = self.work.analysis.results({"cohort_id": cohort["id"], "mrn": MRN, "module": "cataract"})["orders"][0]
+        request = {"cohort_id": cohort["id"], "mrn": MRN, "resource": "order_report", "reference": order["id"]}
+        image_url = "http://192.168.20.137:800/xwado/PushWADO?requestType=WADO&contentType=image%2Fjpeg&rows=512&objectUID=1.2.3"
+        image = PacsImageRef(ALIAS, "REQUEST1", img_url=image_url)
+        orders = self.work.gateway.connection.orders
+        with patch.object(orders, "get_pacs_study", return_value=PacsStudy(STUDY, (image,))), \
+                patch.object(orders, "download_pacs_image", wraps=orders.download_pacs_image) as download:
+            self.assertEqual(self.run_task(kind="history", **request)["status"], "completed")
+            download.assert_called_once_with(image)
+        report = self.history.read(request)
+        self.assertTrue(report["complete"])
+        self.assertEqual({asset["mime"] for asset in report["data"]["assets"]}, {"application/pdf", "image/png"})
+        HistorySDK.calls.clear()
+        self.assertTrue(self.run_task(kind="history", **request)["items"][0]["cached"])
+        self.assertEqual(HistorySDK.calls, [])
+
     def test_current_review_case_opens_numeric_and_orders_from_verified_index(self):
         current = self.work.review.results({"id": self.review["id"]})["patients"][0]["records"][0]
         reference = current["id"]

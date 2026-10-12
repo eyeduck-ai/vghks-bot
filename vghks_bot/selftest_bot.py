@@ -346,6 +346,14 @@ def self_test(report_path: Path) -> int:
                 from .selftest_cataract import check_numeric_prefetch
                 check_numeric_prefetch(workspace)
                 result["checks"].append("durable decimal refraction/KM parsing, serial background wait and selected-patient priority")
+                from .selftest_incremental import (
+                    check_incremental_reviews,
+                    check_sdk_report_contract,
+                )
+
+                check_incremental_reviews(Path(directory) / "incremental")
+                check_sdk_report_contract()
+                result["checks"].append("same-day incremental review after cache expiry, independent notes, single refresh, immutable query time and SDK imgUrl/UID/empty/resVal reports")
                 from .selftest_library_data import check_clinical_clearing
                 check_clinical_clearing(workspace, other)
                 result["checks"].append("offline classified cache clearing, shared attachment retention, cache-only patients and account isolation")
