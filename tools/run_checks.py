@@ -32,24 +32,42 @@ def report_ok(path):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--build", action="store_true", help="Also build, test and package the Windows EXE")
+    phase = parser.add_mutually_exclusive_group()
+    phase.add_argument("--checks-only", action="store_true", help="Run fast source/lint/contract checks")
+    phase.add_argument("--tests-only", action="store_true", help="Run synthetic tests and source EXE self-tests")
+    phase.add_argument("--build-only", action="store_true", help="Build after separately required CI checks and tests")
+    parser.add_argument("--gas-repo", type=Path, help="Verify the pinned GAS source, not just saved fixtures")
     args = parser.parse_args()
     REPORTS.mkdir(parents=True, exist_ok=True)
     os.environ["PYTHONUTF8"] = "1"
     python = sys.executable
-    run([python, "tools/verify_repository.py"])
-    run([python, "-m", "pip", "check"])
-    run([python, "-m", "ruff", "check", "."])
-    for script in sorted((ROOT / "vghks_bot/static").glob("*.js")):
-        run(["node", "--check", str(script)])
-    run([python, "tools/verify_sheet_contract.py"])
-    run([python, "-X", "utf8", "-m", "unittest", "discover", "-s", "tests", "-v"], "tests.log")
-    source = REPORTS / "source-selftest.json"
-    run([python, "run.py", "--self-test-report", str(source)])
-    report_ok(source)
-    monitor_source = REPORTS / "monitor-source-selftest.json"
-    run([python, "run_calendar_monitor.py", "--self-test-report", str(monitor_source)])
-    report_ok(monitor_source)
-    if args.build:
+    if args.build_only:
+        run([python, "tools/verify_repository.py"])
+        run([python, "-m", "pip", "check"])
+        for filename in ("source-selftest.json", "monitor-source-selftest.json"):
+            path = REPORTS / filename
+            if not path.is_file():
+                raise RuntimeError("Run --tests-only or download this run's test artifact before --build-only: " + filename)
+            report_ok(path)
+    if not (args.tests_only or args.build_only):
+        run([python, "tools/verify_repository.py"])
+        run([python, "-m", "pip", "check"])
+        run([python, "-m", "ruff", "check", "."])
+        for script in sorted((ROOT / "vghks_bot/static").glob("*.js")):
+            run(["node", "--check", str(script)])
+        contract = [python, "tools/verify_sheet_contract.py"]
+        if args.gas_repo:
+            contract += ["--gas-repo", str(args.gas_repo)]
+        run(contract)
+    if not (args.checks_only or args.build_only):
+        run([python, "tools/test_suite.py"])
+        source = REPORTS / "source-selftest.json"
+        run([python, "run.py", "--self-test-report", str(source)])
+        report_ok(source)
+        monitor_source = REPORTS / "monitor-source-selftest.json"
+        run([python, "run_calendar_monitor.py", "--self-test-report", str(monitor_source)])
+        report_ok(monitor_source)
+    if args.build or args.build_only:
         run([python, "tools/build_exe.py"], "build.log")
         frozen = REPORTS / "exe-selftest.json"
         run([str(ROOT / "dist/VGHKS-bot.exe"), "--self-test-report", str(frozen)])

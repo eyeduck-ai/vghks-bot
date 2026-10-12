@@ -45,6 +45,9 @@ def native_cell(cell):
 
 def fingerprint(book):
     value = copy.deepcopy(book)
+    # Reclaiming another confirmed batch's witness is not a clinical change.
+    value["developerMetadata"] = [m for m in value.get("developerMetadata", [])
+                                  if m.get("metadataKey") not in {"vghks.opd.update", "vghks.sheet.management"}]
     for sheet in value["sheets"]:
         sheet["rows"] = [[native_cell(c) for c in r] for r in sheet.get("rows", [])]
     return digest(value)
@@ -660,9 +663,11 @@ class FUPlanner:
 
 
 def verify(book, preview):
+    from .sheet_journal import is_confirmed
+
     committed = any(m.get("metadataValue") == preview["id"] and m.get("metadataKey") == "vghks.opd.update"
                     for m in book.get("developerMetadata", []))
-    if not committed:
+    if not committed and not is_confirmed(preview, preview["id"]):
         return "not_found"
     for expected in preview["expectations"]:
         sheet = next((s for s in book["sheets"] if s["properties"]["title"] == expected["sheet"]), None)

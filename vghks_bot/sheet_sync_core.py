@@ -15,6 +15,7 @@ from .sheet_identity import (
     plan_identity_setup,
     schema_kind,
 )
+from .sheet_journal import OPD_KEY, confirm, reclaim
 from .sheet_plan import (
     FUPlanner,
     Planner,
@@ -447,10 +448,15 @@ class SheetSyncCore:
                 read_sync_state(readback)["states"].get(uid) == value for uid, value in preview["sync_states"].items())
             preview.update(status="applied" if ok else "uncertain",
                            message="已寫入並核對。" if ok else "讀回資料有變動，請核對此批次。")
+            if ok:
+                confirm(preview, preview["id"])
         except SheetUncertain:
             preview.update(status="uncertain", message="寫入結果尚未確認，請先核對此批次。")
         finally:
             self.analysis.store.save_document("sheet_previews", preview)
+        if preview["status"] == "applied":
+            reclaim(client, readback, [(preview, OPD_KEY, [preview["id"]],
+                                       lambda p: self.analysis.store.save_document("sheet_previews", p))])
         return preview
 
     def automatic(self, client, records, cohort_id, scan_state):
@@ -487,12 +493,18 @@ class SheetSyncCore:
                         raise ValueError("刀表出現並行異動，請重新核對多段來源。")
                     scan_state.check_cancel()
                     client.write(requests)
-                    checked = read_sync_state(self.read(client))["states"]
-                    preview["status"] = "applied" if all(checked.get(uid) == state for uid, state in preview["sync_states"].items()) else "uncertain"
+                    readback = self.read(client)
+                    checked = read_sync_state(readback)["states"]
+                    ok = verify(readback, preview) == "verified" and all(checked.get(uid) == state for uid, state in preview["sync_states"].items())
+                    preview["status"] = "applied" if ok else "uncertain"
+                    if ok:
+                        confirm(preview, key)
                 except SheetUncertain:
                     preview["status"] = "uncertain"
                 finally:
                     self.analysis.store.save_document("sheet_previews", preview)
+                if preview["status"] == "applied":
+                    reclaim(client, readback, [(preview, OPD_KEY, [key], lambda p: self.analysis.store.save_document("sheet_previews", p))])
         fu = followup_candidates(records, self.analysis.app.settings)
         seen_fu = set()
         for row in rows + fu:

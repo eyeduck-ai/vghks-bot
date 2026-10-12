@@ -5,6 +5,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from vghks_bot.calendar_monitor_server import MonitorServer
 from vghks_bot.calendar_sync import headers, resource, scan
@@ -12,6 +13,87 @@ from vghks_bot.selftest_calendar import FU_HEADERS, cell, checks, monthly, prepa
 
 
 class MonitorTests(unittest.TestCase):
+    def test_unchanged_workbook_read_budget_is_constant_with_patients_and_months(self):
+        from vghks_bot.selftest_calendar import MONTH_HEADERS
+        for count, months in ((10, 1), (50, 12), (200, 24)):
+            with self.subTest(patients=count, months=months), tempfile.TemporaryDirectory() as directory:
+                tabs = []
+                for index in range(months):
+                    year, month = 2026 + (9 + index) // 12, (9 + index) % 12 + 1
+                    tab = monthly(f"{year}{month:02d}", index + 1)
+                    tab["rows"] = tab["rows"][:2]
+                    tab["rows"][1] = row(MONTH_HEADERS, **{"日期／報到時間": f"{year}-{month:02d}-12", "醫院": "高榮",
+                        "病歷號": "◆ 刀日", "ScheduleSyncId": f"{10000 + index:032x}"})
+                    tabs.append(tab)
+                tabs[0]["rows"].extend(row(MONTH_HEADERS, **{"醫院": "高榮", "病歷號": f"{index + 1:05d}",
+                    "姓名": "合成測試", "ScheduleSyncId": f"{index + 1:032x}"}) for index in range(count))
+                tabs[0]["properties"]["gridProperties"]["rowCount"] = count + 10
+                monitor, sheets, calendar = prepared(directory, workbook(*tabs))
+                try:
+                    self.assertTrue(monitor.run_once()["ok"])
+                    writes = len(sheets.writes)
+                    with patch.object(sheets, "read_all", wraps=sheets.read_all) as reads:
+                        self.assertTrue(monitor.run_once()["ok"])
+                    self.assertEqual(reads.call_count, 2)
+                    self.assertEqual(len(sheets.writes), writes)
+                    self.assertEqual(calendar.inserts, count)
+                    self.assertEqual(calendar.updates, 0)
+                finally:
+                    monitor.close()
+
+    def test_pause_during_a_request_preserves_binding_and_resumes_same_event(self):
+        with tempfile.TemporaryDirectory() as directory:
+            monitor, sheets, calendar = prepared(directory)
+            insert = calendar.insert
+
+            def paused_insert(eid, resource):
+                result = insert(eid, resource)
+                monitor.pause()
+                return result
+
+            try:
+                with patch.object(calendar, "insert", side_effect=paused_insert):
+                    result = monitor.run_once()
+                self.assertFalse(result["ok"])
+                self.assertEqual(result["failure_code"], "paused")
+                self.assertFalse(monitor.public()["enabled"])
+                self.assertEqual(calendar.inserts, 1)
+                self.assertTrue(monitor.run_once()["ok"])
+                self.assertEqual(calendar.inserts, 2)
+                self.assertTrue(all(item["event_id"] for item in scan(sheets.book)["patients"]))
+                self.assertTrue(monitor.public()["last_success"])
+                self.assertEqual(monitor.public()["consecutive_failures"], 0)
+            finally:
+                monitor.close()
+
+    def test_failure_breaks_consecutive_deletion_confirmation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            monitor, sheets, calendar = prepared(directory)
+            try:
+                self.assertTrue(monitor.run_once()["ok"])
+                sheets.book["sheets"][0]["rows"].pop(2)
+                self.assertTrue(monitor.run_once()["ok"])
+                with patch.object(sheets, "read_all", side_effect=ValueError("synthetic failed scan")):
+                    self.assertFalse(monitor.run_once()["ok"])
+                self.assertTrue(monitor.run_once()["ok"])
+                self.assertEqual(calendar.deletes, 0)
+                self.assertTrue(monitor.run_once()["ok"])
+                self.assertEqual(calendar.deletes, 1)
+            finally:
+                monitor.close()
+
+    def test_storage_failure_never_leaks_busy_lock(self):
+        with tempfile.TemporaryDirectory() as directory:
+            monitor, _, _ = prepared(directory)
+            try:
+                with patch.object(monitor.store, "get", side_effect=RuntimeError("synthetic disk failure")):
+                    with self.assertRaises(RuntimeError):
+                        monitor.run_once()
+                self.assertFalse(monitor.busy.locked())
+                self.assertTrue(monitor.run_once()["ok"])
+            finally:
+                monitor.close()
+
     def test_patient_uid_changed_to_day_header_is_pending_and_never_deleted(self):
         with tempfile.TemporaryDirectory() as directory:
             monitor, sheets, calendar = prepared(directory)

@@ -51,6 +51,7 @@ class AnalysisStore:
                     PRIMARY KEY(mrn,key,digest));
                 CREATE TABLE IF NOT EXISTS sheet_previews (
                     id TEXT PRIMARY KEY, payload TEXT NOT NULL, updated_at TEXT NOT NULL);
+                CREATE INDEX IF NOT EXISTS sheet_preview_recent ON sheet_previews(updated_at DESC,id);
                 CREATE TABLE IF NOT EXISTS surgery_drafts (
                     id TEXT PRIMARY KEY, payload TEXT NOT NULL, updated_at TEXT NOT NULL);
             """)
@@ -114,6 +115,20 @@ class AnalysisStore:
         with self.library.connect() as db:
             where, args = (" WHERE cohort_id=?", (cohort_id,)) if cohort_id else ("", ())
             return [json.loads(r[0]) for r in db.execute("SELECT payload FROM analysis_run_metadata" + where + " ORDER BY updated_at DESC", args)]
+
+    def marker_receipts(self, spreadsheet_id):
+        with self.library.connect() as db:
+            rows = db.execute("""SELECT payload FROM sheet_previews WHERE json_extract(payload,'$.spreadsheet_id')=?
+                AND json_extract(payload,'$.status') IN ('applied','applied_changed')
+                AND NOT EXISTS (SELECT 1 FROM json_each(sheet_previews.payload,'$.retired_markers')
+                    WHERE value=sheet_previews.id) ORDER BY updated_at LIMIT 100""", (spreadsheet_id,)).fetchall()
+        return [json.loads(row[0]) for row in rows]
+
+    def preview_summaries(self):
+        with self.library.connect() as db:
+            rows = db.execute("""SELECT json_remove(payload,'$.requests','$.expectations','$.baseline','$.source_digest',
+                '$.confirmed_markers','$.retired_markers') FROM sheet_previews ORDER BY updated_at DESC,id LIMIT 30""").fetchall()
+        return [json.loads(row[0]) for row in rows]
 
     @contextmanager
     def status_cache(self, mrns):

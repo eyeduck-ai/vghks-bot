@@ -16,7 +16,78 @@ concurrency:
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 jobs:
+  checks:
+    name: Source and pinned GAS contract
+    runs-on: windows-2022
+    timeout-minutes: 10
+    env:
+      PYTHONUTF8: '1'
+      PYTHONUNBUFFERED: '1'
+      PIP_DISABLE_PIP_VERSION_CHECK: '1'
+      RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Read pinned GAS revision
+        id: gas
+        shell: pwsh
+        run: |
+          $revision = (Get-Content tests/fixtures/gas_contract.json -Raw | ConvertFrom-Json).revision
+          if ($revision -notmatch '^[0-9a-f]{40}$') { throw 'Invalid GAS revision' }
+          "revision=$revision" >> $env:GITHUB_OUTPUT
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: eyeduck-ai/op_spreadsheet
+          ref: ${{ steps.gas.outputs.revision }}
+          path: .build/gas-contract
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.11'
+          architecture: x64
+          cache: pip
+          cache-dependency-path: requirements-build.lock.txt
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24'
+      - run: python -m pip install -r requirements-build.lock.txt
+      - run: python tools/run_checks.py --checks-only --gas-repo .build/gas-contract
+
+  tests:
+    name: Synthetic integration and source self-tests
+    runs-on: windows-2022
+    timeout-minutes: 30
+    env:
+      PYTHONUTF8: '1'
+      PYTHONUNBUFFERED: '1'
+      PIP_DISABLE_PIP_VERSION_CHECK: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.11'
+          architecture: x64
+          cache: pip
+          cache-dependency-path: requirements-build.lock.txt
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24'
+      - run: python -m pip install -r requirements-build.lock.txt
+      - run: python tools/run_checks.py --tests-only
+      - name: Upload test diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: tests-${{ github.sha }}
+          path: .build/ci/
+          include-hidden-files: true
+          retention-days: 14
+
   build:
+    needs: [checks, tests]
     runs-on: windows-2022
     timeout-minutes: 30
     env:
@@ -39,8 +110,13 @@ jobs:
           node-version: '24'
       - name: Install pinned dependencies
         run: python -m pip install -r requirements-build.lock.txt
-      - name: Test, build and verify the executable
-        run: python tools/run_checks.py --build
+      - name: Download source self-test reports from this run
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: tests-${{ github.sha }}
+          path: .build/ci/
+      - name: Build, verify and package both executables
+        run: python tools/run_checks.py --build-only
       - name: Upload validation reports
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

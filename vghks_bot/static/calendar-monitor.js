@@ -7,11 +7,15 @@ async function request(path, values) {
   const result = await response.json(); if (!response.ok) throw new Error(result.error || "操作失敗"); return result;
 }
 function paint(data) {
-  byId("state").textContent = (data.running ? "同步執行中 · " : data.enabled ? "定時監控已啟用 · " : "定時監控停用 · ") + data.message;
+  const state = (data.running ? "同步執行中 · " : data.enabled ? "定時監控已啟用 · " : "定時監控停用 · ") + data.message;
+  if (byId("state").textContent !== state) byId("state").textContent = state;
   byId("last").textContent = data.last_attempt || "尚未執行"; byId("next").textContent = data.enabled ? data.next_check || "即將執行" : "停用";
+  byId("success").textContent = data.last_success || "尚未成功同步";
+  byId("duration").textContent = data.duration_seconds === undefined ? "—" : data.duration_seconds + " 秒";
+  byId("failures").textContent = String(data.consecutive_failures || 0);
   byId("email").textContent = data.email || "尚未匯入"; byId("directory").textContent = data.data_dir;
   if (!dirty) { byId("spreadsheet").value = data.spreadsheet_id; byId("calendar").value = data.calendar_id; byId("hours").value = data.hours; byId("fu").checked = data.include_fu; byId("autorun").checked = data.autorun; byId("enabled").checked = data.enabled; }
-  byId("history").replaceChildren(...data.history.slice().reverse().map(item => { const li = document.createElement("li"); li.textContent = `${item.ok ? "完成" : "需核對"} · ${item.message}`; return li; }));
+  byId("history").replaceChildren(...data.history.map(item => { const li = document.createElement("li"); li.textContent = `${item.ok ? "完成" : item.failure_code === "paused" ? "已暫停" : "需核對"} · ${item.message}`; return li; }));
   byId("run").disabled = working || data.running || !data.setup_done; byId("prepare").disabled = working || data.running;
 }
 async function refresh() { try { paint(await request("/api/status")); } catch (error) { notice(error.message); } }

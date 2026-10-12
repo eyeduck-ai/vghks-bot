@@ -28,6 +28,7 @@ from .sheet_identity import (
     plan_identity_setup,
     schema_kind,
 )
+from .sheet_journal import confirm, is_confirmed, reclaim
 from .sheet_plan import (
     CELL_FIELDS,
     Planner,
@@ -279,9 +280,12 @@ def _report_rows(book):
 class SheetManagement:
     def __init__(self, app):
         self.app, self.db = app, app.review.db
+        self.sheets = getattr(app, "sheets", None) or app.analysis
+        if hasattr(self.sheets, "receipt_sources"):
+            self.sheets.receipt_sources.append(self._marker_receipts)
 
     def _config(self):
-        public = self.app.analysis.google.public()
+        public = self.sheets.google.public()
         return {"spreadsheet_id": public.get("spreadsheet_id", ""), "configured": bool(public.get("configured"))}
 
     @staticmethod
@@ -309,10 +313,16 @@ class SheetManagement:
 
     def _save(self, plan, **changes):
         plan.update(changes)
-        plan["can_apply"] = plan["status"] == "preview" and not plan.get("stale") and bool(plan.get("requests"))
+        if "requests" in plan:
+            plan["request_count"] = len(plan["requests"])
+        plan["can_apply"] = plan["status"] == "preview" and not plan.get("stale") and bool(plan.get("request_count"))
         plan["can_finalize"] = plan["status"] == "copied" and not plan.get("stale")
-        plan["request_count"] = len(plan.get("requests", []))
-        saved = self.db.save(PLAN_KIND, plan)
+        packed = dict(plan)
+        if hasattr(self.db, "save_sheet_backup"):
+            details = {key: packed.pop(key) for key in ("archive_plan", "requests", "expected") if key in packed}
+            if details:
+                packed["details_ref"] = self.db.save_sheet_backup(details)
+        saved = self.db.save(PLAN_KIND, packed)
         plan.update(saved)
         return self._public(plan)
 
@@ -321,7 +331,10 @@ class SheetManagement:
 
     def _unresolved(self, key, exclude=""):
         """Keep unresolved batches exclusive across the whole spreadsheet."""
-        plans = [plan for plan in self.db.all(PLAN_KIND)
+        rows = (self.db.summaries(PLAN_KIND, fields=("id", "spreadsheet_id", "status", "action", "submitted_at", "created_at"),
+                                 spreadsheet_id=key, statuses=("pending", "uncertain", "failed", "copied", "applied_changed", "blocked"), limit=None)
+                if hasattr(self.db, "summaries") else self.db.all(PLAN_KIND))
+        plans = [plan for plan in rows
                  if plan.get("spreadsheet_id") == key and plan["id"] != exclude
                  and (plan["status"] in {"pending", "uncertain", "failed", "copied"}
                       or plan.get("action") == "archive" and plan.get("submitted_at")
@@ -340,10 +353,14 @@ class SheetManagement:
             message += " 顯示最近成功讀取的本機快取，套用前仍須重新讀取雲端。"
         connection = {**config, "online": bool(cache.get("online")) and config["configured"], "stale": stale,
                       "cached_at": cache.get("cached_at", ""), "last_attempt": cache.get("last_attempt", ""), "message": message}
-        plans = sorted((plan for plan in self.db.all(PLAN_KIND) if plan.get("spreadsheet_id") in {key, ""}),
-                       key=lambda plan: plan.get("created_at", ""), reverse=True)[:30]
-        history = sorted((row for row in self.db.all(HISTORY_KIND) if row.get("spreadsheet_id") == key),
-                         key=lambda row: row.get("at", ""), reverse=True)[:30]
+        if hasattr(self.db, "summaries"):
+            plans = self.db.summaries(PLAN_KIND, fields=PUBLIC_PLAN_FIELDS, spreadsheet_id=key, include_unconfigured=True)
+            history = self.db.summaries(HISTORY_KIND, fields=PUBLIC_PLAN_FIELDS | {"at", "plan_id"}, spreadsheet_id=key, order_by="at")
+        else:
+            plans = sorted((plan for plan in self.db.all(PLAN_KIND) if plan.get("spreadsheet_id") in {key, ""}),
+                           key=lambda plan: plan.get("created_at", ""), reverse=True)[:30]
+            history = sorted((row for row in self.db.all(HISTORY_KIND) if row.get("spreadsheet_id") == key),
+                             key=lambda row: row.get("at", ""), reverse=True)[:30]
         return {**connection, "connection": connection, "months": months, "issues": issues,
                 "plans": [self._public(plan) for plan in plans], "history": history}
 
@@ -360,7 +377,7 @@ class SheetManagement:
                 book = self._read(client)
                 cache = self._cache_success(client.key, book)
                 return self._status({**config, "spreadsheet_id": client.key}, cache, stale=False)
-            return self.app.analysis.sheet_operation(work)
+            return self.sheets.sheet_operation(work)
         except SheetError as exc:
             return self._status(config, self._cache_error(config["spreadsheet_id"], str(exc)))
 
@@ -369,6 +386,18 @@ class SheetManagement:
         found = [item for item in book.get("developerMetadata", [])
                  if item.get("metadataKey") == METADATA_KEY and item.get("metadataValue") == token]
         return len(found) == 1
+
+    def _committed(self, book, plan):
+        return self._marker(book, plan.get("marker")) or is_confirmed(plan, plan.get("marker"))
+
+    def _marker_receipts(self, spreadsheet_id):
+        result = []
+        for plan in self.db.sheet_receipts(PLAN_KIND, spreadsheet_id):
+            tokens = list(dict.fromkeys([*plan.get("confirmed_markers", []), plan["marker"]]))
+            if plan.get("action") == "archive" and plan.get("phase") == "delete":
+                tokens.append(plan["id"] + ":copy")
+            result.append((plan, METADATA_KEY, tokens, lambda p: self._save(p)))
+        return result
 
     @staticmethod
     def _add_marker(book, requests, token):
@@ -464,7 +493,7 @@ class SheetManagement:
                     else:
                         plan.update(status="unchanged", message="目前結構已符合這項操作，無需寫入。")
                 return self._save(plan)
-            return self.app.analysis.sheet_operation(work)
+            return self.sheets.sheet_operation(work)
         except SheetError as exc:
             self._cache_error(config["spreadsheet_id"], str(exc))
             return self._save(plan, status="draft" if isinstance(exc, SheetUnavailable) else "blocked", stale=True, message=str(exc))
@@ -472,7 +501,10 @@ class SheetManagement:
     def _plan(self, values):
         if not isinstance(values, dict) or not isinstance(values.get("id"), str):
             raise ValueError("請選擇已保存的刀表管理預覽。")
-        return self.db.get(PLAN_KIND, values["id"])
+        plan = self.db.get(PLAN_KIND, values["id"])
+        if plan.get("details_ref"):
+            plan.update(self.db.sheet_backup(plan["details_ref"]))
+        return plan
 
     def _same_sheet(self, client, plan):
         if client.key != plan["spreadsheet_id"]:
@@ -482,7 +514,7 @@ class SheetManagement:
         self._same_sheet(client, plan)
         book = book if book is not None else self._read(client, archive=plan["action"] == "archive")
         plan["cached_at"] = self._cache_success(client.key, book)["cached_at"]
-        if not self._marker(book, plan.get("marker")):
+        if not self._committed(book, plan):
             if plan["status"] in {"pending", "uncertain", "failed"}:
                 return self._save(plan, status="uncertain", stale=False,
                     message="尚未找到此批次完成標記；不會自動重送，請核對雲端內容。")
@@ -490,6 +522,7 @@ class SheetManagement:
                 return self._save(plan, status="blocked", stale=False,
                     message="無法確認封存副本的完成標記，保留原月份，請人工核對。")
             return self._public(plan)
+        confirm(plan, plan["marker"])
         if plan["action"] == "archive":
             from .sheet_archive import verify_archive, verify_archive_complete
             verify = verify_archive_complete if plan["phase"] == "delete" else verify_archive
@@ -505,6 +538,8 @@ class SheetManagement:
             result = self._save(plan, status="applied" if valid else "applied_changed", stale=False, applied_at=timestamp(),
                 message="已寫入並核對。" if valid else "批次已送達，但讀回結構或內容有變動，請人工核對。")
         self._history(plan)
+        if not getattr(getattr(self.app, "root", self.app), "read_only", False):
+            reclaim(client, book, [(plan, METADATA_KEY, [plan["marker"]], lambda p: self._save(p))])
         return result
 
     def check(self, values):
@@ -522,7 +557,7 @@ class SheetManagement:
                 except SheetError as exc:
                     self._cache_error(plan["spreadsheet_id"], str(exc))
                     return self._save(plan, stale=True, message=str(exc))
-            return self.app.analysis.sheet_operation(work)
+            return self.sheets.sheet_operation(work)
         except SheetError as exc:
             self._cache_error(plan["spreadsheet_id"], str(exc))
             # Client creation can fail before taking the callback's lock. Do
@@ -552,11 +587,11 @@ class SheetManagement:
                     return self._blocked_by(plan, unresolved)
                 book = self._read(client, archive=plan["action"] == "archive")
                 plan["cached_at"] = self._cache_success(client.key, book)["cached_at"]
-                if self._marker(book, plan["marker"]):
+                if self._committed(book, plan):
                     if plan["status"] != "copied":
                         return self._check_work(client, plan, book)
                 if plan["status"] == "copied":
-                    if not self._marker(book, plan["marker"]):
+                    if not self._committed(book, plan):
                         return self._save(plan, status="blocked", stale=False,
                             message="無法確認封存副本的完成標記，保留原月份，請人工核對。")
                     from .sheet_archive import build_archive_delete
@@ -599,7 +634,7 @@ class SheetManagement:
                 except SheetError as exc:
                     self._cache_error(plan["spreadsheet_id"], str(exc))
                     return self._save(plan, stale=True, message=str(exc))
-            return self.app.analysis.sheet_operation(locked_work)
+            return self.sheets.sheet_operation(locked_work)
         except SheetError as exc:
             self._cache_error(plan["spreadsheet_id"], str(exc))
             return {**self._public(self._plan(values)), "stale": True, "message": str(exc),

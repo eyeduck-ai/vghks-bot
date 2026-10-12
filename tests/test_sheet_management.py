@@ -57,8 +57,11 @@ class Sheets(MemorySheets):
         return book
 
     def write(self, requests):
-        self.pending_seen.append([plan["status"] for plan in self.db.all(PLAN_KIND)])
-        self.writes += 1
+        if requests and all("deleteDeveloperMetadata" in request for request in requests):
+            self.marker_writes += 1
+        else:
+            self.pending_seen.append([plan["status"] for plan in self.db.all(PLAN_KIND)])
+            self.writes += 1
         if self.timeout_before_commit:
             raise SheetUncertain("synthetic timeout")
         if self.reject_write:
@@ -528,8 +531,8 @@ class SheetManagementTests(unittest.TestCase):
         self.assertEqual(self.manager.apply(values)["status"], "uncertain")
         self.assertEqual(self.client.writes, 1)
 
-    def test_archive_changed_source_or_lost_marker_never_deletes_and_blocks_other_writes(self):
-        for mode in ("source", "marker"):
+    def test_archive_changed_source_or_lost_receipt_never_deletes_and_blocks_other_writes(self):
+        for mode in ("source", "receipt"):
             with self.subTest(mode=mode):
                 self.setUp()
                 preview = self.prepare_archive()
@@ -538,10 +541,33 @@ class SheetManagementTests(unittest.TestCase):
                     self.client.book["sheets"][0]["rows"][2][14] = literal("concurrent clinical edit")
                 else:
                     self.client.book["developerMetadata"] = []
+                    plan = self.db.get(PLAN_KIND, preview["id"])
+                    plan.pop("confirmed_markers", None)
+                    self.db.save(PLAN_KIND, plan)
                 self.assertEqual(self.manager.apply({"id": preview["id"]})["status"], "blocked")
                 self.assertEqual(len(self.client.book["sheets"]), 2)
                 self.assertEqual(self.preview("repair")["status"], "blocked")
                 self.assertEqual(self.client.writes, 1)
+
+    def test_archive_finalizes_with_local_receipt_after_cloud_marker_reclamation(self):
+        preview = self.prepare_archive()
+        self.assertEqual(self.manager.apply({"id": preview["id"]})["status"], "copied")
+        self.assertEqual(self.client.book["developerMetadata"], [])
+        self.assertEqual(self.client.marker_writes, 1)
+        self.assertEqual(self.manager.apply({"id": preview["id"]})["status"], "applied")
+        self.assertEqual(self.client.writes, 2)
+        self.assertEqual(self.client.marker_writes, 2)
+        self.assertEqual(len(self.client.book["sheets"]), 1)
+
+    def test_read_only_reconciliation_preserves_unretired_cloud_marker(self):
+        preview = self.preview("create_month", month="202610")
+        self.client.timeout_after_commit = True
+        self.assertEqual(self.manager.apply({"id": preview["id"]})["status"], "uncertain")
+        self.client.timeout_after_commit = False
+        self.app.read_only = True
+        self.assertEqual(self.manager.check({"id": preview["id"]})["status"], "applied")
+        self.assertEqual(self.client.marker_writes, 0)
+        self.assertEqual(len(self.client.book["developerMetadata"]), 1)
 
     def test_report_conflicting_source_and_archive_identity_excludes_both_copies(self):
         preview = self.prepare_archive()
