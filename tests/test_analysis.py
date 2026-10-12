@@ -76,7 +76,9 @@ class AnalysisTests(unittest.TestCase):
                 **options,
             }
         )
-        self.assertTrue(self.app.idle.wait(15))
+        # Hosted Windows runners can spend longer flushing the synthetic SQLite
+        # and attachment writes. This checks completion, not a 15-second SLA.
+        self.assertTrue(self.app.idle.wait(60), "synthetic analysis did not finish within 60 seconds")
         return self.app.analysis.store.document("analysis_runs", reply["run_ids"][0])
 
     def test_serial_patients_share_login_and_shared_content_survives_one_patient_delete(self):
