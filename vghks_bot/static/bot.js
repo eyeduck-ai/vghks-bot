@@ -350,7 +350,6 @@ function renderReviewHeader(value){
  if(finished||suppressCompletedReview&&task.status==="completed")$("#reviewProgress").replaceChildren();else JobProgress.show("#reviewProgress",task);
 }
 async function loadReview(){const sequence=++searchSequence;const value=await api("/reviews/results",{id:currentReview,...reviewFilters()});if(sequence!==searchSequence||page!=="review"||value.task.id!==currentReview)return;await window.ReviewNotesUI.load(currentReview);if(sequence!==searchSequence||page!=="review"||value.task.id!==currentReview)return;reviewData=value;reviewSignature=value.task.updated_at+"/"+value.task.status;window.ToolWorkspace?.adoptReview(value.task);renderReviewHeader(value);
- $("#reviewSummary").textContent=`${value.total} / ${value.all_total} 位`;
  renderReviewPatients(value.patients);
  $("#reviewSummary").textContent=`${value.total} / ${value.all_total} 位`+(value.incremental?` · 新增 ${value.incremental.new} · 沿用 ${value.incremental.reused} · 待處理 ${value.incremental.pending}`:"")+(value.scope_issue_count?` · ${value.scope_issue_count} 份病歷的 tag 判定不完整`:"");$("#reviewSummary").title=$("#reviewSummary").textContent;renderReviewDetail();
 }

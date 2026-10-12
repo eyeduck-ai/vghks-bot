@@ -45,17 +45,13 @@ def _value(row, cols, label):
     return text(row[index]) if index is not None and index < len(row) else ""
 
 
-def _kind(row, cols, schema):
+def _kind(row, cols):
     mrn = norm(_value(row, cols, "病歷號"))
     if mrn == "◆ 刀日":
         return "day"
     if mrn or norm(_value(row, cols, "姓名")):
         return "patient"
     return "orphan"
-
-
-def _valid_day_header(row, cols):
-    return monthly_row(row, cols)["kind"] == "day"
 
 
 def scan_identities(book):
@@ -81,7 +77,7 @@ def scan_identities(book):
             uid_col = -1
         in_block = schema != "month"
         for index, row in enumerate(sheet.get("rows", [])[header_row + 1:], header_row + 1):
-            kind = _kind(row, cols, schema)
+            kind = _kind(row, cols)
             if schema == "month":
                 parsed = monthly_row(row, cols)
                 kind = parsed["kind"]
@@ -279,7 +275,7 @@ def plan_identity_setup(book, *, include_archives=True):
                                     target_columns=month_targets if schema == "month" else None)
             valid_block = schema != "month"
             for index, row in enumerate(sheet["rows"][header_row + 1:], header_row + 1):
-                kind = _kind(row, cols, schema)
+                kind = _kind(row, cols)
                 if schema == "month":
                     parsed = monthly_row(row, cols)
                     kind = parsed["kind"]

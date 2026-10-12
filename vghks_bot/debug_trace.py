@@ -414,12 +414,6 @@ class TraceRecorder(DiagnosticRecorder):
         except (ValueError, UnicodeError):
             return False
 
-    def recovery_reference(self):
-        frame = getattr(self.http_local, "last", None)
-        interaction = frame["context"].get("interaction_id", "") if frame else ""
-        return {"sdk_run_id": self.run_id, "summary": self._summary(frame) if frame else {},
-                "operations": [entry for entry in self._recent if entry["interaction_id"] == interaction]}
-
     def consume_incidents(self):
         result = []
         while self._pending_incidents:

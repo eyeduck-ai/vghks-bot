@@ -54,11 +54,13 @@ Python 虛擬環境的啟動腳本與部分命令列程式含建立時的絕對�
 .venv/Scripts/python.exe -m unittest discover -s tests -p test_surgery_schedule.py -v
 ```
 
-瀏覽器 fixture 會印出帶本機登入 token 的 URL；開啟後以「結束程式」離開。進階工具目前仍使用嵌入的 `/tools` 比較頁，因此 `index.html`、`app.js`、`analysis.js` 等檔案仍是正式程式的一部分。可用 `tools/browser_analysis_fixture.py` 單獨驗證比較頁，`tools/sheet_validation.py` 提供合成刀表資料。
+瀏覽器 fixture 會印出帶本機登入 token 的 URL；開啟後以「結束程式」離開。進階工具目前仍使用嵌入的 `/tools` 比較頁，因此 `index.html`、`app.js`、`analysis.js` 等檔案仍是正式程式的一部分。可用 `tools/browser_analysis_fixture.py` 單獨驗證比較頁。
+
+刀表合成資料由 `tests/fixtures/` 與相關整合測試維護。`tools/verify_sheet_contract.py` 離線核對主程式、監控程式及 GAS 匯出的 72 組格式契約；指定 `--gas-repo <GAS checkout>` 時，另從該 checkout 執行 GAS 匯出器核對。需要線上只讀檢查時，使用 `tools/check_sheet_contract.py`，依 `--help` 指定外部服務帳戶檔、刀表、日曆與報告路徑；憑證及線上報告不加入 Git。
 
 來源邊界檢查同時涵蓋 Git 已追蹤檔案與尚未提交、未被忽略的新檔案，不需要先 stage 才能檢查。提交前仍以 `git add <明確路徑>` 或明確的來源目錄選取變更；不要加入真實資料庫或病歷 fixture。失敗重現請建立合成資料。
 
-## 單檔 EXE
+## 主程式與監控 EXE
 
 ```powershell
 ./build.ps1
@@ -67,12 +69,13 @@ Python 虛擬環境的啟動腳本與部分命令列程式含建立時的絕對�
 .venv/Scripts/python.exe tools/run_checks.py --build
 ```
 
-流程包括：來源範圍與版本核對 → pip／Ruff／JS 語法 → Python 測試 → 原始碼自測 → PyInstaller → EXE 自測 → 靜態檔及預設值核對 → ZIP 與 SHA-256。
+流程包括：來源範圍與版本核對 → pip／Ruff／JS 語法 → 共用刀表契約 → Python 測試 → 兩個程式的原始碼自測 → PyInstaller → 雙 EXE 自測 → 靜態檔及預設值核對 → ZIP 與 SHA-256。
 
-- `dist/VGHKS-bot.exe`：Windows x64 單檔。
-- `dist/VGHKS-bot-v<版本>-windows-x64.zip`：EXE、文件、第三方聲明及驗證報告。
-- `dist/SHA256SUMS.txt`：EXE 與 ZIP 校驗值。
-- `.build/ci/`：測試、建置日誌及 JSON 自測結果。
+- `dist/VGHKS-bot.exe`：Windows x64 主程式。
+- `dist/VGHKS-calendar-monitor.exe`：獨立日曆監控程式。
+- `dist/VGHKS-bot-v<版本>-windows-x64.zip`：雙 EXE、文件、第三方聲明及驗證報告。
+- `dist/SHA256SUMS.txt`：兩個 EXE 與 ZIP 校驗值。
+- `.build/ci/`：測試、建置日誌及兩個程式的原始碼／EXE 自測與封裝核對 JSON。
 
 只打包、不跑完整檢查的開發命令是 `python tools/build_exe.py`；它不是 Release 流程。CI 一律使用公開預設值，帳密留白。
 
@@ -91,7 +94,7 @@ Python 虛擬環境的啟動腳本與部分命令列程式含建立時的絕對�
 ./tools/clean.ps1 -KeepValidationReports -OldReleases -BrowserArtifacts -WhatIf
 ```
 
-預設清理 `.build/`、`.ruff_cache/`、`build/` 及來源下的 Python 快取；先檢查範圍，遇到連結／junction 會停止。保留 `dist/`、`.venv/`、`.local/` 與 `VGHKS-bot-data/`。`-KeepValidationReports` 保留 `.build/ci/`；`-OldReleases` 只清除正式命名的舊 ZIP，保留最新兩版，EXE、文件、校驗值與 HAR 不受影響。
+預設清理 `.build/`、`.ruff_cache/`、`build/` 及來源下的 Python 快取；先檢查範圍，遇到連結／junction 會停止。保留 `dist/`、`.venv/`、`.local/`、`VGHKS-bot-data/` 與 `VGHKS-calendar-data/`。`-KeepValidationReports` 保留 `.build/ci/`；`-OldReleases` 只清除正式命名的舊 ZIP，保留最新兩版，EXE、文件、校驗值與 HAR 不受影響。
 
 `-BrowserArtifacts` 只清除 `.playwright-cli/` 與 `output/playwright/`，不清除 `output/` 的其他檔案。使用於合成 UI 驗證後的暫存清理；需留存的個人診斷或截圖放在 `.local/`。清理腳本在刪除第一項前先核對所有目標的絕對路徑與連結，`-WhatIf` 仍執行檢查但不刪除。
 

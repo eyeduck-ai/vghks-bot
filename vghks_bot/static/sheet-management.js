@@ -41,7 +41,6 @@ window.SheetManagement=(()=>{
    const value=q(id);value.disabled=busy||readOnly();
   }
   q("sheetManagementSettings").disabled=busy;
-  q("sheetManagementPreviewButton").disabled=busy||readOnly();
   q("sheetManagementReportButton").disabled=busy||readOnly()||!state?.configured;
   for(const value of q("sheetManagementPlans").querySelectorAll("button[data-plan-action]")){
    const plan=plans.get(value.dataset.planId),kind=value.dataset.planAction;

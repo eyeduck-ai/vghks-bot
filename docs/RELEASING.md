@@ -1,14 +1,14 @@
 # CI 與版本發布
 
-Windows EXE 可先在本機執行 `./build.ps1` 建置與離線自測，再帶入內網驗收；推送 GitHub 不是取得測試 EXE 的前提。GitHub Actions 會重新驗證推送的來源碼，不需要把 EXE 提交進 Git。
+Windows 主程式及獨立日曆監控 EXE 可先在本機執行 `./build.ps1` 一起建置與離線自測，再帶入內網驗收。GitHub Actions 會重新驗證推送的來源碼；EXE 及本機資料目錄不提交進 Git。
 
 ## 已設定的流程
 
 | 觸發 | 行為 |
 | --- | --- |
-| Push 到 `main`、Pull Request | 在 Windows runner 測試、打包、EXE 自測；保存下載用 Artifact |
+| Push 到 `main`、Pull Request | 在 Windows runner 測試、打包、雙 EXE 自測；保存下載用 Artifact |
 | Actions 手動執行 | 同一套驗證與打包，不發布 Release |
-| Push `v*` 標籤 | 先完成全部檢查，再將 EXE、ZIP 與 SHA-256 發布到該標籤的 GitHub Release |
+| Push `v*` 標籤 | 先完成全部檢查，再將兩個 EXE、ZIP 與 SHA-256 發布到該標籤的 GitHub Release |
 
 工作流程：[windows.yml](../.github/workflows/windows.yml)。建置工作只有 `contents: read`；發布工作才取得 `contents: write`。使用內建 `GITHUB_TOKEN`，不需要額外 PAT、院內帳密、Google 金鑰或簽章憑證。
 
@@ -18,7 +18,7 @@ Windows EXE 可先在本機執行 `./build.ps1` 建置與離線自測，再帶�
 
 1. 同步更新 `pyproject.toml` 的版本及 `vghks_bot/__init__.py` 的 `__version__`。
 2. 在 `CHANGELOG.md` 最上方加入 `## <版本>` 與該次變更。
-3. 在本機完成 EXE 自測及必要的院內驗收，再提交並推送 `main`，等待 Windows build 成功；只推送 `main` 會得到測試 Artifact，不會建立 Release。
+3. 在本機完成 `tools/run_checks.py --build` 的雙 EXE 自測及必要的院內驗收，再提交並推送 `main`，確認該 commit 的 Windows build 成功；只推送 `main` 會得到測試 Artifact，不會建立 Release。
 4. 需要正式 Release 時，才在已驗證的同一 commit 建立版本標籤並推送：
 
 ```powershell
@@ -31,10 +31,10 @@ git push origin "v$releaseVersion"
 
 ## 下載與驗證
 
-- 使用者可只下載 `VGHKS-bot.exe`。
-- ZIP 另附操作文件、第三方聲明及原始碼／EXE 自測報告。
-- 使用 PowerShell `Get-FileHash .\VGHKS-bot.exe -Algorithm SHA256`，比對 `SHA256SUMS.txt`。
-- 新版只更換 EXE，保留 `VGHKS-bot-data`；資料格式不相容時依[操作說明](USER_GUIDE.md)處理。
+- 主程式使用 `VGHKS-bot.exe`；需要日曆同步時另外下載並執行 `VGHKS-calendar-monitor.exe`。
+- ZIP 包含兩個 EXE、操作文件、第三方聲明及兩個程式的原始碼／EXE 自測與封裝核對報告。
+- 使用 PowerShell `Get-FileHash .\VGHKS-bot.exe -Algorithm SHA256`，比對 `SHA256SUMS.txt`；監控 EXE 及 ZIP 亦各有校驗值。
+- 更新前結束兩個程式，再更換 EXE，保留 `VGHKS-bot-data` 與 `VGHKS-calendar-data`；資料格式不相容時依[操作說明](USER_GUIDE.md)處理。
 
 目前未設定 Windows 程式碼簽章；CI 驗證與 SHA-256 不代表已簽章。若日後加入簽章，應在簽署完成後才重新計算 checksum。
 
