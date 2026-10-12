@@ -200,6 +200,7 @@ async function toolSelectionTests(){
   requests.push({path,values});
   if(path==="/tools/state")return {modules:JSON.parse(JSON.stringify(modules))};
   if(path==="/tools/state/save"){modules[values.module]={set_id:values.set_id};return {modules};}
+  if(path==="/tools/handoff/remove")return {worklist:{...groups[3],worklist_module:"surgery",members:groups[3].members.filter(member=>!values.mrns.includes(member.mrn))},cohort:{id:"WORKLIST-COHORT"}};
   if(path==="/tasks/start"){if(values.kind==="resolve")return lookupGate.promise;if(values.kind==="review")return startGate.promise;}
   if(path.startsWith("/tasks/detail"))return {status:"completed",done:1,items:[{mrn:"00000999",input:"00000999",status:"resolved"}]};
   throw new Error(path);
@@ -235,6 +236,157 @@ async function toolSelectionTests(){
  c.root.read_only=true;await ui.open("cataract",groups[2]);const writes=requests.filter(request=>request.path==="/tools/state/save").length;
  await $("#toolClearPatients").emit("click");assert.equal(c.selectedSet.members.length,0);
  assert.equal(requests.filter(request=>request.path==="/tools/state/save").length,writes,"readonly clearing wrote database");
+ assert.equal(JSON.stringify(groups),original);ui.reset();c.root.read_only=false;
+ await ui.open("surgery",{...groups[3],worklist_module:"surgery"});
+ await $("#toolClearPatients").emit("click");assert.equal(c.selectedSet.members.length,0);
+ assert.ok(requests.some(request=>request.path==="/tools/handoff/remove"&&request.values.mrns.length===3));
  assert.equal(JSON.stringify(groups),original);ui.reset();
 }
-(async()=>{await noteTests();await activityTests();await historyLoadingTests();layoutTests();await toolSelectionTests();process.stdout.write("Review UI race, hierarchy, loading, viewport and tool selection checks passed\n");})().catch(error=>{console.error(error);process.exitCode=1;});
+async function handoffTests(){
+ const s=surface(),c=s.context,$=s.$,calls=[],opened=[],received=[];let gate=null,flush=true;
+ c.Option=function(label,value){const option=s.node("option",label);option.value=value;return option;};
+ $("#handoffForm").reportValidity=()=>true;$("#handoffDialog").close=()=>{$("#handoffDialog").open=false;};
+ c.dialog=id=>{$("#"+id).open=true;};c.openModule=async(...args)=>opened.push(args);
+ c.window.ReviewNotesUI={flushAll:async()=>flush};c.window.ToolWorkspace={receivedHandoff:(...args)=>received.push(args)};
+ const result={worklist:{id:"W1"},cohort:{id:"C1"},focus_mrn:"P1"};
+ c.api=async(path,values)=>{calls.push({path,values});if(gate)await gate.promise;return result;};
+ s.run("vghks_bot/static/review-handoff.js");const ui=c.window.ReviewHandoff;
+ const patient={mrn:"P1",name:"合成病人",records:[{id:"SOAP1",date:"2026-10-11",section:"眼科"}]};
+ ui.open(patient);$("#handoffModule").value="surgery";$("#handoffSource").value="SOAP1";
+ gate=deferred();const send=ui.send(false);await tick();assert.equal($("#handoffAdd").disabled,true);
+ await ui.send(false);assert.equal(calls.length,1,"double click appended twice");gate.resolve();await send;gate=null;
+ assert.deepEqual(JSON.parse(JSON.stringify(calls[0].values)),{module:"surgery",review_task_id:"R1",mrns:["P1"],record_ids:["SOAP1"]});
+ assert.equal(opened.length,0,"add-only opened tool");assert.equal(received.length,1);
+ ui.open(patient);$("#handoffModule").value="cataract";$("#handoffSource").value="";await ui.send(true);
+ assert.equal(opened[0][0],"C1");assert.equal(opened[0][1],"cataract");assert.equal(opened[0][2].focusMrn,"P1");assert.equal(opened[0][2].selectedOnly,true);
+ ui.open(patient);flush=false;const before=calls.length;await assert.rejects(ui.send(true),/備註/);assert.equal(calls.length,before);
+ flush=true;c.account="OTHER";await assert.rejects(ui.send(false),/帳號已切換/);
+ c.root.read_only=true;assert.throws(()=>ui.open(patient),/唯讀/);
+}
+async function sheetSyncTests(){
+ const s=surface(),c=s.context,$=s.$,calls=[],opened=[];
+ $("#toolSourcePanel").insertAdjacentHTML=()=>{};c.document.body={insertAdjacentHTML(){}};
+ const close=s.node("button");$("#sheetSyncDialog").querySelector=()=>close;$("#sheetSyncDialog").close=()=>{};
+ $("#sheetSyncForm").reportValidity=()=>true;c.openModule=async(...args)=>opened.push(args);
+ const state={settings:{enabled:true,interval_minutes:60,last_run_at:"2026-10-11T10:00:00"},online:true,running:false,
+  pending:[{id:"PENDING1",mrn:"P1",name:"合成病人",reason:"日期未填",cohort_id:"C1"}]};
+ c.api=async(path,values)=>{calls.push({path,values});return path.endsWith("settings")?state.settings:state;};
+ s.run("vghks_bot/static/sheet-sync-ui.js");const ui=c.window.SheetSyncUI;
+ ui.visibility("module","surgery");await tick();assert.equal($("#sheetSyncPanel").hidden,false);
+ assert.match($("#sheetSyncStatus").textContent,/每 60 分鐘/);assert.equal($("#sheetSyncPending").children.length,1);
+ const actions=$("#sheetSyncPending").children[0].children[2];await actions.children[0].run();
+ assert.equal(opened[0][0],"C1");assert.equal(opened[0][1],"surgery");await actions.children[1].run();
+ assert.ok(calls.some(call=>call.path==="/sheet-sync/review"&&call.values.id==="PENDING1"&&call.values.action==="dismiss"));
+ $("#sheetSyncEnabled").checked=true;$("#sheetSyncInterval").value="60";await $("#sheetSyncForm").emit("submit");
+ assert.ok(calls.some(call=>call.path==="/sheet-sync/settings"&&call.values.enabled===true&&call.values.interval_minutes===60));
+ await $("#sheetSyncRun").emit("click");assert.ok(calls.some(call=>call.path==="/sheet-sync/run"));
+ ui.visibility("review","review");assert.equal($("#sheetSyncPanel").hidden,true);const before=calls.length;await ui.poll();assert.equal(calls.length,before);
+}
+async function destinationTests(){
+ const s=surface(),c=s.context,editors=new Map();c.surgeryEditors=editors;
+ c.el=s.node;c.button=c.btn;c.action=c.act;
+ c.Option=function(text,value){const option=s.node("option",text);option.value=value;return option;};
+ let reads=0,invalidated=0,gate=deferred();c.ap=async(path,values)=>{assert.equal(path,"surgery/locations");assert.deepEqual(Object.keys(values),[]);reads++;return gate.promise;};
+ const source=fs.readFileSync("vghks_bot/static/analysis.js","utf8");
+ vm.runInContext(source.slice(source.indexOf("function surgeryDestination("),source.indexOf("function surgeryCard(")),c);
+ vm.runInContext(source.slice(source.indexOf("function collectProposals("),source.indexOf("async function createSheetPreview(")),c);
+ const inputs={date:s.node("input"),hospital:s.node("input"),mrn:s.node("input")};
+ inputs.date.value="2026-10-18";inputs.hospital.value="高榮";inputs.mrn.value="P1";
+ const route=c.surgeryDestination({fields:{mrn:"P1"}},inputs,()=>invalidated++);route.select.reportValidity=()=>false;
+ const editor={row:{id:"C1",fields:{date:"2026-10-11"}},selected:{checked:true},
+  inputs,checks:{date:{checked:true},hospital:{checked:true},mrn:{checked:true}},reviewed:{checked:false},target:{value:""},destination:route.enabled,route};
+ editors.set("C1",editor);assert.equal(c.collectProposals()[0].destination,undefined,"editing source route silently authorized a move");
+ assert.equal(reads,0,"rendering an ordinary candidate read Google");editor.destination.checked=true;await editor.destination.emit("change");
+ assert.equal(reads,0,"checking destination fetched without the read action");assert.throws(()=>c.collectProposals(),/先讀取目的區塊/);
+ const reading=route.read();await route.read();assert.equal(reads,1,"double read started parallel Google requests");
+ gate.resolve({blocks:[{date:"2026-10-18",hospital:"高榮",block_sync_id:"UID-A",ref:"202610!2",label:"2026-10-18 高榮 · 202610!2"},
+  {date:"2026-10-18",hospital:"高榮",block_sync_id:"ref:202610!30",ref:"202610!30"},
+  {date:"2026-10-19",hospital:"高榮",block_sync_id:"UID-B",ref:"202610!60"},
+  {date:"2026-10-18",hospital:"其他",block_sync_id:"UID-C",ref:"202610!90"}]});await reading;
+ assert.equal(route.select.required,true);assert.equal(route.select.children.length,3,"date/hospital filter included unrelated blocks");
+ assert.equal(route.select.children[1].textContent,"2026-10-18 高榮 · 202610 第 2 列");
+ assert.equal(route.select.children[2].textContent,"202610 第 30 列");
+ assert.ok(route.select.children.every(option=>!option.textContent.includes("UID-")&&!option.textContent.includes("ref:")),"technical identity appeared in labels");
+ assert.throws(()=>c.collectProposals(),/多個區塊/);route.select.value="ref:202610!30";await route.select.emit("change");
+ let destination=c.collectProposals()[0].destination;
+ assert.equal(destination.date,"2026-10-18");assert.equal(destination.hospital,"高榮");assert.equal(destination.block_sync_id,"ref:202610!30");
+ inputs.date.value="2026-10-19";await inputs.date.emit("input");destination=c.collectProposals()[0].destination;
+ assert.equal(route.select.required,false);assert.equal(destination.block_sync_id,"UID-B","unique destination was not selected");
+ inputs.date.value="2026-10-20";await inputs.date.emit("input");assert.equal(c.collectProposals()[0].destination.block_sync_id,"");
+ assert.equal(reads,1,"editing fields re-read Google");assert.ok(invalidated>0);
+ gate=deferred();const failed=route.read();gate.reject(new Error("synthetic locations failure"));await assert.rejects(failed,/locations failure/);
+ assert.throws(()=>c.collectProposals(),/先讀取目的區塊/,"failed refresh retained stale destinations");
+}
+async function fuTests(){
+ const s=surface(),c=s.context,editors=new Map(),calls=[],normalCards=[],opened=[];
+ c.surgeryEditors=editors;c.el=s.node;c.button=c.btn;c.action=c.act;c.config={read_only:false};
+ c.currentCohort={id:"COHORT",members:[{mrn:"P1",name:"追蹤病人"},{mrn:"P2",name:"無候選病人"},{mrn:"P3",name:"手術病人"}]};
+ const labels={mrn:"病歷號",name:"姓名",hospital:"醫院",tag:"Tag",date:"刀日",side:"眼別",procedure:"術式"};
+ const fu={id:"FU1",kind:"fu",fields:{mrn:"P1",name:"追蹤病人",hospital:"高榮",tag:"FU"},
+  sources:[{date:"2026-10-11",excerpt:"符合追蹤標記的合成SOAP",record_id:"SOAP1",version:"VERSION1"}]};
+ const candidates=[fu,{id:"OP3",fields:{mrn:"P3",name:"手術病人"}}];
+ c.openSavedRecord=async id=>opened.push(id);
+ c.surgeryCard=row=>{normalCards.push(row.id);return s.node("article","手術候選");};
+ c.ap=async(path,values)=>{calls.push({path,values});
+  if(path==="surgery/candidates")return {candidates,fields:labels};
+  if(path==="surgery/drafts"){assert.equal(values.cohort_id,"COHORT");assert.equal(values.mrn,"P1");candidates.push({id:"DRAFT1",manual:true,fields:{mrn:"P1"}});return {};}
+  throw new Error(path);
+ };
+ const source=fs.readFileSync("vghks_bot/static/analysis.js","utf8");
+ vm.runInContext(source.slice(source.indexOf("async function loadSurgery("),source.indexOf("function surgeryDestination(")),c);
+ vm.runInContext(source.slice(source.indexOf("function collectProposals("),source.indexOf("async function createSheetPreview(")),c);
+ vm.runInContext(source.slice(source.indexOf("function previewNode("),source.indexOf('$$("[data-analysis-close]"')),c);
+ await c.loadSurgery();assert.deepEqual(normalCards,["OP3"],"FU was rendered as a surgery candidate");
+ const editor=editors.get("FU1");assert.ok(editor,"FU card did not join selected proposals");
+ assert.deepEqual(Object.keys(editor.inputs),["mrn","name","hospital","tag"]);
+ assert.ok(Object.values(editor.inputs).every(input=>input.readOnly),"FU fixed fields were editable");
+ assert.equal(editor.card.querySelectorAll("select").length,0,"FU displayed route or surgery selection");
+ assert.equal(editor.card.querySelectorAll("input").length,5,"FU displayed extra surgery fields");
+ assert.ok(editor.card.all().some(node=>node.textContent==="SOAP 版本：VERSION1"),"FU source omitted its SOAP version");
+ const proposal=c.collectProposals()[0];assert.deepEqual(Object.keys(proposal),["id","fields","selected_fields"]);
+ assert.deepEqual(JSON.parse(JSON.stringify(proposal.fields)),fu.fields);
+ assert.deepEqual(Array.from(proposal.selected_fields),["mrn","name","hospital","tag"]);
+ const soapButton=editor.card.querySelectorAll("button").find(button=>button.textContent==="查看完整 SOAP");await soapButton.run();assert.deepEqual(opened,["SOAP1"]);
+ s.$("#sheetPreview").append(s.node("p","old preview"));editor.selected.checked=false;await editor.selected.emit("change");
+ assert.equal(s.$("#sheetPreview").children.length,0);assert.equal(c.collectProposals().length,0);editor.selected.checked=true;
+ assert.doesNotThrow(()=>c.previewNode({id:"PREVIEW",spreadsheet_id:"synthetic",can_apply:false,
+  items:[{id:"FU1",status:"conflict",fields:fu.fields,reason:"FU 重複列，請先整理。",options:[{ref:"FU!2"}]}]}),"FU conflict tried to use surgery target controls");
+ const emptyFor=mrn=>s.$("#surgeryCandidates").children.find(card=>card.tagName==="section"&&card.children[0]?.textContent.endsWith(" · "+mrn));
+ assert.ok(emptyFor("P1"),"FU-only patient lost the manual surgery draft entry");assert.ok(emptyFor("P2"));assert.equal(emptyFor("P3"),undefined);
+ await emptyFor("P1").querySelector("button").run();assert.equal(calls.filter(call=>call.path==="surgery/drafts").length,1);
+ assert.equal(emptyFor("P1"),undefined,"manual draft still appeared missing after creation");assert.ok(emptyFor("P2"));
+ c.config.read_only=true;await c.loadSurgery();assert.equal(emptyFor("P2").querySelector("button").disabled,true);
+ assert.ok(calls.every(call=>["surgery/candidates","surgery/drafts"].includes(call.path)),"FU rendering fetched Google destinations");
+}
+function syncDetailsTests(){
+ const s=surface(),c=s.context;c.el=s.node;c.button=c.btn;c.action=c.act;c.surgeryEditors=new Map();c.Choices.enhance=()=>{};
+ c.Option=function(text,value){const option=s.node("option",text);option.value=value;return option;};
+ const source=fs.readFileSync("vghks_bot/static/analysis.js","utf8");
+ vm.runInContext(source.slice(source.indexOf("function surgeryDestination("),source.indexOf("function collectProposals(")),c);
+ vm.runInContext(source.slice(source.indexOf("function previewNode("),source.indexOf('$$("[data-analysis-close]"')),c);
+ const fields={mrn:"P1",name:"合成病人",date:"2026-11-03",hospital:"高榮"};
+ const card=c.surgeryCard({id:"OP1",fields,schedules:[],sources:[
+  {record_id:"SOAP1",date:"2026-10-11",excerpt:"來源一",version:"SOAP_VERSION_A"},
+  {record_id:"SOAP2",date:"2026-10-12",excerpt:"來源二",source_version:"SOAP_VERSION_B"}]},
+ {mrn:"病歷號",name:"姓名",date:"刀日",hospital:"醫院"});
+ const versions=card.all().filter(node=>node.tagName==="pre").map(node=>node.textContent);
+ assert.ok(versions.includes("SOAP 版本：SOAP_VERSION_A"));assert.ok(versions.includes("SOAP 版本：SOAP_VERSION_B"));
+ const preview=c.previewNode({id:"PREVIEW",spreadsheet_id:"synthetic",can_apply:true,source_versions:[
+  {record_id:"SOAP1",version:"SOAP_VERSION_A"},{record_id:"SOAP2",source_version:"SOAP_VERSION_B"}],items:[
+  {id:"OP1",status:"ready",action:"move",fields,changes:[{label:"刀日",before:"2026-10-18",after:"2026-11-03"}],
+   sync_id:"SCHEDULE_UID",previous_position:"202610!2",position:"202611!3",
+   previous_route:{date:"2026-10-18",hospital:"聯醫",block_sync_id:"OLD_BLOCK_UID"},
+   route:{date:"2026-11-03",hospital:"高榮",block_sync_id:"NEW_BLOCK_UID"}},
+  {id:"FU2",status:"ready",action:"keep",fields:{mrn:"P2",name:"追蹤病人"},changes:[],sync_id:"FU_UID",position:"FU!8"}]});
+ const details=preview.querySelectorAll("details"),identity=details.filter(node=>node.firstElementChild?.textContent==="同步識別與位置");
+ assert.equal(identity.length,2);assert.ok(identity.every(node=>node.open===false),"identity details expanded by default");
+ const entries=node=>Object.fromEntries(node.querySelectorAll("tr").map(row=>[row.children[0].textContent,row.children[1].textContent]));
+ const op=entries(identity[0]),fu=entries(identity[1]);assert.equal(op.ScheduleSyncId,"SCHEDULE_UID");assert.equal(op["原位置"],"202610!2");assert.equal(op["目的位置"],"202611!3");
+ assert.equal(op["原區塊"],"2026-10-18 · 聯醫 · 區塊 ID：OLD_BLOCK_UID");
+ assert.equal(op["目的區塊"],"2026-11-03 · 高榮 · 區塊 ID：NEW_BLOCK_UID");
+ assert.deepEqual(fu,{ScheduleSyncId:"FU_UID","目的位置":"FU!8"},"FU gained irrelevant surgery route details");
+ const batch=details.find(node=>node.firstElementChild?.textContent==="本次預覽的 SOAP 來源版本 · 2 筆");
+ assert.ok(batch);assert.equal(batch.open,false);assert.deepEqual(batch.querySelectorAll("pre").map(node=>node.textContent),[
+  "SOAP1 · SOAP_VERSION_A","SOAP2 · SOAP_VERSION_B"]);
+}
+(async()=>{await noteTests();await activityTests();await historyLoadingTests();layoutTests();await toolSelectionTests();await handoffTests();await sheetSyncTests();await destinationTests();await fuTests();syncDetailsTests();process.stdout.write("Review UI race, hierarchy, loading, viewport, handoff, FU and sheet sync checks passed\n");})().catch(error=>{console.error(error);process.exitCode=1;});

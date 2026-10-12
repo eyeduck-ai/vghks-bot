@@ -1,0 +1,407 @@
+{
+  "contract_version": 1,
+  "schema": 1,
+  "date_cases": [
+    {
+      "input": "2026-10-11",
+      "type": "text",
+      "iso": "2026-10-11"
+    },
+    {
+      "input": "2026/1/2",
+      "type": "text",
+      "iso": "2026-01-02"
+    },
+    {
+      "input": "2026.10.11",
+      "type": "text",
+      "iso": "2026-10-11"
+    },
+    {
+      "input": "20261011",
+      "type": "text",
+      "iso": "2026-10-11"
+    },
+    {
+      "input": "2026/10/11 Sun",
+      "type": "text",
+      "iso": "2026-10-11"
+    },
+    {
+      "input": "2026/10/11 sUn",
+      "type": "text",
+      "iso": "2026-10-11"
+    },
+    {
+      "input": "2026/10/11 Mon",
+      "type": "text",
+      "iso": ""
+    },
+    {
+      "input": "2026/10/11 Sunday",
+      "type": "text",
+      "iso": ""
+    },
+    {
+      "input": "2026/10/11 註記",
+      "type": "text",
+      "iso": ""
+    },
+    {
+      "input": "回診 2026/10/11",
+      "type": "text",
+      "iso": ""
+    },
+    {
+      "input": "115/10/11",
+      "type": "text",
+      "iso": ""
+    },
+    {
+      "input": "1999/12/31",
+      "type": "text",
+      "iso": ""
+    },
+    {
+      "input": "2100/1/1",
+      "type": "text",
+      "iso": ""
+    },
+    {
+      "input": "2026/2/29",
+      "type": "text",
+      "iso": ""
+    },
+    {
+      "input": "2024/2/29",
+      "type": "text",
+      "iso": "2024-02-29"
+    },
+    {
+      "input": "08:30",
+      "type": "text",
+      "iso": ""
+    },
+    {
+      "input": "800",
+      "type": "text",
+      "iso": ""
+    },
+    {
+      "input": 36526,
+      "type": "serial",
+      "iso": "2000-01-01"
+    },
+    {
+      "input": 73050,
+      "type": "serial",
+      "iso": "2099-12-31"
+    },
+    {
+      "input": 36525,
+      "type": "serial",
+      "iso": ""
+    },
+    {
+      "input": 73051,
+      "type": "serial",
+      "iso": ""
+    },
+    {
+      "input": 46306.5,
+      "type": "serial",
+      "iso": ""
+    },
+    {
+      "input": 46306.000000011576,
+      "type": "serial",
+      "iso": ""
+    },
+    {
+      "input": 36526,
+      "type": "number",
+      "iso": "2000-01-01"
+    },
+    {
+      "input": 73050,
+      "type": "number",
+      "iso": "2099-12-31"
+    },
+    {
+      "input": 36525,
+      "type": "number",
+      "iso": ""
+    },
+    {
+      "input": 73051,
+      "type": "number",
+      "iso": ""
+    },
+    {
+      "input": 20261011,
+      "type": "number",
+      "iso": ""
+    },
+    {
+      "input": 46306.5,
+      "type": "number",
+      "iso": ""
+    },
+    {
+      "input": 0.25,
+      "type": "number",
+      "iso": ""
+    },
+    {
+      "input": 830,
+      "type": "number",
+      "iso": ""
+    }
+  ],
+  "row_cases": [
+    {
+      "date": "2026-10-11",
+      "marker": "◆ 刀日",
+      "hospital": "高榮",
+      "kind": "DATE_HEADER"
+    },
+    {
+      "date": "2026-10-11",
+      "marker": "◆　刀日",
+      "hospital": "聯醫",
+      "kind": "DATE_HEADER"
+    },
+    {
+      "date": "2026-10-11",
+      "marker": "◆  刀日",
+      "hospital": "聯醫",
+      "kind": "DATE_HEADER"
+    },
+    {
+      "date": "2026-10-11",
+      "marker": "◆ 刀日",
+      "hospital": "",
+      "kind": "HYBRID_CONFLICT"
+    },
+    {
+      "date": "2026-10-11",
+      "marker": "◆ 刀日",
+      "hospital": "其他",
+      "kind": "HYBRID_CONFLICT"
+    },
+    {
+      "date": "2026-10-11",
+      "marker": "",
+      "hospital": "高榮",
+      "kind": "HYBRID_CONFLICT"
+    },
+    {
+      "date": "2026-10-11",
+      "marker": "TEST001",
+      "hospital": "高榮",
+      "kind": "HYBRID_CONFLICT"
+    },
+    {
+      "date": "2026-10-11",
+      "marker": "◆ 刀日",
+      "hospital": "高榮",
+      "event": "event-1",
+      "kind": "HYBRID_CONFLICT"
+    },
+    {
+      "date": "2026/10/11 Mon",
+      "marker": "◆ 刀日",
+      "hospital": "高榮",
+      "kind": "HYBRID_CONFLICT"
+    },
+    {
+      "date": "08:30",
+      "marker": "◆ 刀日",
+      "hospital": "高榮",
+      "kind": "HYBRID_CONFLICT"
+    },
+    {
+      "date": "08:30",
+      "marker": "TEST001",
+      "hospital": "高榮",
+      "kind": "PATIENT"
+    },
+    {
+      "date": "2026-10-12 09:30",
+      "marker": "TEST001",
+      "hospital": "高榮",
+      "kind": "HYBRID_CONFLICT"
+    },
+    {
+      "date": "2026-02-30",
+      "marker": "TEST001",
+      "hospital": "高榮",
+      "kind": "HYBRID_CONFLICT"
+    },
+    {
+      "date": "回診 2026-10-11",
+      "marker": "TEST001",
+      "hospital": "高榮",
+      "kind": "HYBRID_CONFLICT"
+    },
+    {
+      "date": 46306,
+      "marker": "◆ 刀日",
+      "hospital": "高榮",
+      "kind": "DATE_HEADER"
+    },
+    {
+      "date": 46306.5,
+      "marker": "◆ 刀日",
+      "hospital": "高榮",
+      "kind": "HYBRID_CONFLICT"
+    },
+    {
+      "date": 830,
+      "marker": "TEST001",
+      "hospital": "高榮",
+      "kind": "PATIENT"
+    },
+    {
+      "date": "",
+      "marker": "",
+      "hospital": "",
+      "kind": "BLANK"
+    }
+  ],
+  "header_cases": [
+    {
+      "header": "時間",
+      "key": "TIME",
+      "canonical": "日期／報到時間"
+    },
+    {
+      "header": "日期/報到時間",
+      "key": "TIME",
+      "canonical": "日期／報到時間"
+    },
+    {
+      "header": "日期／報到時間",
+      "key": "TIME",
+      "canonical": "日期／報到時間"
+    },
+    {
+      "header": "診斷｜Cat 1",
+      "key": "DIAGNOSIS",
+      "canonical": "診斷"
+    },
+    {
+      "header": "",
+      "formula": "=T(N(\"SURGERY_MONTHLY_DIAGNOSIS_SUMMARY_V2\"))&\"診斷\"",
+      "key": "DIAGNOSIS",
+      "canonical": "診斷"
+    },
+    {
+      "header": "#ERROR!",
+      "formula": "=T(N(\"SURGERY_MONTHLY_DIAGNOSIS_SUMMARY_V2\"))&\"診斷\"",
+      "key": "DIAGNOSIS",
+      "canonical": "診斷"
+    },
+    {
+      "header": "",
+      "formula": "=IF(TRUE,\"診斷\",\"\")",
+      "key": "DIAGNOSIS",
+      "canonical": ""
+    },
+    {
+      "header": "診斷人工備註",
+      "key": "DIAGNOSIS",
+      "canonical": ""
+    },
+    {
+      "header": "日曆eventID",
+      "key": "EVENT_ID",
+      "canonical": "CalendarEventId"
+    },
+    {
+      "header": "日曆apiEventID",
+      "key": "EVENT_ID",
+      "canonical": "CalendarEventId"
+    }
+  ],
+  "time_cases": [
+    {
+      "input": "08:30",
+      "time": "08:30",
+      "note": "",
+      "invalid": false
+    },
+    {
+      "input": "8:30",
+      "time": "08:30",
+      "note": "",
+      "invalid": false
+    },
+    {
+      "input": "0830",
+      "time": "08:30",
+      "note": "",
+      "invalid": false
+    },
+    {
+      "input": "830",
+      "time": "08:30",
+      "note": "",
+      "invalid": false
+    },
+    {
+      "input": "08：30",
+      "time": "08:30",
+      "note": "",
+      "invalid": false
+    },
+    {
+      "input": "",
+      "time": "",
+      "note": "",
+      "invalid": false
+    },
+    {
+      "input": "下午",
+      "time": "",
+      "note": "下午",
+      "invalid": false
+    },
+    {
+      "input": "25:00",
+      "time": "",
+      "note": "",
+      "invalid": true
+    },
+    {
+      "input": "1260",
+      "time": "",
+      "note": "",
+      "invalid": true
+    },
+    {
+      "input": "8",
+      "time": "",
+      "note": "8",
+      "invalid": false
+    },
+    {
+      "input": 0,
+      "time": "00:00",
+      "note": "",
+      "invalid": false
+    },
+    {
+      "input": 0.25,
+      "time": "06:00",
+      "note": "",
+      "invalid": false
+    },
+    {
+      "input": 830,
+      "time": "08:30",
+      "note": "",
+      "invalid": false
+    }
+  ]
+}

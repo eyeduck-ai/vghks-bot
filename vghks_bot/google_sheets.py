@@ -9,7 +9,7 @@ from contextlib import contextmanager
 from urllib.parse import quote
 
 import requests
-from google.auth.exceptions import GoogleAuthError
+from google.auth.exceptions import GoogleAuthError, TransportError
 from google.auth.transport.requests import AuthorizedSession
 from google.oauth2 import service_account
 
@@ -27,6 +27,10 @@ class SheetError(Exception):
 
 class SheetUncertain(SheetError):
     pass
+
+
+class SheetUnavailable(SheetError):
+    """A temporary transport/service failure; local intents remain retryable."""
 
 
 def spreadsheet_id(value):
@@ -128,7 +132,11 @@ class SheetsClient:
         except requests.RequestException as exc:
             if method == "POST":
                 raise SheetUncertain("寫入回應中斷，請按「核對更新結果」；請勿另建相同更新。") from exc
-            raise SheetError("無法連線 Google Sheets，請確認網路。") from exc
+            raise SheetUnavailable("目前無法連線 Google Sheets；本機資料與待處理操作保留，恢復連線後請重新預覽。") from exc
+        except TransportError as exc:
+            if method == "POST":
+                raise SheetUncertain("Google 連線中斷，寫入結果尚未確認；恢復連線後請先核對原批次。") from exc
+            raise SheetUnavailable("目前無法連線 Google 授權服務；請確認此網路可連線 Google，稍後重新連線。") from exc
         except GoogleAuthError as exc:
             raise SheetError("服務帳戶授權失敗，請檢查金鑰、系統時間與網路。") from exc
         if response.status_code in {401, 403}:
@@ -138,7 +146,7 @@ class SheetsClient:
         if response.status_code >= 500 or response.status_code == 429:
             if method == "POST":
                 raise SheetUncertain("Google 尚未確認寫入結果，請先核對更新結果。")
-            raise SheetError("Google 暫時無法完成請求，稍後可重試。")
+            raise SheetUnavailable("Google 暫時無法完成請求；待處理操作保留，稍後可重新連線。")
         if not response.ok:
             raise SheetError("Google 拒絕此更新；請重新讀取刀表、檢查欄位或保護範圍。")
         try:
@@ -156,22 +164,50 @@ class SheetsClient:
                 "message": "讀取連線成功；寫入仍取決於編輯者權限與儲存格保護設定。"}
 
     def read(self):
-        meta = self.request("GET", params={"fields": "spreadsheetId,properties,sheets(properties),developerMetadata"})
-        # The clinical schedule lives in month tabs. Do not fetch FU/IVI or unrelated tabs.
-        sheets = [s for s in meta.get("sheets", []) if re.fullmatch(r"\d{6}", s["properties"]["title"])]
+        return self._read(managed=False)
+
+    def read_all(self):
+        """Read every schedule and shared-state tab before reconciliation decisions."""
+        return self._read(managed=True)
+
+    def read_for_archive(self):
+        """Include other tabs to reject formulas that would break on source removal."""
+        return self._read(managed=True, all_tabs=True)
+
+    def _read(self, *, managed, all_tabs=False):
+        meta = self.request("GET", params={"fields": "spreadsheetId,properties,sheets(properties,protectedRanges,charts,conditionalFormats),developerMetadata,namedRanges"})
+        sheets = [s for s in meta.get("sheets", []) if all_tabs or
+                  re.fullmatch(r"\d{6}", s["properties"]["title"]) or managed and
+                  (s["properties"]["title"] in {"FU", "All", "__VGHKS_SYNC_STATE"}
+                   or re.fullmatch(r"刀表封存_\d{4}", s["properties"]["title"]))]
         for sheet in sheets:
             p = sheet["properties"]
+            if "gridProperties" not in p:
+                sheet["rows"] = []
+                sheet["merges"] = []
+                sheet["column_widths"] = []
+                sheet["row_metadata"] = []
+                continue
             columns = p["gridProperties"]["columnCount"]
             if columns > 1000:
-                raise SheetError("月分頁超過 1,000 欄，請確認選擇的是手術刀表。")
+                raise SheetError("刀表分頁超過 1,000 欄，請確認選擇的是手術刀表。")
             last = column_name(columns - 1)
             row_count = p["gridProperties"]["rowCount"]
             data = []
+            title = p["title"].replace("'", "''")
+            dimensions = "columnMetadata(pixelSize,hiddenByUser),rowMetadata(pixelSize,hiddenByUser)"
+            cell_fields = "userEnteredValue,effectiveValue,formattedValue,userEnteredFormat,dataValidation,note,textFormatRuns"
+            if all_tabs:
+                cell_fields += ",effectiveFormat"
+            elif sheet.get("conditionalFormats"):
+                # Reports need the displayed cancellation line without loading
+                # every effective font/border on routine hourly scans.
+                cell_fields += ",effectiveFormat(textFormat(strikethrough))"
             # Bounded reads preserve typed values, formulas, validation and formatting.
             for start in range(1, row_count + 1, 400):
                 result = self.request("GET", params=[
-                    ("ranges", f"'{p['title']}'!A{start}:{last}{min(start + 399, row_count)}"),
-                    ("fields", "sheets(data(startRow,startColumn,columnMetadata(pixelSize),rowData(values(userEnteredValue,formattedValue,userEnteredFormat,dataValidation,note,textFormatRuns))),merges)")])
+                    ("ranges", f"'{title}'!A{start}:{last}{min(start + 399, row_count)}"),
+                    ("fields", f"sheets(data(startRow,startColumn,{dimensions},rowData(values({cell_fields}))),merges)")])
                 part = (result.get("sheets") or [{}])[0]
                 data.extend(part.get("data", []))
                 sheet["merges"] = part.get("merges", [])
@@ -183,8 +219,18 @@ class SheetsClient:
                     rows[index] = row.get("values", [])
             sheet["rows"] = rows
             sheet["column_widths"] = next((b["columnMetadata"] for b in data if b.get("columnMetadata")), [])
+            metadata = []
+            for block in data:
+                start = block.get("startRow", 0)
+                values = block.get("rowMetadata", [])
+                while len(metadata) < start + len(values):
+                    metadata.append({})
+                metadata[start:start + len(values)] = values
+            sheet["row_metadata"] = metadata
         return {"properties": meta.get("properties", {}), "sheets": sheets,
-                "developerMetadata": meta.get("developerMetadata", [])}
+                "all_sheet_properties": [s["properties"] for s in meta.get("sheets", [])],
+                "developerMetadata": meta.get("developerMetadata", []),
+                "namedRanges": meta.get("namedRanges", [])}
 
     def write(self, requests_):
         return self.request("POST", ":batchUpdate", json={"requests": requests_, "includeSpreadsheetInResponse": False})

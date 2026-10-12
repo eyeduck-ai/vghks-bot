@@ -479,6 +479,12 @@ button.patient-chip .patient-chip-remove{flex:none;color:#738973;font-size:14px;
 .diagnostic-failure p{margin:6px 0;line-height:1.5;font-size:12px}.diagnostic-failure .diagnostic-reason{font-size:13px;font-weight:600}.diagnostic-impact{color:#78572f;font-size:12px}
 .diagnostic-technical{margin:8px 0}.diagnostic-technical>summary{cursor:pointer;min-height:28px;line-height:28px;font-size:12px}.diagnostic-technical>summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.diagnostic-technical pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:11px}.diagnostic-technical td{font-size:12px}
 .note-history-entry{padding:14px 0;border-bottom:1px solid var(--border,#dce3df)}
+.review-selection-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin:0 0 6px;font-size:11px}
+.review-selection-toolbar button{min-height:29px;padding:3px 8px;font-size:11px}
+.review-patient-row{display:flex;align-items:stretch;border-bottom:1px solid var(--line)}
+.review-patient-check{display:flex;align-items:center;justify-content:center;padding:5px 6px;flex:none;cursor:pointer}
+.review-patient-check input{margin:0}
+.review-patient-row>.patient-select{min-width:0;flex:1;border-bottom:0}
 .task-search{flex-direction:column;align-items:stretch;gap:9px}
 .task-search-main,.task-search-filters{display:flex;flex-wrap:wrap;gap:8px;min-width:0}
 .task-search-main{align-items:center}.task-search-filters{align-items:end}

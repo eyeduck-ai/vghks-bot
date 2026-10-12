@@ -8,7 +8,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from . import __version__
 from .activity import search as search_activity
-from .google_sheets import SheetError
+from .google_sheets import SheetError, SheetUnavailable
 from .jobs import BusyError
 from .request_gate import RequestGate
 from .server import STATIC, Handler, LocalServer
@@ -48,6 +48,8 @@ class BotHandler(Handler):
     def failure(self, exc):
         if isinstance(exc, (ValueError, BusyError)):
             self.reply(409 if isinstance(exc, BusyError) else 400, {"error": str(exc)})
+        elif isinstance(exc, SheetUnavailable):
+            self.reply(503, {"error": str(exc), "code": "sheets_unavailable", "retryable": True})
         elif isinstance(exc, SheetError):
             self.reply(502, {"error": str(exc)})
         elif isinstance(exc, StorageError):
@@ -72,6 +74,7 @@ class BotHandler(Handler):
         assets = {"/": ("bot.html", "text/html; charset=utf-8"),
                   "/bot.js": ("bot.js", "text/javascript; charset=utf-8"),
                   "/review-history.js": ("review-history.js", "text/javascript; charset=utf-8"),
+                  "/review-handoff.js": ("review-handoff.js", "text/javascript; charset=utf-8"),
                   "/scan-browser.js": ("scan-browser.js", "text/javascript; charset=utf-8"),
                   "/file-compare.js": ("file-compare.js", "text/javascript; charset=utf-8"),
             "/clinical-ui.js": ("clinical-ui.js", "text/javascript; charset=utf-8"),
@@ -91,6 +94,9 @@ class BotHandler(Handler):
                   "/approvals.js": ("approvals.js", "text/javascript; charset=utf-8"),
                   "/monitor-ui.js": ("monitor-ui.js", "text/javascript; charset=utf-8"),
                   "/tool-workspace.js": ("tool-workspace.js", "text/javascript; charset=utf-8"),
+                  "/sheet-sync-ui.js": ("sheet-sync-ui.js", "text/javascript; charset=utf-8"),
+                  "/sheet-management.js": ("sheet-management.js", "text/javascript; charset=utf-8"),
+                  "/sheet-management.css": ("sheet-management.css", "text/css; charset=utf-8"),
                   "/earnings.js": ("earnings.js", "text/javascript; charset=utf-8"),
                   "/surgery-system.js": ("surgery-system.js", "text/javascript; charset=utf-8"),
                   "/surgery-system.css": ("surgery-system.css", "text/css; charset=utf-8"),
@@ -137,6 +143,10 @@ class BotHandler(Handler):
                 self.reply(200, status(workspace, params.get("watch", "").split(","), params.get("run", "")))
             elif path == "/api/activity":
                 self.reply(200, search_activity(workspace, params))
+            elif path == "/api/sheet-sync/status":
+                self.reply(200, workspace.sheet_sync.status())
+            elif path == "/api/sheet-management/status":
+                self.reply(200, workspace.sheet_management.status())
             elif path == "/api/tasks/detail":
                 self.reply(200, workspace.review.task(params.get("id"), summary=params.get("summary") == "1"))
             elif path == "/api/reviews/diagnostics/export":
@@ -183,7 +193,8 @@ class BotHandler(Handler):
                     "/api/approvals/enter", "/api/approvals/overview", "/api/approvals/results", "/api/approvals/detail", "/api/approvals/tracking",
                     "/api/earnings/overview", "/api/earnings/detail", "/api/earnings/export",
                     "/api/approvals/cases", "/api/approvals/sync-history", "/api/approvals/history",
-                    "/api/reviews/diagnostics", "/api/reviews/notes/search", "/api/activity", "/api/tools/state", "/api/surgery/overview"}
+                    "/api/reviews/diagnostics", "/api/reviews/notes/search", "/api/activity", "/api/tools/state", "/api/surgery/overview",
+                    "/api/sheet-sync/status", "/api/sheet-management/status"}
                 if root.read_only and local not in readonly_routes:
                     raise ValueError("目前是唯讀檢閱；請建立可編輯副本後操作。")
                 if local == "/api/reviews/notes/search":
@@ -191,6 +202,23 @@ class BotHandler(Handler):
                     return
                 if local == "/api/surgery/overview":
                     self.reply(200, workspace.surgery_schedule.overview(self.read_json()))
+                    return
+                if local.startswith("/api/sheet-sync/"):
+                    routes = {"settings": workspace.sheet_sync.settings, "run": workspace.sheet_sync.run,
+                              "status": workspace.sheet_sync.status, "review": workspace.sheet_sync.review,
+                              "retry": workspace.sheet_sync.retry}
+                    method = routes.get(local.removeprefix("/api/sheet-sync/"))
+                    if method is None:
+                        raise ValueError("刀表同步功能不存在。")
+                    self.reply(200, method(self.read_json()))
+                    return
+                if local.startswith("/api/sheet-management/"):
+                    routes = {name: getattr(workspace.sheet_management, name)
+                              for name in ("status", "refresh", "preview", "apply", "check", "report")}
+                    method = routes.get(local.removeprefix("/api/sheet-management/"))
+                    if method is None:
+                        raise ValueError("刀表管理功能不存在。")
+                    self.reply(200, method(self.read_json()))
                     return
                 if local.startswith("/api/approvals/"):
                     routes = {"enter": workspace.approvals.tracker.enter,
@@ -215,15 +243,13 @@ class BotHandler(Handler):
                         raise ValueError("薪資業績功能不存在。")
                     self.reply(200, method(self.read_json()))
                     return
-                if local in {"/api/start", "/api/lists/browse", "/api/fetch", "/api/analysis/start",
-                             "/api/analysis/google/test", "/api/analysis/surgery/preview",
-                             "/api/analysis/surgery/apply", "/api/analysis/surgery/check"} and not workspace.gateway.online:
+                if local in {"/api/start", "/api/lists/browse", "/api/fetch", "/api/analysis/start"} and not workspace.gateway.online:
                     raise ValueError("請先登入此帳號，再使用網路功能。")
                 custom = {"/api/sets/save", "/api/sets/delete", "/api/sets/cohort", "/api/draft/save",
                           "/api/tasks/start", "/api/tasks/stop", "/api/reviews/results", "/api/reviews/history/read",
                           "/api/reviews/notes/read", "/api/reviews/notes/save", "/api/reviews/notes/clear", "/api/reviews/reclassify",
                           "/api/reviews/preferences", "/api/accounts/save", "/api/extensions/read"}
-                custom |= {"/api/reviews/diagnostics", "/api/tools/state", "/api/tools/state/save"}
+                custom |= {"/api/reviews/diagnostics", "/api/tools/state", "/api/tools/state/save", "/api/tools/handoff", "/api/tools/handoff/remove"}
                 if local in {"/api/accounts/delete", "/api/shutdown", "/api/session"}:
                     raise ValueError("此操作需使用帳號入口。")
                 if local not in custom:
@@ -237,6 +263,10 @@ class BotHandler(Handler):
                     result = review.tool_state()
                 elif local == "/api/tools/state/save":
                     result = review.save_tool_state(values)
+                elif local == "/api/tools/handoff":
+                    result = review.handoff(values)
+                elif local == "/api/tools/handoff/remove":
+                    result = review.remove_handoff(values)
                 elif local == "/api/sets/save":
                     result = review.save_set(values)
                 elif local == "/api/sets/cohort":

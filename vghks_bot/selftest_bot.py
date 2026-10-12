@@ -358,7 +358,7 @@ def self_test(report_path: Path) -> int:
                     thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": .02}, daemon=True)
                     thread.start()
                     try:
-                        for url in ("/", "/bot.js", "/bot.css", "/databases.js", "/approvals.js", "/tool-workspace.js", "/monitor-ui.js", "/earnings.js", "/surgery-system.js", "/surgery-system.css", "/progress.js", "/progress.css", "/clinical-ui.js", "/clinical-ui.css", "/library-data.js", "/cataract-export.js", "/tools", "/tool-bridge.js", "/analysis.js", "/analysis.css", "/app.js", "/workspace.js", "/patient-tags.js", "/style.css", "/favicon.svg"):
+                        for url in ("/", "/bot.js", "/bot.css", "/databases.js", "/approvals.js", "/tool-workspace.js", "/review-handoff.js", "/sheet-sync-ui.js", "/monitor-ui.js", "/earnings.js", "/surgery-system.js", "/surgery-system.css", "/progress.js", "/progress.css", "/clinical-ui.js", "/clinical-ui.css", "/library-data.js", "/cataract-export.js", "/tools", "/tool-bridge.js", "/analysis.js", "/analysis.css", "/app.js", "/workspace.js", "/patient-tags.js", "/style.css", "/favicon.svg"):
                             connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
                             connection.request("GET", url)
                             reply = connection.getresponse()

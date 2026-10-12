@@ -51,6 +51,8 @@ class AnalysisStore:
                     PRIMARY KEY(mrn,key,digest));
                 CREATE TABLE IF NOT EXISTS sheet_previews (
                     id TEXT PRIMARY KEY, payload TEXT NOT NULL, updated_at TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS surgery_drafts (
+                    id TEXT PRIMARY KEY, payload TEXT NOT NULL, updated_at TEXT NOT NULL);
             """)
             columns = {row[1] for row in db.execute("PRAGMA table_info(analysis_steps)")}
             if "assessment" not in columns:
@@ -80,7 +82,7 @@ class AnalysisStore:
         return removed
 
     def save_document(self, table, value):
-        if table not in {"analysis_cohorts", "analysis_runs", "sheet_previews"}:
+        if table not in {"analysis_cohorts", "analysis_runs", "sheet_previews", "surgery_drafts"}:
             raise ValueError("資料種類不正確。")
         identifier(value["id"])
         with self.library.connect() as db:
@@ -89,7 +91,7 @@ class AnalysisStore:
         return value
 
     def document(self, table, key):
-        if table not in {"analysis_cohorts", "analysis_runs", "sheet_previews"}:
+        if table not in {"analysis_cohorts", "analysis_runs", "sheet_previews", "surgery_drafts"}:
             raise ValueError("資料種類不正確。")
         identifier(key)
         with self.library.connect() as db:
@@ -99,7 +101,7 @@ class AnalysisStore:
         return json.loads(row[0])
 
     def documents(self, table, *, cohort_id=None, limit=None, offset=0):
-        if table not in {"analysis_cohorts", "analysis_runs", "sheet_previews"}:
+        if table not in {"analysis_cohorts", "analysis_runs", "sheet_previews", "surgery_drafts"}:
             raise ValueError("資料種類不正確。")
         with self.library.connect() as db:
             clause, args = (" WHERE json_extract(payload,'$.cohort_id')=?", [cohort_id]) if cohort_id else ("", [])

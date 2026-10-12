@@ -41,16 +41,24 @@ def main():
     run([python, "-m", "ruff", "check", "."])
     for script in sorted((ROOT / "vghks_bot/static").glob("*.js")):
         run(["node", "--check", str(script)])
+    run([python, "tools/verify_sheet_contract.py"])
     run([python, "-X", "utf8", "-m", "unittest", "discover", "-s", "tests", "-v"], "tests.log")
     source = REPORTS / "source-selftest.json"
     run([python, "run.py", "--self-test-report", str(source)])
     report_ok(source)
+    monitor_source = REPORTS / "monitor-source-selftest.json"
+    run([python, "run_calendar_monitor.py", "--self-test-report", str(monitor_source)])
+    report_ok(monitor_source)
     if args.build:
         run([python, "tools/build_exe.py"], "build.log")
         frozen = REPORTS / "exe-selftest.json"
         run([str(ROOT / "dist/VGHKS-bot.exe"), "--self-test-report", str(frozen)])
         report_ok(frozen)
         run([python, "tools/verify_bundle.py", "--report", str(REPORTS / "bundle-verification.json")])
+        monitor_frozen = REPORTS / "monitor-exe-selftest.json"
+        run([str(ROOT / "dist/VGHKS-calendar-monitor.exe"), "--self-test-report", str(monitor_frozen)])
+        report_ok(monitor_frozen)
+        run([python, "tools/verify_bundle.py", "--executable", "VGHKS-calendar-monitor", "--report", str(REPORTS / "monitor-bundle-verification.json")])
         run([python, "tools/package_release.py"])
     print("All requested checks passed.")
 

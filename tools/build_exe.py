@@ -1,4 +1,4 @@
-"""Build a single Windows EXE; defaults and assets live inside the binary."""
+"""Build the two independent Windows executables with embedded assets."""
 from __future__ import annotations
 
 import argparse
@@ -51,21 +51,22 @@ def main():
 
     defaults.write_text(json.dumps(asdict(settings), ensure_ascii=False), encoding="utf-8")
     try:
-        command = [sys.executable, "-m", "PyInstaller", "--noconfirm", "--noupx", "--onefile", "--windowed",
-            "--name", "VGHKS-bot", "--distpath", str(ROOT / "dist"),
-            "--workpath", str(ROOT / ".build" / "pyinstaller"), "--specpath", str(ROOT / ".build"),
-            "--paths", str(ROOT), "--add-data", f"{ROOT / 'vghks_bot' / 'static'};vghks_bot/static",
-            "--add-data", f"{defaults};vghks_bot", "--add-data", f"{notices()};vghks_bot/licenses",
-            "--hidden-import", "truststore",
-            "--exclude-module", "tkinter", "--exclude-module", "pytest",
-            str(ROOT / "run.py")]
         environment = os.environ.copy()
         environment["PYINSTALLER_CONFIG_DIR"] = str(ROOT / ".build" / "pyinstaller-cache")
-        subprocess.run(command, cwd=ROOT, env=environment, check=True)
+        license_directory = notices()
+        for name, entry in (("VGHKS-bot", "run.py"), ("VGHKS-calendar-monitor", "run_calendar_monitor.py")):
+            command = [sys.executable, "-m", "PyInstaller", "--noconfirm", "--noupx", "--onefile", "--windowed",
+                "--name", name, "--distpath", str(ROOT / "dist"),
+                "--workpath", str(ROOT / ".build" / "pyinstaller"), "--specpath", str(ROOT / ".build"),
+                "--paths", str(ROOT), "--add-data", f"{ROOT / 'vghks_bot' / 'static'};vghks_bot/static",
+                "--add-data", f"{defaults};vghks_bot", "--add-data", f"{license_directory};vghks_bot/licenses",
+                "--hidden-import", "truststore", "--exclude-module", "tkinter", "--exclude-module", "pytest",
+                str(ROOT / entry)]
+            subprocess.run(command, cwd=ROOT, env=environment, check=True)
+            executable = ROOT / "dist" / (name + ".exe")
+            print(f"Built {executable.name}: {executable.stat().st_size / (1024 * 1024):.1f} MiB")
     finally:
         defaults.unlink(missing_ok=True)
-    executable = ROOT / "dist" / "VGHKS-bot.exe"
-    print(f"Built {executable.name}: {executable.stat().st_size / (1024 * 1024):.1f} MiB")
 
 
 if __name__ == "__main__":

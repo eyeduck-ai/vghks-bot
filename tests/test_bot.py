@@ -353,14 +353,56 @@ class BotTests(unittest.TestCase):
                         self.assertEqual(headers["X-Content-Type-Options"], "nosniff")
                         for suffix in ("", "?v=old-version"):
                             self.assertEqual(request(path + suffix)[1]["Cache-Control"], "no-store")
-                for path in ("/", "/bot.js", "/review-history.js", "/tools", "/favicon.svg",
+                for path in ("/", "/bot.js", "/review-history.js", "/review-handoff.js", "/sheet-sync-ui.js", "/sheet-management.js", "/sheet-management.css", "/tools", "/favicon.svg",
                              "/api/bootstrap", f"/api/accounts/{self.key}/workbench",
                              f"/api/accounts/{self.key}/analysis/asset?id={asset['digest']}"):
                     suffix = "&" if "?" in path else "?"
                     code, headers, _ = request(path + suffix + "v=" + __version__)
                     self.assertEqual(code, 200, path)
                     self.assertEqual(headers["Cache-Control"], "no-store", path)
+                for script in ("review-handoff.js", "sheet-sync-ui.js", "sheet-management.js"):
+                    code, headers, body = request("/" + script)
+                    self.assertEqual(code, 200)
+                    self.assertEqual(headers["Content-Type"], "text/javascript; charset=utf-8")
+                    self.assertEqual(body, (Path(__file__).parents[1] / "vghks_bot" / "static" / script).read_bytes())
             finally:
+                server.shutdown()
+                thread.join(2)
+
+    def test_sheet_management_is_account_scoped_and_independent_of_hospital_connection(self):
+        from vghks_bot.google_sheets import SheetUnavailable
+
+        self.work.gateway.online = False
+        with BotServer(0, self.app) as server:
+            thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": .01}, daemon=True)
+            thread.start()
+            def request(path, values=None, csrf=True):
+                connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=4)
+                headers = {"Content-Type": "application/json", "Cookie": "opd_session=" + self.app.session_token}
+                if csrf:
+                    headers["X-CSRF-Token"] = self.app.csrf_token
+                connection.request("GET" if values is None else "POST", path, None if values is None else json.dumps(values), headers)
+                response = connection.getresponse()
+                result = response.status, json.loads(response.read())
+                connection.close()
+                return result
+            try:
+                base = f"/api/accounts/{self.key}"
+                self.assertEqual(request(base + "/sheet-management/status")[0], 200)
+                code, draft = request(base + "/sheet-management/preview", {"action": "create_month", "month": "202612"})
+                self.assertEqual(code, 200)
+                self.assertEqual(draft["status"], "draft")
+                self.assertEqual(request(base + "/sheet-management/preview", {"action": "repair"}, csrf=False)[0], 403)
+                self.assertEqual(request("/api/sheet-management/status")[0], 404)
+                with patch.object(self.work.analysis, "client_factory", side_effect=SheetUnavailable("Synthetic Google outage")):
+                    code, error = request(base + "/analysis/google/test", {})
+                    self.assertEqual(code, 503)
+                    self.assertEqual(error["code"], "sheets_unavailable")
+                self.app.read_only = True
+                self.assertEqual(request(base + "/sheet-management/preview", {"action": "repair"})[0], 400)
+                self.assertEqual(request(base + "/sheet-management/status", {})[0], 200)
+            finally:
+                self.app.read_only = False
                 server.shutdown()
                 thread.join(2)
 

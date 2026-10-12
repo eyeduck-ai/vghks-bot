@@ -2,16 +2,42 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 
 from .analysis_numeric import iso_day, norm, side
 from .analysis_store import digest
+from .settings import FOLLOWUP_TAG
 from .surgery import parse_surgery
+from .tags import classification
 
 PROCEDURES = {"CATA": "Phaco-IOL", "LENSX+CATA": "LenSx-Phaco-IOL",
               "VT": "VT", "VT+MP": "VT+MP", "LMR": "LMR"}
-FIELD_NAMES = {"date": "刀日", "mrn": "病歷號", "name": "姓名", "tel": "TEL",
+FIELD_NAMES = {"date": "刀日", "hospital": "醫院", "mrn": "病歷號", "name": "姓名", "tel": "TEL",
                "ga": "GA", "side": "側別", "diagnosis": "診斷", "grade": "Grade",
                "procedure": "術式", "iol": "IOL", "target": "IOL Target", "plan": "Plan"}
+
+
+def followup_candidates(records, settings):
+    """Use the user's existing FU classification, with one permanent draft per MRN."""
+    result = {}
+    for record in sorted(records, key=lambda r: (r.get("date", ""), r.get("updated_at", ""))):
+        hits = [hit for hit in classification(record, settings)["matches"]
+                if hit["category"] == FOLLOWUP_TAG.id or hit["category_name"] == FOLLOWUP_TAG.name]
+        if not hits:
+            continue
+        mrn = norm(record["mrn"])
+        key = str(int(mrn)) if mrn.isdigit() else mrn
+        row = result.setdefault(key, {"id": digest(["fu", key])[:32], "kind": "fu",
+            "fields": {"mrn": record["mrn"], "name": record.get("name", ""), "hospital": "高榮", "tag": "FU"},
+            "sources": [], "evidence": {}, "differences": {}, "ambiguities": {},
+            "schedules": [], "date_conflict": False, "cancelled_hint": False})
+        row["fields"]["name"] = record.get("name") or row["fields"]["name"]
+        version = digest([record.get("soap", ""), record.get("soap_structure") or {}])
+        row["sources"].append({"record_id": record["id"], "date": record.get("date", ""),
+                               "excerpt": "\n\n".join(dict.fromkeys(hit["excerpt"] for hit in hits)),
+                               "source_version": version, "version": version})
+        row["source_records"] = [source["record_id"] for source in row["sources"]]
+    return list(result.values())
 
 
 def labelled(text, names):
@@ -20,17 +46,23 @@ def labelled(text, names):
                               if "?" not in m.group(1) and "{" not in m.group(1)))
 
 
-def candidates(records):
+def candidates(records, *, structured_only=False, strict=False):
     result = {}
     for record in sorted(records, key=lambda r: (r.get("date", ""), r.get("updated_at", ""))):
-        soap = record.get("soap", "")
-        starts = list(re.finditer(r"(?im)^[ \t]*(?:P[ \t]*[:：][ \t]*)?(?P<tag>#[ \t]*Arrange\b[^\n]*)", soap))
-        for match in starts:
+        if structured_only:
+            structure = record.get("soap_structure") or {}
+            source_texts = [(field, structure[field]) for field in ("assessment_plan", "assessment", "plan")
+                            if isinstance(structure.get(field), str)]
+        else:
+            source_texts = [("soap", record.get("soap", ""))]
+        for source_field, soap in source_texts:
+          starts = list(re.finditer(r"(?im)^[ \t]*(?:P[ \t]*[:：][ \t]*)?(?P<tag>#[ \t]*Arrange\b[^\n]*)", soap))
+          for ordinal, match in enumerate(starts):
             tail = soap[match.start("tag"):]
             stop = re.search(r"\n\s*#|\n\s*\n|\n[SOAP]\s*:", tail)
             excerpt = tail[:stop.start()] if stop else tail
             parsed = parse_surgery(excerpt)
-            fields = {"date": parsed["date_iso"], "mrn": record["mrn"], "name": record.get("name", ""),
+            fields = {"date": parsed["date_iso"], "hospital": "高榮", "mrn": record["mrn"], "name": record.get("name", ""),
                       "tel": parsed["tel"], "side": parsed["laterality"],
                       "procedure": PROCEDURES.get(parsed["procedure"], parsed["procedure"]),
                       "iol": parsed["iol"], "target": parsed["target"], "diagnosis": "",
@@ -38,6 +70,27 @@ def candidates(records):
             evidence = {k: {"record_id": record["id"], "date": record["date"], "text": excerpt}
                         for k, v in fields.items() if v}
             ambiguities = {}
+            if strict:
+                header = unicodedata.normalize("NFKC", excerpt.splitlines()[0])
+                sides = re.findall(r"\b(?:OD|OS|OU)\b", header, re.I)
+                procedures = re.findall(r"\b(?:LENSX\s*\+\s*CATA|VT\s*\+\s*MP|CATA|LMR|VT)\b", header, re.I)
+                if len(sides) != 1 or (sides and re.search(r"\b" + sides[0] + r"\b\s*[/、?]|[/、]\s*\b" + sides[0] + r"\b", header, re.I)):
+                    ambiguities["side"] = sides or ["缺少明確眼別"]
+                if len(procedures) != 1:
+                    ambiguities["procedure"] = procedures or ["缺少明確術式"]
+                if not parsed["date_iso"]:
+                    ambiguities["date"] = [parsed["scheduled_date"] or "缺少有效刀日"]
+                targets = list(dict.fromkeys(re.findall(r"\b(?:Target|T)\s*[:=]?\s*([+-]?(?:\d+(?:\.\d+)?|\.\d+))(?![\d.?])", header, re.I)))
+                if len(targets) > 1:
+                    ambiguities["target"] = targets
+                lenses = re.findall(r"\([^()]*\)", header)
+                if len(lenses) > 1:
+                    ambiguities["iol"] = lenses
+                phones = list(dict.fromkeys(re.findall(r"(?im)(?:^\s*[-•]?\s*|\s+)TEL\s*[:：][ \t]*([^\n]+)", excerpt)))
+                if len(phones) > 1:
+                    ambiguities["tel"] = phones
+                if "?" in header or "{" in header:
+                    ambiguities["header"] = ["手術標記包含未確認欄位"]
             # Only explicitly labelled fields in the Arrange paragraph are auto-filled.
             # Other SOAP paragraphs are provided beside the preview for human selection.
             for field, names in (("diagnosis", "Diagnosis|Dx|診斷"),
@@ -54,9 +107,17 @@ def candidates(records):
             event = [record["mrn"], fields["date"], fields["side"], fields["procedure"]]
             # Incomplete events cannot be merged across unrelated notes.
             key = digest(event if all(event) else [event, record["id"], match.start()])[:24]
-            source = {"record_id": record["id"], "date": record["date"], "excerpt": excerpt}
+            source_version = digest([record.get("soap", ""), record.get("soap_structure") or {}])
+            source = {"record_id": record["id"], "date": record["date"], "excerpt": excerpt,
+                      "field": source_field, "block_hash": digest(norm(excerpt)), "event_hash": digest(event),
+                      "source_version": source_version, "block_count": len(starts), "ordinal": ordinal,
+                      # Ordinals are safe lineage only for a single Arrange block.
+                      "source_key": digest([record["id"], source_field, ordinal]) if len(starts) == 1 else ""}
             previous = result.get(key)
             sources = (previous["sources"] if previous else []) + [source]
+            if strict and previous and any(s.get("record_id") == record["id"] and s.get("field") == source_field
+                                           for s in previous["sources"]):
+                ambiguities["source"] = ["同一 SOAP 有重複的手術標記"]
             differences = (previous or {}).get("differences", {})
             if previous:
                 for field, value in fields.items():
@@ -66,13 +127,18 @@ def candidates(records):
                     if not value and before:
                         fields[field] = before
                         evidence[field] = previous["evidence"].get(field, {})
+            prior_ambiguities = (previous or {}).get("ambiguities", {})
+            ambiguities = {**prior_ambiguities, **ambiguities}
             result[key] = {"id": key, "fields": fields, "sources": sources, "evidence": evidence,
                            "differences": differences, "ambiguities": ambiguities,
                            "schedules": [], "date_conflict": False,
-                           "cancelled_hint": bool(re.search(r"(?i)取消|cancel(?:led|ed)?", excerpt))}
+                           "cancelled_hint": bool((previous or {}).get("cancelled_hint") or re.search(r"(?i)取消|cancel(?:led|ed)?", excerpt))}
     for row in result.values():
         for field in set(row["differences"]) | set(row["ambiguities"]):
-            row["fields"][field] = ""
+            if field in row["fields"]:
+                row["fields"][field] = ""
+        row["automatic_ready"] = (not row["differences"] and not row["ambiguities"] and not row["cancelled_hint"]
+                                  and all(row["fields"].get(field) for field in ("mrn", "date", "side", "procedure")))
     return list(result.values())
 
 

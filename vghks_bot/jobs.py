@@ -453,7 +453,9 @@ class Application:
             try:
                 context = self.gateway.task_context(state.data["id"], (source or {}).get("bot_task", {}).get("kind", state.data.get("kind", "")), state.cancel) if hasattr(self, "gateway") else nullcontext()
                 with context:
-                    if source and source.get("bot_task"):
+                    if source and source.get("sheet_sync"):
+                        self.sheet_sync.execute(state, source["bot_task"])
+                    elif source and source.get("bot_task"):
                         self.review.execute(state, source["bot_task"])
                     elif source and source.get("analysis"):
                         self.analysis.execute(state, source)

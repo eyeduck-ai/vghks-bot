@@ -72,7 +72,7 @@ class CataractQueue:
 
     def handle(self, values):
         action = values.get("action", "start")
-        if action not in {"start", "prioritize", "pause", "resume"}:
+        if action not in {"start", "prioritize", "selected", "pause", "resume"}:
             raise ValueError("背景抓取操作不正確。")
         if getattr(getattr(self.app, "root", None), "read_only", False):
             raise ValueError("目前是唯讀檢閱，無法啟動背景抓取。")
@@ -83,6 +83,8 @@ class CataractQueue:
         mrn = values.get("mrn", "")
         if mrn and mrn not in {row["mrn"] for row in members}:
             raise ValueError("病人不在此帳號的分析清單。")
+        if action == "selected" and not mrn:
+            raise ValueError("請指定要處理的病人。")
         if not members:
             raise ValueError("清單沒有此帳號可抓取的病人。")
         if action != "pause" and not self.online():
@@ -107,6 +109,8 @@ class CataractQueue:
                     self.paused = True
                     self.reason = saved.get("reason", "請按繼續背景抓取。")
                 for member in members:
+                    if action == "selected" and member["mrn"] != mrn:
+                        continue
                     status = states[member["mrn"]]
                     resumed = member["mrn"] in saved.get("pending", []) and saved.get("state") == "paused"
                     if not status["ready"] and not status["cache_cleared"] and (not status["attempted"] or resumed):
@@ -115,7 +119,7 @@ class CataractQueue:
                 self.paused, self.reason = True, "背景抓取已暫停。"
             elif action == "resume":
                 self.paused, self.reason, self.next_at = False, "", 0.0
-            elif action == "prioritize" and mrn:
+            elif action in {"prioritize", "selected"} and mrn:
                 status = states[mrn]
                 if not status["ready"] and not status["cache_cleared"]:
                     if mrn not in self.pending and not status["attempted"]:
@@ -186,6 +190,29 @@ class CataractQueue:
             self.finish(state)
             collector.stack.close()
             sessions.close()
+
+    def remove_members(self, cohort_id, mrns, callback):
+        """Commit worklist removal before retiring only its inactive segments."""
+        retired = []
+        with self.condition:
+            if self.cohort_id == cohort_id and self.active in mrns:
+                raise ValueError("此病人正在抓取；請先暫停並等待讀取結束，再移除。")
+            result = callback()
+            if self.cohort_id == cohort_id:
+                self.pending = [mrn for mrn in self.pending if mrn not in mrns]
+                if self.priority in mrns:
+                    self.priority = ""
+                for key in list(self.jobs):
+                    if key[0] == cohort_id and key[1] in mrns:
+                        retired.append(self.jobs.pop(key))
+                self.condition.notify_all()
+        for state, _, collector, sessions in retired:
+            state.update(status="interrupted", message="病人已從待處理清單移除；已保存資料保留。")
+            self.finish(state)
+            collector.stack.close()
+            sessions.close()
+        self.persist()
+        return result
 
     def work(self):
         while True:

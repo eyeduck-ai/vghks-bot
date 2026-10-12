@@ -23,6 +23,8 @@ from .review import Review
 from .scanned_records import ScanArchive
 from .scanner import create_sdk, safe_failure
 from .settings import FOLLOWUP_TAG, Account, credentials, today
+from .sheet_management import SheetManagement
+from .sheet_sync import SheetSync
 from .storage import StorageError
 from .surgery_schedule import SurgerySchedule
 
@@ -47,6 +49,8 @@ class Workspace(Application):
         self.approvals = Approvals(self)
         self.earnings = Earnings(self)
         self.surgery_schedule = SurgerySchedule(self)
+        self.sheet_sync = SheetSync(self)
+        self.sheet_management = SheetManagement(self)
         self.entered = False
         self.offline_mode = False
 
@@ -210,7 +214,8 @@ class BotApplication:
             if self.closing or self.read_only:
                 return
             for workspace in list(self.workspaces.values()):
-                for schedule in (workspace.approvals.tracker.schedule, workspace.earnings.monitor.schedule):
+                for schedule in (workspace.approvals.tracker.schedule, workspace.earnings.monitor.schedule,
+                                 workspace.sheet_sync.schedule):
                     try:
                         schedule()
                     except Exception:

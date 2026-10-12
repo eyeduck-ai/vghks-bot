@@ -35,7 +35,7 @@ def check_metadata(root=ROOT, tag=""):
 def check_paths(paths):
     forbidden = {".build", ".local", ".venv", ".playwright-cli", ".ruff_cache", "output",
                  "dist", "build", "private", "__pycache__",
-                 "vghks-bot-data", "vghks-opd-data"}
+                 "vghks-bot-data", "vghks-opd-data", "vghks-calendar-data", "vghks-calendar-monitor-data"}
     for name in paths:
         path = PurePosixPath(name.lower())
         if (any(part in forbidden for part in path.parts) or path.suffix in

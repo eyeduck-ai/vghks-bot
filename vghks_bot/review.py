@@ -21,6 +21,7 @@ from .connection_state import should_pause
 from .demographics import merge_demographics
 from .earnings import KINDS as EARNINGS_KINDS
 from .library import current_cache, registration_id
+from .patient_handoff import public_document
 from .progress import progress
 from .scanner import Cancelled, ScanState, safe_failure
 from .settings import parse_mrns, parse_range, timestamp, today
@@ -117,13 +118,125 @@ class Review:
             return self.db.save("draft", {"id": "tools", "modules": {
                 **previous["modules"], kind: {"set_id": group["id"] if group else ""}}})
 
+    def handoff(self, values):
+        """Append reviewed patients and immutable SOAP evidence without fetching."""
+        if getattr(getattr(self.app, "root", None), "read_only", False):
+            raise ValueError("唯讀資料庫不能轉送病人。")
+        module = values.get("module")
+        if module not in {"retina", "cataract", "surgery"}:
+            raise ValueError("請選擇有效的進階工具。")
+        supplied = values.get("mrns")
+        if (not isinstance(supplied, list) or not 1 <= len(supplied) <= 20000
+                or any(not isinstance(mrn, str) for mrn in supplied)):
+            raise ValueError("請選取 1–20000 位檢閱病人。")
+        mrns = list(dict.fromkeys(normalize_mrn(mrn) for mrn in supplied))
+        record_ids = values.get("record_ids")
+        if record_ids is not None and (not isinstance(record_ids, list) or len(record_ids) > 20000
+                or any(not isinstance(key, str) or not key for key in record_ids)):
+            raise ValueError("轉送 SOAP 來源格式不正確。")
+        selected_records = set(record_ids) if record_ids is not None else None
+        names = {"retina": "視網膜比較", "cataract": "白內障術前分析", "surgery": "刀表更新"}
+        with self.app.store.library.batch():
+            result = self.results({"id": values.get("review_task_id")})
+            patients = {patient["mrn"]: patient for patient in result["patients"]}
+            if any(mrn not in patients for mrn in mrns):
+                raise ValueError("病人不在此檢閱任務中。")
+            offered = {record["id"] for mrn in mrns for record in patients[mrn].get("records", [])}
+            if selected_records is not None and selected_records - offered:
+                raise ValueError("SOAP 不屬於選取的檢閱病人。")
+            pointer = self.db.get("draft", "handoff:" + module, required=False) or {}
+            group = self.db.get("set", pointer.get("set_id", ""), required=False)
+            group = copy.deepcopy(group) if group else {"id": uuid.uuid4().hex,
+                "name": names[module] + "待處理清單", "members": [], "created_at": timestamp(),
+                "account_id": self.app.account_id}
+            members = {member["mrn"]: member for member in group["members"]}
+            handed_at = timestamp()
+            for mrn in mrns:
+                patient = patients[mrn]
+                member = members.setdefault(mrn, {**{key: patient.get(key, "")
+                    for key in ("mrn", "name", "sex", "age", "birthday", "birthday_raw")},
+                    "registrations": [], "source_records": [], "origins": ["review"],
+                    "handoff_sources": []})
+                member.update(merge_demographics(member, patient))
+                for registration in patient.get("registrations", []):
+                    if registration not in member["registrations"]:
+                        member["registrations"].append(copy.deepcopy(registration))
+                sources = member.setdefault("handoff_sources", [])
+                known = {(source["review_task_id"], source["record_id"], source["version"])
+                         for source in sources}
+                for record in patient.get("records", []):
+                    if selected_records is not None and record["id"] not in selected_records:
+                        continue
+                    current = self.app.store.library.get_record(record["id"], include_versions=False)
+                    if not current or current["mrn"] != mrn:
+                        raise ValueError("轉送 SOAP 已刪除，請重新檢閱。")
+                    version = record.get("version") or digest([record["soap"], record.get("soap_structure")])
+                    identity = (result["task"]["id"], record["id"], version)
+                    if identity not in known:
+                        snapshot = copy.deepcopy({key: value for key, value in record.items()
+                            if key not in {"highlights", "search_hit", "versions"}})
+                        sources.append({"review_task_id": result["task"]["id"], "record_id": record["id"],
+                            "version": version, "record": snapshot, "handed_at": handed_at})
+                        known.add(identity)
+                    if record["id"] not in member["source_records"]:
+                        member["source_records"].append(record["id"])
+            if len(members) > 20000:
+                raise ValueError("待處理清單最多 20000 位病人。")
+            group["members"] = list(members.values())
+            group["worklist_module"] = module
+            group = self.db.save("set", group)
+            try:
+                cohort = self.app.analysis.store.document("analysis_cohorts", pointer.get("cohort_id"))
+            except ValueError:
+                cohort = {"id": uuid.uuid4().hex, "created_at": handed_at}
+            cohort.update(name=group["name"], members=self._cohort_members(group), source_set=group["id"],
+                          worklist_module=module, updated_at=handed_at)
+            self.app.analysis.store.save_document("analysis_cohorts", cohort)
+            self.db.save("draft", {"id": "handoff:" + module, "set_id": group["id"], "cohort_id": cohort["id"]})
+            state = self.tool_state()
+            self.db.save("draft", {"id": "tools", "modules": {**state["modules"], module: {
+                "set_id": group["id"], "cohort_id": cohort["id"]}}})
+            return public_document({"worklist": group, "cohort": cohort, "focus_mrn": mrns[0]})
+
+    def remove_handoff(self, values):
+        if getattr(getattr(self.app, "root", None), "read_only", False):
+            raise ValueError("唯讀資料庫不能移除待處理病人。")
+        module, supplied = values.get("module"), values.get("mrns")
+        if module not in {"retina", "cataract", "surgery"}:
+            raise ValueError("工具種類不正確。")
+        if (not isinstance(supplied, list) or not 1 <= len(supplied) <= 20000
+                or any(not isinstance(mrn, str) for mrn in supplied)):
+            raise ValueError("請選取要移除的待處理病人。")
+        removed = {normalize_mrn(mrn) for mrn in supplied}
+        pointer = self.db.get("draft", "handoff:" + module)
+
+        def update():
+            with self.app.store.library.batch():
+                current = self.db.get("draft", "handoff:" + module)
+                if current["cohort_id"] != pointer["cohort_id"]:
+                    raise ValueError("待處理清單已變更，請重新整理。")
+                group = self.db.get("set", pointer["set_id"])
+                if removed - {member["mrn"] for member in group["members"]}:
+                    raise ValueError("病人不在此待處理清單。")
+                group["members"] = [member for member in group["members"] if member["mrn"] not in removed]
+                group = self.db.save("set", group)
+                cohort = self.app.analysis.store.document("analysis_cohorts", pointer["cohort_id"])
+                cohort.update(members=self._cohort_members(group), updated_at=timestamp())
+                self.app.analysis.store.save_document("analysis_cohorts", cohort)
+                return public_document({"worklist": group, "cohort": cohort,
+                        "focus_mrn": group["members"][0]["mrn"] if group["members"] else ""})
+
+        if module == "cataract":
+            return self.app.analysis.cataract_queue.remove_members(pointer["cohort_id"], removed, update)
+        return update()
+
     def save_set(self, values):
         if values.get("id"):
             old = self.db.get("set", values["id"])
             name = str(values.get("name", "")).strip()
             if not name or len(name) > 100:
                 raise ValueError("集合名稱需為 1–100 字。")
-            return self.db.save("set", {**old, "name": name})
+            return public_document(self.db.save("set", {**old, "name": name}))
         members = {}
         requested_mrns = parse_mrns(values["mrns"], limit=20000) if values.get("mrns") else []
         source_set_id = values.get("source_set_id")
@@ -206,8 +319,8 @@ class Review:
         if not 1 <= len(members) <= 20000:
             raise ValueError("請選取 1–20000 位已確認的病人。")
         name = str(values.get("name") or f"{today().isoformat()} 病人集合 · {len(members)} 位")[:100]
-        return self.db.save("set", {"name": name, "members": [self.member_demographics(m) for m in members.values()], "created_at": timestamp(),
-            "source_range": values.get("source_range", {}), "account_id": self.app.account_id})
+        return public_document(self.db.save("set", {"name": name, "members": [self.member_demographics(m) for m in members.values()], "created_at": timestamp(),
+            "source_range": values.get("source_range", {}), "account_id": self.app.account_id}))
 
     def start(self, values, *, foreground=False):
         from .task_manager import request_key
@@ -841,12 +954,24 @@ class Review:
         self.db.save("task", {**task, "categories": self.app.settings.public()["categories"]})
         return {"ok": True}
 
+    def _cohort_members(self, group):
+        return [{**{key: m.get(key, "") for key in ("mrn", "name", "sex", "age", "birthday", "birthday_raw")}, "account_id": self.app.account_id,
+                    "accounts": [self.app.username], "source_records": m["source_records"],
+                    "source_registrations": m["registrations"], "origins": m["origins"],
+                    **({"handoff_sources": copy.deepcopy(m["handoff_sources"])} if "handoff_sources" in m else {})}
+                   for m in map(self.member_demographics, group["members"])]
+
     def cohort(self, values):
         group = self.db.get("set", values.get("set_id"))
-        members = [{**{key: m.get(key, "") for key in ("mrn", "name", "sex", "age", "birthday", "birthday_raw")}, "account_id": self.app.account_id,
-                    "accounts": [self.app.username], "source_records": m["source_records"],
-                    "source_registrations": m["registrations"], "origins": m["origins"]} for m in map(self.member_demographics, group["members"])]
+        for module in ("retina", "cataract", "surgery"):
+            pointer = self.db.get("draft", "handoff:" + module, required=False) or {}
+            if pointer.get("set_id") == group["id"]:
+                try:
+                    return public_document(self.app.analysis.store.document("analysis_cohorts", pointer["cohort_id"]))
+                except ValueError:
+                    break
+        members = self._cohort_members(group)
         value = {"id": uuid.uuid4().hex, "name": group["name"], "members": members, "created_at": timestamp(),
                  "source_set": group["id"]}
         self.app.analysis.store.save_document("analysis_cohorts", value)
-        return value
+        return public_document(value)

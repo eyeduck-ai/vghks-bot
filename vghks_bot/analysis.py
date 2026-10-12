@@ -21,11 +21,13 @@ from .ophthalmic_orders import (
     eye_visit_signature,
     order_in_eye_context,
 )
+from .patient_handoff import public_document
 from .scanner import Cancelled, ScanState, safe_failure
 from .settings import parse_mrns, timestamp, today
-from .sheet_plan import Planner, fingerprint, verify
+from .sheet_mutex import sheet_mutex
+from .sheet_plan import fingerprint, verify
 from .storage import ACTIVE, StorageError
-from .surgery_candidates import FIELD_NAMES, candidates, enrich
+from .surgery_candidates import FIELD_NAMES, candidates, enrich, followup_candidates
 
 
 class Analysis:
@@ -50,6 +52,8 @@ class Analysis:
             "google/save": self.google.save, "google/remove": lambda _: self.google.remove_key(),
             "google/test": self.test_google,
             "surgery/candidates": self.surgery_candidates, "surgery/preview": self.preview,
+            "surgery/locations": self.surgery_locations,
+            "surgery/drafts": self.surgery_draft,
             "surgery/apply": self.apply, "surgery/check": self.reconcile,
             "surgery/history": self.sheet_history,
         }
@@ -69,8 +73,8 @@ class Analysis:
         with self.store.library.read_snapshot():
             for cohort in cohorts:
                 cohort["members"] = [self.member_demographics(m) for m in cohort["members"]]
-        return {"cohorts": cohorts, "modules": MODULES,
-                "runs": runs, "google": self.google.public()}
+        return {"cohorts": public_document(cohorts), "modules": MODULES,
+                "runs": public_document(runs), "google": self.google.public()}
 
     def label_history(self, rows):
         analyses = [row for row in rows if row.get("kind") == "analysis"]
@@ -198,7 +202,7 @@ class Analysis:
                     for member in cohort["members"]:
                         member["account_id"] = account.id
             cohort.update(name=name, updated_at=timestamp())
-            return self.store.save_document("analysis_cohorts", cohort)
+            return public_document(self.store.save_document("analysis_cohorts", cohort))
 
     def delete_cohort(self, values):
         key = identifier(values.get("id"))
@@ -343,7 +347,7 @@ class Analysis:
         member = next((m for m in cohort["members"] if m["mrn"] == values.get("mrn")), None)
         if not member:
             raise ValueError("病人不在此分析清單。")
-        return self.member_demographics(member)
+        return public_document(self.member_demographics(member))
 
     def member_demographics(self, member):
         review = getattr(self.app, "review", None)
@@ -582,20 +586,93 @@ class Analysis:
         cohort = self.store.document("analysis_cohorts", values.get("cohort_id"))
         result = []
         for member in cohort["members"]:
-            rows = candidates(self.store.records(member["mrn"]))
-            result.extend(enrich(rows, self.store.steps(member["mrn"])))
+            records = self.candidate_records(member)
+            rows = enrich(candidates(records, structured_only=bool(member.get("handoff_sources"))),
+                          self.store.steps(member["mrn"]))
+            rows.extend(followup_candidates(records, self.app.settings))
+            versions = {r["id"]: digest([r.get("soap"), r.get("soap_structure")])
+                        for r in records}
+            for row in rows:
+                row["source_stale"] = any(
+                    (current := self.store.library.get_record(s["record_id"])) is None
+                    or versions.get(s["record_id"]) != digest([current.get("soap"), current.get("soap_structure")])
+                    for s in row["sources"])
+                for source in row["sources"]:
+                    source["version"] = versions.get(source["record_id"], "")
+            result.extend(rows)
+        result.extend(self.store.documents("surgery_drafts", cohort_id=cohort["id"]))
         return {"candidates": result, "fields": FIELD_NAMES, "google": self.google.public()}
+
+    def surgery_locations(self, _):
+        from .sheet_identity import MONTH_PATTERN
+        from .sheet_plan import entries, row_label
+        from .sheet_sync_core import SheetSyncCore
+
+        def read(client):
+            blocks = []
+            for sheet in SheetSyncCore.read(client)["sheets"]:
+                if not MONTH_PATTERN.fullmatch(sheet["properties"]["title"]):
+                    continue
+                for entry in entries(sheet):
+                    if entry["kind"] != "day" or not entry["date"] or not entry["hospital"]:
+                        continue
+                    ref = row_label(sheet, entry["index"])
+                    blocks.append({"date": entry["date"], "hospital": entry["hospital"],
+                                   "block_sync_id": entry["sync_id"] or "ref:" + ref,
+                                   "ref": ref, "label": f"{entry['date']} {entry['hospital']} · {ref}"})
+            return {"blocks": blocks}
+        return self.sheet_operation(read)
+
+    def candidate_records(self, member):
+        if "handoff_sources" in member:
+            latest = {}
+            for source in member["handoff_sources"]:
+                record = source.get("record")
+                if record and record.get("mrn") == member["mrn"]:
+                    latest[record["id"]] = copy.deepcopy(record)
+            return list(latest.values())
+        records = self.store.records(member["mrn"])
+        selected = member.get("source_records", [])
+        return [r for r in records if r["id"] in selected] if selected else records
+
+    def surgery_draft(self, values):
+        member = self.member(values)
+        fields_ = {key: "" for key in FIELD_NAMES}
+        fields_.update(mrn=member["mrn"], name=member.get("name", ""), hospital="高榮")
+        row = {"id": uuid.uuid4().hex, "cohort_id": values["cohort_id"],
+               "manual": True, "fields": fields_, "sources": [], "evidence": {},
+               "differences": {}, "ambiguities": {}, "schedules": [],
+               "cancelled_hint": False, "date_conflict": False, "created_at": timestamp()}
+        self.store.save_document("surgery_drafts", row)
+        return {"candidate": row, "candidates": self.surgery_candidates(values)["candidates"]}
 
     def proposals(self, values):
         offered = {c["id"]: c for c in self.surgery_candidates(values)["candidates"]}
         supplied = values.get("proposals", [])
         if not isinstance(supplied, list) or not 1 <= len(supplied) <= 200:
-            raise ValueError("每次請選擇 1–200 筆手術預覽。")
+            raise ValueError("每次請選擇 1–200 筆刀表項目預覽。")
         result = []
         for proposal in supplied:
             row = offered.get(proposal.get("id")) if isinstance(proposal, dict) else None
             if not row:
-                raise ValueError("手術來源已變更或刪除，請重新載入。")
+                raise ValueError("刀表項目來源已變更或刪除，請重新載入。")
+            if row.get("source_stale"):
+                raise ValueError("轉送來源 SOAP 版本已變更或刪除，請重新檢閱並轉送。")
+            if row.get("kind") == "fu":
+                updates = proposal.get("fields", {})
+                if (not isinstance(updates, dict) or set(updates) - set(row["fields"])
+                        or any(value != row["fields"][key] for key, value in updates.items())
+                        or proposal.get("clear_fields") or proposal.get("destination")
+                        or proposal.get("target") or proposal.get("new_event")):
+                    raise ValueError("FU 只新增病歷號、姓名、高榮與 FU 分類；人工欄位請於刀表填寫。")
+                result.append({"id": row["id"], "kind": "fu", "fields": copy.deepcopy(row["fields"]),
+                               "selected_fields": list(row["fields"]), "clear_fields": [],
+                               "source_records": [s["record_id"] for s in row["sources"]],
+                               "source_versions": [{"record_id": s["record_id"], "version": s["version"]}
+                                                   for s in row["sources"]],
+                               "source_bindings": [{"record_id": s["record_id"], "source_version": s["version"]}
+                                                   for s in row["sources"]], "manual_draft_id": ""})
+                continue
             if row["cancelled_hint"] and not proposal.get("reviewed"):
                 raise ValueError("含取消文字的手術需先勾選「已核對來源」。")
             if row["date_conflict"] and not proposal.get("reviewed"):
@@ -616,11 +693,27 @@ class Analysis:
             if not isinstance(selected, list) or not isinstance(clear, list) or set(selected + clear) - set(FIELD_NAMES):
                 raise ValueError("勾選欄位不正確。")
             result.append({**proposal, "fields": fields_, "selected_fields": selected, "clear_fields": clear,
-                           "source_records": [s["record_id"] for s in row["sources"]]})
+                           "source_fields": copy.deepcopy(row["fields"]),
+                           "source_records": [s["record_id"] for s in row["sources"]],
+                           "source_versions": [{"record_id": s["record_id"], "version": s.get("version", "")}
+                                               for s in row["sources"]],
+                           "source_bindings": [{k: s[k] for k in ("record_id", "field", "source_key", "block_count", "ordinal", "block_hash", "event_hash", "source_version") if k in s}
+                                               for s in row["sources"]],
+                           "manual_draft_id": row["id"] if row.get("manual") else ""})
         return result
 
     def source_digest(self, mrns):
         return digest({mrn: self.store.records(mrn) for mrn in mrns})
+
+    def scoped_digest(self, scope):
+        if not scope:
+            return ""
+        records = {}
+        for key in scope.get("records", []):
+            record = self.store.library.get_record(key)
+            records[key] = digest([record.get("soap"), record.get("soap_structure")]) if record else None
+        drafts = {key: self.store.document("surgery_drafts", key) for key in scope.get("drafts", [])}
+        return digest({"records": records, "drafts": drafts})
 
     @staticmethod
     def public_preview(preview):
@@ -639,7 +732,8 @@ class Analysis:
         client = None
         try:
             client = self.client_factory()
-            return callback(client)
+            with sheet_mutex(client.key):
+                return callback(client)
         finally:
             if client:
                 client.close()
@@ -650,17 +744,29 @@ class Analysis:
         proposals = self.proposals(values)
 
         def work(client):
-            before = self.source_digest({p["fields"]["mrn"] for p in proposals})
-            preview = Planner(client.read(), client.key, proposals).build()
+            scope = {"records": sorted({key for p in proposals for key in p["source_records"]}),
+                     "drafts": [p["manual_draft_id"] for p in proposals if p["manual_draft_id"]]}
+            before = self.scoped_digest(scope)
+            from .sheet_sync_core import SheetSyncCore
+
+            core = SheetSyncCore(self)
+            preview = core.build_manual(core.read(client), client.key, proposals)
             preview["source_digest"] = before
+            preview["source_scope"] = scope
             preview["cohort_id"] = values["cohort_id"]
             self.store.save_document("sheet_previews", preview)
             return self.public_preview(preview)
         return self.sheet_operation(work)
 
     def _check(self, client, preview):
-        book = client.read()
+        from .sheet_sync_core import SheetSyncCore
+        from .sheet_sync_state import read_sync_state
+
+        book = SheetSyncCore.read(client)
         outcome = verify(book, preview)
+        if outcome == "verified" and any(read_sync_state(book)["states"].get(uid) != state
+                                         for uid, state in preview.get("sync_states", {}).items()):
+            outcome = "changed"
         if outcome == "verified":
             preview.update(status="applied", message="已寫入並核對。", applied_at=timestamp())
         elif outcome == "changed":
@@ -695,7 +801,9 @@ class Analysis:
                 return self.public_preview(preview)
             if preview["status"] in {"applied", "applied_changed"}:
                 raise ValueError("此批更新曾完成，禁止重送；請檢查刀表。")
-            if self.source_digest(preview["mrns"]) != preview["source_digest"]:
+            current_digest = (self.scoped_digest(preview["source_scope"]) if preview.get("source_scope")
+                              else self.source_digest(preview["mrns"]))
+            if current_digest != preview["source_digest"]:
                 raise ValueError("來源 SOAP 已變更或刪除，請重新預覽。")
             if fingerprint(book) != preview["baseline"]:
                 raise ValueError("刀表內容、位置或格式已變更，請重新產生預覽。")
@@ -728,3 +836,16 @@ class Analysis:
 
     def sheet_history(self, _):
         return {"previews": [self.public_preview(p) for p in self.store.documents("sheet_previews")]}
+
+    def automatic_sheet_sync(self, records, cohort_id, state, *, expected_spreadsheet_id=None):
+        from .sheet_sync_core import SheetSyncCore
+
+        def work(client):
+            # A deferred intent belongs to the sheet selected when its SOAP
+            # was saved. Check the actual client after acquiring the shared
+            # lock; a settings change can race the caller's early validation.
+            if expected_spreadsheet_id is not None and client.key != expected_spreadsheet_id:
+                raise ValueError("刀表設定已改變，請切回原刀表再核對已保存候選。")
+            return SheetSyncCore(self).automatic(client, records, cohort_id, state)
+
+        return self.sheet_operation(work)

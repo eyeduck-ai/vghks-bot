@@ -9,6 +9,7 @@ from contextlib import contextmanager
 from datetime import datetime
 
 from .database_format import schema
+from .patient_handoff import purge_sources
 from .portable_credentials import seal, unseal
 from .settings import timestamp
 
@@ -324,6 +325,7 @@ class WorkbenchStore:
             # EXE closes next, Store completes the pending library deletion.
             db.executemany("INSERT OR IGNORE INTO pending_deletions VALUES(?)", [(key,) for key in selected])
             db.executemany("INSERT OR REPLACE INTO bot_deleted_records VALUES(?,?)", [(key, timestamp()) for key in selected])
+            purge_sources(db, record_ids=selected)
             for row in db.execute("SELECT task_id,key,payload FROM bot_task_items").fetchall():
                 value = json.loads(row[2])
                 previous = value.get("records", [])

@@ -163,6 +163,8 @@ window.CataractUI = (() => {
         queue?.state === "paused" || (current.attempted && !queue?.pending?.includes(member.mrn)))) return;
     if (action === "start" && ((queue && !["idle", "completed"].includes(queue.state)) ||
         !status?.members?.some(row => !row.ready && !row.attempted && !row.cache_cleared))) return;
+    if (action === "selected" && (!current || current.ready || current.cache_cleared || current.active_run_id ||
+        queue?.state === "paused" || current.attempted && !queue?.pending?.includes(member.mrn))) return;
     const pending = JobProgress.pending("#analysisRuns", "白內障術前分析", "正在安排背景抓取…");
     try {
       await ap("cataract/queue", {cohort_id:currentCohort.id, action, mrn:member.mrn});
@@ -650,5 +652,5 @@ window.CataractUI = (() => {
     });
   });
   return {layout, refreshStatus, renderPatients, render, cachedResult, readResult, preparePatient, readFailure,
-    autoStart: () => enqueue("start")};
+    autoStart: ({selectedOnly=false}={}) => enqueue(selectedOnly?"selected":"start")};
 })();

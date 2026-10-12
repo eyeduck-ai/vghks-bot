@@ -272,8 +272,8 @@ def book_fixture():
     ]
     header = [literal(n) for n in names]
     header[7] = {
-        "userEnteredValue": {"formulaValue": '="診斷"&COUNTIF(H2:H100,"CATA")'},
-        "formattedValue": "診斷1",
+        "userEnteredValue": {"formulaValue": '=LET(marker,"SURGERY_MONTHLY_DIAGNOSIS_SUMMARY_V2","診斷｜"&COUNTIF(H2:H100,"CATA"))'},
+        "formattedValue": "診斷｜1",
     }
 
     def day_row(when, hospital):
@@ -409,6 +409,25 @@ class MemorySheets:
                 s["properties"]["gridProperties"][
                     "rowCount" if p["dimension"] == "ROWS" else "columnCount"
                 ] += p["length"]
+            elif "updateDimensionProperties" in request:
+                p = request["updateDimensionProperties"]
+                s = sheet(p["range"]["sheetId"])
+                metadata = s.setdefault("row_metadata" if p["range"]["dimension"] == "ROWS" else "column_widths", [])
+                while len(metadata) < p["range"]["endIndex"]:
+                    metadata.append({})
+                for col in range(p["range"]["startIndex"], p["range"]["endIndex"]):
+                    metadata[col].update(copy.deepcopy(p["properties"]))
+            elif "addConditionalFormatRule" in request:
+                p = request["addConditionalFormatRule"]
+                rule = p["rule"]
+                s = sheet(rule["ranges"][0]["sheetId"])
+                s.setdefault("conditionalFormats", []).insert(p["index"], copy.deepcopy(rule))
+            elif "addProtectedRange" in request:
+                p = request["addProtectedRange"]["protectedRange"]
+                sheet(p["range"]["sheetId"]).setdefault("protectedRanges", []).append(copy.deepcopy(p))
+            elif "updateSheetProperties" in request:
+                p = request["updateSheetProperties"]["properties"]
+                sheet(p["sheetId"])["properties"].update(copy.deepcopy(p))
             elif "insertDimension" in request or "deleteDimension" in request:
                 adding = "insertDimension" in request
                 p = request["insertDimension" if adding else "deleteDimension"]["range"]

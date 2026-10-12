@@ -66,7 +66,7 @@ let reviewHeaderTask="",reviewSetupExpanded=false,reviewHasResults=false;
 let cataractScroll=null;
 
 function say(message,error=false){const n=$(error?"#notice":"#toast");n.textContent=message;n.hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>n.hidden=true,error?9000:3500);}
-function applyReadonly(){window.DatabaseUI?.readonly();}
+function applyReadonly(){window.SheetManagement?.readonly();window.DatabaseUI?.readonly();window.ReviewHandoff?.renderSelection();}
 async function act(callback,source=document.activeElement){$("#notice").hidden=true;const revision=epoch,control=source?.tagName==="BUTTON"?source:null;if(control?.dataset.busy)return;const wasDisabled=control?.disabled;if(control){control.dataset.busy="true";control.setAttribute("aria-busy","true");control.disabled=true;}try{return await callback();}catch(e){if(e.name!=="AbortError")say(e.message||"操作未完成",true);}finally{if(control){delete control.dataset.busy;control.removeAttribute("aria-busy");if(control.isConnected&&revision===epoch)control.disabled=!!wasDisabled;}}}
 async function request(path, body, scoped=true){
   const key=account, revision=epoch;
@@ -123,7 +123,7 @@ function showEntry(key=""){
  window.JobProgress?.context("");window.LibraryDataUI?.reset();
  cataractScroll=null;
  if(account&&work&&!root.read_only){clearTimeout(draftTimer);api("/draft/save",draftValue()).catch(()=>{});}
- clearTimeout(draftTimer);manualLookup.reset();manualErrors.clear();window.ToolWorkspace?.reset();window.SurgerySystem?.reset();window.ReviewNotesUI?.reset();epoch++;account="";$("#moduleFrame").removeAttribute("src");$("#cataractFrame").removeAttribute("src");for(const d of $$("dialog[open]"))d.close();$("#shell").hidden=true;$("#entry").hidden=false;loginFields(key);
+ clearTimeout(draftTimer);manualLookup.reset();manualErrors.clear();window.ToolWorkspace?.reset();window.SurgerySystem?.reset();window.SheetManagement?.reset();window.ReviewNotesUI?.reset();window.ReviewHandoff?.reset();epoch++;account="";$("#moduleFrame").removeAttribute("src");$("#cataractFrame").removeAttribute("src");for(const d of $$("dialog[open]"))d.close();$("#shell").hidden=true;$("#entry").hidden=false;loginFields(key);
  window.FileCompare?.context("", "");window.CataractExpanded?.clear();
 }
 async function login(key, automatic=false){
@@ -148,8 +148,8 @@ async function enter(key){
  window.JobProgress?.context(key,!!root?.read_only);window.LibraryDataUI?.reset();
  cataractScroll=null;
  collapsedDays.clear();manualLookup.reset();manualErrors.clear();
- window.ReviewHistoryUI?.reset();window.ReviewNotesUI?.reset();window.TaskActivityUI?.reset();reconnectTask="";reconnectTarget="";
- epoch++;account=key;window.FileCompare?.context(key, "");window.Approvals?.reset();window.ToolWorkspace?.reset();window.Earnings?.reset();window.SurgerySystem?.reset();work=null;listing=null;selected=new Set();manual=[];libraryPage=tagPage=0;listTab="own";selectedSet=null;currentReview="";reviewData=null;reviewPatient="";reviewSignature="";extensionTask=activeListRun="";librarySelected.clear();
+ window.ReviewHistoryUI?.reset();window.ReviewNotesUI?.reset();window.ReviewHandoff?.reset();window.TaskActivityUI?.reset();reconnectTask="";reconnectTarget="";
+ epoch++;account=key;window.FileCompare?.context(key, "");window.Approvals?.reset();window.ToolWorkspace?.reset();window.Earnings?.reset();window.SurgerySystem?.reset();window.SheetManagement?.reset();work=null;listing=null;selected=new Set();manual=[];libraryPage=tagPage=0;listTab="own";selectedSet=null;currentReview="";reviewData=null;reviewPatient="";reviewSignature="";extensionTask=activeListRun="";librarySelected.clear();
  $("#moduleFrame").removeAttribute("src");$("#cataractFrame").removeAttribute("src");for(const d of $$("dialog[open]"))d.close();
  for(const id of ["reviewQuery","listQuery","libraryQuery","libraryStart","libraryEnd","tagQuery"])$("#"+id).value="";
  for(const id of ["libraryTag","tagFilter","reviewTag","libraryTask"])$("#"+id).value="";
@@ -161,9 +161,9 @@ async function enter(key){
  await readList();showPage("patients");renderSets();applyReadonly();
 }
 function updateReviewLayout(){document.body.classList.toggle("review-result-compact",page==="review"&&!!reviewData&&!reviewSetupExpanded);}
-function showPage(name){if(page==="module"&&name!=="module")captureCataractScroll();page=name;document.body.classList.toggle("module-workspace",name==="module");$("#sidebarAccount").open=false;Choices.sync();window.ToolWorkspace?.visibility(name);window.SurgerySystem?.visibility(name);for(const section of $$("main>.page"))section.hidden=section.id!==name+"Page";for(const b of $$("[data-page]"))b.classList.toggle("active",b.dataset.page===name);updateReviewLayout();window.WorkspacePoll?.visibility();}
+function showPage(name){if(page==="module"&&name!=="module")captureCataractScroll();page=name;document.body.classList.toggle("module-workspace",name==="module");$("#sidebarAccount").open=false;Choices.sync();window.ToolWorkspace?.visibility(name);window.SurgerySystem?.visibility(name);window.SheetManagement?.visibility(name);for(const section of $$("main>.page"))section.hidden=section.id!==name+"Page";for(const b of $$("[data-page]"))b.classList.toggle("active",b.dataset.page===name);updateReviewLayout();window.WorkspacePoll?.visibility();}
 function toggleReviewPatients(){const hidden=!$("#reviewPatients").hidden;$("#reviewPatients").hidden=hidden;$("#reviewLayout").classList.toggle("patients-collapsed",hidden);const toggle=$("#reviewPatientsToggle");toggle.setAttribute("aria-expanded",String(!hidden));toggle.textContent=hidden?"›":"‹";toggle.title=hidden?"展開病人清單":"收合病人清單";toggle.setAttribute("aria-label",toggle.title);}
-async function navigate(name){if(page==="review"&&name!=="review"&&!await window.ReviewNotesUI?.flushAll())throw new Error("有備註尚未儲存，請重試後再切換頁面。");showPage(name);if(name==="library")await loadLibrary();if(name==="tags")await loadTags();if(name==="tasks")await refresh();if(name==="approvals"){await window.Approvals.enter();}if(name==="earnings")await window.Earnings.open();if(name==="surgery")await window.SurgerySystem.open();}
+async function navigate(name){if(page==="review"&&name!=="review"&&!await window.ReviewNotesUI?.flushAll())throw new Error("有備註尚未儲存，請重試後再切換頁面。");showPage(name);if(name==="library")await loadLibrary();if(name==="tags")await loadTags();if(name==="tasks")await refresh();if(name==="approvals"){await window.Approvals.enter();}if(name==="earnings")await window.Earnings.open();if(name==="surgery")await window.SurgerySystem.open();if(name==="sheetManagement")await window.SheetManagement.open();}
 const draftValue=()=>({start:$("#startDate").value,end:$("#endDate").value,mode:$("#dateMode").value,selected:[...selected],manual,tab:listTab});
 function draftSave(){if(root.read_only)return;clearTimeout(draftTimer);const key=account;draftTimer=setTimeout(()=>{if(key!==account)return;act(()=>api("/draft/save",draftValue()));},250);}
 function dateMode(){Choices.sync();const single=$("#dateMode").value==="single";$("#endDateField").hidden=single;if(single)$("#endDate").value=$("#startDate").value;$("#endDate").min=$("#startDate").value;}
@@ -247,7 +247,7 @@ async function restoreCataract(){
  resumeCataractFrame(frame);
  return true;
 }
-async function openModule(cohort,module="retina"){
+async function openModule(cohort,module="retina",{focusMrn="",selectedOnly=false}={}){
  window.ToolWorkspace?.activate(module);if(await window.ToolWorkspace?.adoptModule(cohort)===false)return;
  $("#moduleTitle").textContent={retina:"視網膜比較",cataract:"白內障術前分析",surgery:"刀表更新"}[module]||"檢查比較";
  const frame=module==="cataract"?$("#cataractFrame"):$("#moduleFrame");
@@ -255,11 +255,14 @@ async function openModule(cohort,module="retina"){
  $("#modulePage").classList.toggle("cataract-active",module==="cataract");
  $("#cataractFrame").hidden=module!=="cataract";$("#moduleFrame").hidden=module==="cataract";
  if(module==="cataract"&&frame.dataset.account===account&&frame.dataset.cohort===cohort&&frame.hasAttribute("src")){
-   showPage("module");resumeCataractFrame(frame);return;
+   showPage("module");resumeCataractFrame(frame);
+   if(focusMrn)frame.contentWindow?.postMessage({type:"bot:tool-focus",account,cohort,mrn:focusMrn,selected_only:selectedOnly},location.origin);
+   return;
  }
  if(module==="cataract")cataractScroll=null;
  frame.dataset.account=account;frame.dataset.cohort=cohort;
- frame.src="/tools?account="+encodeURIComponent(account)+"&cohort="+encodeURIComponent(cohort)+"&module="+encodeURIComponent(module);
+ const query=new URLSearchParams({account,cohort,module});if(focusMrn)query.set("focus",focusMrn);if(selectedOnly)query.set("queue","selected");
+ frame.src="/tools?"+query;
  showPage("module");
 }
 function renderTasks(history){
@@ -299,6 +302,7 @@ async function refresh({light=false}={}){
  const previous=recoverySeen.get(account);recoverySeen.set(account,work.recovery_count||0);if(previous!==undefined&&work.recovery_count>previous)say("院內連線已自動恢復，查詢已繼續。");
  if(activeListRun){const run=history.runs.find(r=>r.id===activeListRun);if(run){JobProgress.show("#listJob",run);if(!inProgress.has(run.status)){activeListRun="";await readList();for(const r of allRows())if(own(r)&&r.mrn)selected.add(r.id);renderList();draftSave();}}}
  await window.ToolWorkspace?.poll();
+ await window.SheetSyncUI?.poll();
  if(extensionTask&&$("#dataDialog").open)await showExtensionTask(extensionTask,extensionContext?.kind,false);
  await window.ReviewHistoryUI?.poll();
  if(currentReview&&page==="review"){const task=work.tasks.find(t=>t.id===currentReview),signature=task?.updated_at+"/"+task?.status;if(task&&signature!==reviewSignature)await loadReview();}
@@ -309,7 +313,7 @@ function addManualPatient(patient){
  profiles.set(patient.mrn,{mrn:patient.mrn,name:patient.name,sex:patient.sex,birthday:patient.birthday,age:patient.age});
  manual=[...profiles.values()];renderList();draftSave();
 }
-async function openReview(id){if(currentReview&&currentReview!==id&&!await window.ReviewNotesUI.flushAll())throw new Error("有備註尚未儲存，請重試後再切換任務。");suppressCompletedReview=work.tasks.some(t=>t.id===id&&t.status==="completed");window.ToolWorkspace?.activate("review");currentReview=id;reviewData=null;reviewSignature="";reviewPatient="";$("#reviewQuery").value="";$("#reviewTag").value="";showPage("review");await loadReview();}
+async function openReview(id){if(currentReview&&currentReview!==id&&!await window.ReviewNotesUI.flushAll())throw new Error("有備註尚未儲存，請重試後再切換任務。");suppressCompletedReview=work.tasks.some(t=>t.id===id&&t.status==="completed");window.ToolWorkspace?.activate("review");currentReview=id;window.ReviewHandoff?.renderSelection();reviewData=null;reviewSignature="";reviewPatient="";$("#reviewQuery").value="";$("#reviewTag").value="";showPage("review");await loadReview();}
 async function resumeReview(){
  const task=(work?.tasks||[]).find(t=>t.id===currentReview&&t.kind==="review")||(work?.tasks||[]).find(t=>t.kind==="review");
  if(!task)return window.ToolWorkspace.open("review");
@@ -347,9 +351,15 @@ function renderReviewHeader(value){
 }
 async function loadReview(){const sequence=++searchSequence;const value=await api("/reviews/results",{id:currentReview,...reviewFilters()});if(sequence!==searchSequence||page!=="review"||value.task.id!==currentReview)return;await window.ReviewNotesUI.load(currentReview);if(sequence!==searchSequence||page!=="review"||value.task.id!==currentReview)return;reviewData=value;reviewSignature=value.task.updated_at+"/"+value.task.status;window.ToolWorkspace?.adoptReview(value.task);renderReviewHeader(value);
  $("#reviewSummary").textContent=`${value.total} / ${value.all_total} 位`;
- const patients=$("#reviewPatients");patients.replaceChildren();if(!value.patients.some(p=>p.mrn===reviewPatient))reviewPatient=value.patients[0]?.mrn||"";
- for(const p of value.patients){const b=btn("",()=>selectReviewPatient(p.mrn),"patient-select"+(p.mrn===reviewPatient?" active":""));b.dataset.mrn=p.mrn;const heading=node("span",undefined,"review-patient-top"),sequenceNo=window.ReviewNotesUI.sequence(p.mrn);const sequenceBadge=node("span",sequenceNo||"未提供","review-sequence");sequenceBadge.title="掛號序號："+(sequenceNo||"未提供");heading.append(node("strong",p.name||p.mrn),sequenceBadge);b.append(heading,node("span",`${p.mrn} · ${labels[p.status]||p.status}`,"caption"));if(p.records?.length)b.append(node("span",p.records.map(r=>r.date).filter((v,i,a)=>a.indexOf(v)===i).join("、"),"caption"));const tags=new Map((p.records||[]).flatMap(r=>r.matches||[]).map(t=>[t.category,t]));b.append(badges([...tags.values()]),badges(p.manual_tags,true));patients.append(b);}
- if(!value.patients.length)patients.append(empty("沒有符合的病人。"));$("#reviewSummary").textContent=`${value.total} / ${value.all_total} 位`+(value.scope_issue_count?` · ${value.scope_issue_count} 份病歷的 tag 判定不完整`:"");$("#reviewSummary").title=$("#reviewSummary").textContent;renderReviewDetail();
+ renderReviewPatients(value.patients);
+ $("#reviewSummary").textContent=`${value.total} / ${value.all_total} 位`+(value.scope_issue_count?` · ${value.scope_issue_count} 份病歷的 tag 判定不完整`:"");$("#reviewSummary").title=$("#reviewSummary").textContent;renderReviewDetail();
+}
+function renderReviewPatients(values){
+ const patients=$("#reviewPatients"),scroll=patients.scrollTop;patients.replaceChildren();window.ReviewHandoff?.updatePatients(values);
+ if(!values.some(p=>p.mrn===reviewPatient))reviewPatient=values[0]?.mrn||"";
+ for(const p of values){const row=node("div",undefined,"review-patient-row"),control=node("label",undefined,"review-patient-check");const checkbox=check(`勾選 ${p.name||p.mrn}（${p.mrn}）`,!!window.ReviewHandoff?.has(p.mrn),checked=>window.ReviewHandoff?.toggle(p,checked));checkbox.className="review-handoff-check";checkbox.dataset.mrn=p.mrn;checkbox.disabled=!!root.read_only;control.append(checkbox);
+  const b=btn("",()=>selectReviewPatient(p.mrn),"patient-select"+(p.mrn===reviewPatient?" active":""));b.dataset.mrn=p.mrn;const heading=node("span",undefined,"review-patient-top"),sequenceNo=window.ReviewNotesUI.sequence(p.mrn);const sequenceBadge=node("span",sequenceNo||"未提供","review-sequence");sequenceBadge.title="掛號序號："+(sequenceNo||"未提供");heading.append(node("strong",p.name||p.mrn),sequenceBadge);b.append(heading,node("span",`${p.mrn} · ${labels[p.status]||p.status}`,"caption"));if(p.records?.length)b.append(node("span",p.records.map(r=>r.date).filter((v,i,a)=>a.indexOf(v)===i).join("、"),"caption"));const tags=new Map((p.records||[]).flatMap(r=>r.matches||[]).map(t=>[t.category,t]));b.append(badges([...tags.values()]),badges(p.manual_tags,true));row.append(control,b);patients.append(row);}
+ if(!values.length)patients.append(empty("沒有符合的病人。"));patients.scrollTop=scroll;
 }
 function soapNode(record){return SOAPView.create(record);}
 async function selectReviewPatient(mrn){if(reviewPatient!==mrn&&!await window.ReviewNotesUI.flush(reviewPatient)){say("有備註尚未儲存，請重試後再切換病人。",true);return;}if(reviewPatient!==mrn)window.ScanBrowser?.reset();reviewPatient=mrn;renderReviewDetail();$("#reviewDetail").scrollTop=0;for(const n of $$(".patient-select"))n.classList.toggle("active",n.dataset.mrn===mrn);}
@@ -389,6 +399,8 @@ function renderReviewDetail(){
   btn("歷次就診",()=>window.ReviewHistoryUI.open("visits",p.mrn)),
   btn("掛號紀錄",()=>extension("registrations",p.mrn)),btn("加入／移除 tag",()=>openPatientTags([p.mrn])),
   noteControl.button);
+ const send=btn("送至進階工具",()=>window.ReviewHandoff.open(p));send.disabled=!!root.read_only;
+ shortcuts.append(send);
  const divider=node("span",undefined,"review-control-divider");divider.setAttribute("role","separator");divider.setAttribute("aria-orientation","vertical");
  const index=reviewData.patients.indexOf(p),nav=node("div",undefined,"detail-actions");
  for(const [label,d] of [["上一位",-1],["下一位",1]]){const next=reviewData.patients[index+d],button=btn(label,()=>selectReviewPatient(next.mrn));button.disabled=!next;nav.append(button);}

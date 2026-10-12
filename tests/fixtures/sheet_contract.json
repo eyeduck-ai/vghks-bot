@@ -1,0 +1,434 @@
+{
+  "schema": 1,
+  "monthly_headers": [
+    "日期／報到時間",
+    "醫院",
+    "病歷號",
+    "姓名",
+    "TEL",
+    "GA",
+    "側別",
+    "診斷",
+    "Grade",
+    "術式",
+    "IOL",
+    "IOL Target",
+    "IOL Final",
+    "Axis",
+    "Plan",
+    "心得",
+    "",
+    "SN",
+    "CDE",
+    "Energy Time",
+    "Energy %",
+    "屈光數據",
+    "CalendarEventId",
+    "ScheduleSyncId"
+  ],
+  "fu_headers": [
+    "病歷號",
+    "姓名",
+    "TEL",
+    "醫院",
+    "Tag",
+    "Condition",
+    "日期",
+    "Plan",
+    "心得",
+    "CalendarEventId",
+    "ScheduleSyncId"
+  ],
+  "system_headers": [
+    "CalendarEventId",
+    "ScheduleSyncId"
+  ],
+  "hospitals": [
+    "高榮",
+    "聯醫"
+  ],
+  "options": {
+    "醫院": [
+      "高榮",
+      "聯醫"
+    ],
+    "GA": [
+      "GA"
+    ],
+    "側別": [
+      "OD",
+      "OS",
+      "OU"
+    ],
+    "診斷": [
+      "CATA",
+      "Subluxated IOL",
+      "VH",
+      "ERM",
+      "RD",
+      "Ptosis",
+      "Dermatochalasis",
+      "Entropion"
+    ],
+    "術式": [
+      "Phaco-IOL",
+      "LenSx-Phaco-IOL",
+      "MSICS-IOL",
+      "VT",
+      "VT+MP",
+      "LMR",
+      "correction",
+      "Suture IOL"
+    ],
+    "Tag": [
+      "FU",
+      "Complication",
+      "CATA",
+      "Cornea",
+      "Retina",
+      "Plasty",
+      "Neuro",
+      "Refraction",
+      "Suture IOL",
+      "IVI"
+    ]
+  },
+  "monthly_wrap": [
+    "Grade",
+    "IOL",
+    "Plan",
+    "TEL",
+    "屈光數據",
+    "心得",
+    "術式",
+    "診斷"
+  ],
+  "fu_wrap": [
+    "Condition",
+    "Plan",
+    "TEL",
+    "心得"
+  ],
+  "monthly_text": [
+    "Axis",
+    "CDE",
+    "Energy %",
+    "Energy Time",
+    "IOL",
+    "IOL Final",
+    "IOL Target",
+    "SN",
+    "TEL"
+  ],
+  "monthly_widths": {
+    "日期／報到時間": 115,
+    "醫院": 58,
+    "病歷號": 76,
+    "姓名": 72,
+    "TEL": 96,
+    "GA": 42,
+    "側別": 46,
+    "診斷": 160,
+    "Grade": 82,
+    "術式": 180,
+    "Plan": 260,
+    "IOL": 96,
+    "IOL Target": 80,
+    "IOL Final": 76,
+    "Axis": 52,
+    "心得": 260,
+    "SN": 65,
+    "CDE": 65,
+    "Energy Time": 90,
+    "Energy %": 72,
+    "屈光數據": 180,
+    "CalendarEventId": 120,
+    "ScheduleSyncId": 120
+  },
+  "font": {
+    "family": "Arial",
+    "size": 10
+  },
+  "blank_rows": 5,
+  "header_marker": "◆ 刀日",
+  "diagnosis_formula": "=LET(managedMarker,T(N(\"SURGERY_MONTHLY_DIAGNOSIS_SUMMARY_V2\")),diagnosisValues,ARRAYFORMULA(UPPER(TO_TEXT(IFERROR(INDEX($H:$H,2):INDEX($H:$H,ROWS($H:$H)),\"\")))),sideValues,ARRAYFORMULA(UPPER(TRIM(TO_TEXT(IFERROR(INDEX($G:$G,2):INDEX($G:$G,ROWS($G:$G)),\"\"))))),sideWeights,ARRAYFORMULA(IF(sideValues=\"OU\",2,IF(REGEXMATCH(sideValues,\"^(OD|OS)$\"),1,0))),diagnosisCount1,SUMPRODUCT(ARRAYFORMULA(N(REGEXMATCH(diagnosisValues,\"(^|[^A-Z0-9])(CATA|CATARACT)([^A-Z0-9]|$)\"))),sideWeights),diagnosisCount2,SUMPRODUCT(ARRAYFORMULA(N(REGEXMATCH(diagnosisValues,\"(^|[^A-Z0-9])(VH|ERM|SUBLUXATION|DISLOCATION|RRD|TRD|SUBLUXATED IOL|RD)([^A-Z0-9]|$)\"))),sideWeights),diagnosisCount3,SUMPRODUCT(ARRAYFORMULA(N(REGEXMATCH(diagnosisValues,\"(^|[^A-Z0-9])(DERMATOCHALASIS|PTOSIS|DACRYOCYSTITIS|ENTROPION)([^A-Z0-9]|$)\"))),sideWeights),summaryText,TEXTJOIN(\" | \",TRUE,IF(diagnosisCount1>0,\"CATA \"&diagnosisCount1,\"\"),IF(diagnosisCount2>0,\"Retina \"&diagnosisCount2,\"\"),IF(diagnosisCount3>0,\"Plasty \"&diagnosisCount3,\"\")),managedMarker&\"診斷\"&IF(summaryText=\"\",\"\",\"｜\"&summaryText))",
+  "default_dates": {
+    "202402": [
+      "2024-02-08",
+      "2024-02-12",
+      "2024-02-22",
+      "2024-02-26"
+    ],
+    "202608": [
+      "2026-08-10",
+      "2026-08-13",
+      "2026-08-24",
+      "2026-08-27"
+    ],
+    "202609": [
+      "2026-09-10",
+      "2026-09-14",
+      "2026-09-24",
+      "2026-09-28"
+    ],
+    "202610": [
+      "2026-10-08",
+      "2026-10-12",
+      "2026-10-22",
+      "2026-10-26"
+    ],
+    "202611": [
+      "2026-11-09",
+      "2026-11-12",
+      "2026-11-23",
+      "2026-11-26"
+    ],
+    "202701": [
+      "2027-01-11",
+      "2027-01-14",
+      "2027-01-25",
+      "2027-01-28"
+    ]
+  },
+  "rule_cases": [
+    {
+      "headers": [
+        "日期／報到時間",
+        "醫院",
+        "病歷號",
+        "姓名",
+        "TEL",
+        "GA",
+        "側別",
+        "診斷",
+        "Grade",
+        "術式",
+        "IOL",
+        "IOL Target",
+        "IOL Final",
+        "Axis",
+        "Plan",
+        "心得",
+        "",
+        "SN",
+        "CDE",
+        "Energy Time",
+        "Energy %",
+        "屈光數據",
+        "CalendarEventId",
+        "ScheduleSyncId"
+      ],
+      "rules": [
+        {
+          "bold": true,
+          "formula": "=AND($C2=\"◆ 刀日\",N(\"SURGERY_SYSTEM_CF_MONTH_HEADER\")=0)",
+          "color": "D9D9D9",
+          "ranges": [
+            [
+              0,
+              22
+            ]
+          ]
+        },
+        {
+          "bold": false,
+          "formula": "=AND(NOT($C2=\"◆ 刀日\"),$F2=\"GA\",N(\"SURGERY_SYSTEM_CF_GA\")=0)",
+          "color": "F4CCCC",
+          "ranges": [
+            [
+              5,
+              6
+            ]
+          ]
+        },
+        {
+          "bold": false,
+          "formula": "=AND(NOT($C2=\"◆ 刀日\"),$G2=\"OD\",N(\"SURGERY_SYSTEM_CF_OD\")=0)",
+          "color": "D9EAD3",
+          "ranges": [
+            [
+              6,
+              7
+            ]
+          ]
+        },
+        {
+          "bold": false,
+          "formula": "=AND(NOT($C2=\"◆ 刀日\"),$G2=\"OU\",N(\"SURGERY_SYSTEM_CF_OU\")=0)",
+          "color": "D9D2E9",
+          "ranges": [
+            [
+              6,
+              7
+            ]
+          ]
+        },
+        {
+          "bold": false,
+          "formula": "=AND(NOT($C2=\"◆ 刀日\"),ISNUMBER(SEARCH(\"!\",$O2)),N(\"SURGERY_SYSTEM_CF_MONTH_PLAN_RED\")=0)",
+          "color": "F4CCCC",
+          "ranges": [
+            [
+              0,
+              5
+            ],
+            [
+              7,
+              22
+            ]
+          ]
+        },
+        {
+          "bold": false,
+          "formula": "=AND(NOT($C2=\"◆ 刀日\"),NOT(ISNUMBER(SEARCH(\"!\",$O2))),ISNUMBER(SEARCH(\"APPLY\",$O2)),N(\"SURGERY_SYSTEM_CF_MONTH_PLAN_GREEN\")=0)",
+          "color": "D9EAD3",
+          "ranges": [
+            [
+              0,
+              5
+            ],
+            [
+              7,
+              22
+            ]
+          ]
+        },
+        {
+          "bold": false,
+          "formula": "=AND(NOT($C2=\"◆ 刀日\"),NOT(ISNUMBER(SEARCH(\"!\",$O2))),NOT(ISNUMBER(SEARCH(\"APPLY\",$O2))),ISNUMBER(SEARCH(\"#\",$O2)),N(\"SURGERY_SYSTEM_CF_MONTH_PLAN_YELLOW\")=0)",
+          "color": "FFF2CC",
+          "ranges": [
+            [
+              0,
+              5
+            ],
+            [
+              7,
+              22
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "headers": [
+        "ScheduleSyncId",
+        "人工備註",
+        "日期／報到時間",
+        "醫院",
+        "病歷號",
+        "姓名",
+        "TEL",
+        "GA",
+        "側別",
+        "診斷",
+        "Grade",
+        "術式",
+        "IOL",
+        "IOL Target",
+        "IOL Final",
+        "Axis",
+        "Plan",
+        "心得",
+        "",
+        "SN",
+        "CDE",
+        "Energy Time",
+        "Energy %",
+        "屈光數據",
+        "CalendarEventId"
+      ],
+      "rules": [
+        {
+          "bold": true,
+          "formula": "=AND($E2=\"◆ 刀日\",N(\"SURGERY_SYSTEM_CF_MONTH_HEADER\")=0)",
+          "color": "D9D9D9",
+          "ranges": [
+            [
+              1,
+              24
+            ]
+          ]
+        },
+        {
+          "bold": false,
+          "formula": "=AND(NOT($E2=\"◆ 刀日\"),$H2=\"GA\",N(\"SURGERY_SYSTEM_CF_GA\")=0)",
+          "color": "F4CCCC",
+          "ranges": [
+            [
+              7,
+              8
+            ]
+          ]
+        },
+        {
+          "bold": false,
+          "formula": "=AND(NOT($E2=\"◆ 刀日\"),$I2=\"OD\",N(\"SURGERY_SYSTEM_CF_OD\")=0)",
+          "color": "D9EAD3",
+          "ranges": [
+            [
+              8,
+              9
+            ]
+          ]
+        },
+        {
+          "bold": false,
+          "formula": "=AND(NOT($E2=\"◆ 刀日\"),$I2=\"OU\",N(\"SURGERY_SYSTEM_CF_OU\")=0)",
+          "color": "D9D2E9",
+          "ranges": [
+            [
+              8,
+              9
+            ]
+          ]
+        },
+        {
+          "bold": false,
+          "formula": "=AND(NOT($E2=\"◆ 刀日\"),ISNUMBER(SEARCH(\"!\",$Q2)),N(\"SURGERY_SYSTEM_CF_MONTH_PLAN_RED\")=0)",
+          "color": "F4CCCC",
+          "ranges": [
+            [
+              1,
+              7
+            ],
+            [
+              9,
+              24
+            ]
+          ]
+        },
+        {
+          "bold": false,
+          "formula": "=AND(NOT($E2=\"◆ 刀日\"),NOT(ISNUMBER(SEARCH(\"!\",$Q2))),ISNUMBER(SEARCH(\"APPLY\",$Q2)),N(\"SURGERY_SYSTEM_CF_MONTH_PLAN_GREEN\")=0)",
+          "color": "D9EAD3",
+          "ranges": [
+            [
+              1,
+              7
+            ],
+            [
+              9,
+              24
+            ]
+          ]
+        },
+        {
+          "bold": false,
+          "formula": "=AND(NOT($E2=\"◆ 刀日\"),NOT(ISNUMBER(SEARCH(\"!\",$Q2))),NOT(ISNUMBER(SEARCH(\"APPLY\",$Q2))),ISNUMBER(SEARCH(\"#\",$Q2)),N(\"SURGERY_SYSTEM_CF_MONTH_PLAN_YELLOW\")=0)",
+          "color": "FFF2CC",
+          "ranges": [
+            [
+              1,
+              7
+            ],
+            [
+              9,
+              24
+            ]
+          ]
+        }
+      ]
+    }
+  ]
+}

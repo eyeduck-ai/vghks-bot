@@ -4,6 +4,8 @@ from __future__ import annotations
 import hashlib
 import json
 
+from .patient_handoff import public_document
+
 
 def connection(work):
     return {"online": work.gateway.online, "offline_mode": work.offline_mode,
@@ -46,7 +48,7 @@ def snapshot(work, *, compact=False):
         for task in tasks:
             if task["kind"] == "review":
                 task["note_count"] = counts.get(task["id"], 0)
-        return {"sets": work.review.db.all("set"), "tasks": tasks,
+        return {"sets": public_document(work.review.db.all("set")), "tasks": public_document(tasks),
                 "sdk_sessions": [] if compact else work.review.db.sdk_sessions(),
                 "preferences": work.review.preferences(), "categories": work.settings.public()["categories"],
                 "approval_counts": work.approvals.tracker.counts(),

@@ -16,6 +16,8 @@ VGHKS-bot-data/
 # Runtime data and credentials must never enter the source repository.
 **/VGHKS-bot-data/
 **/VGHKS-OPD-data/
+**/VGHKS-calendar-data/
+**/VGHKS-calendar-monitor-data/
 *.sqlite
 *.sqlite-*
 *.sqlite3

@@ -1,6 +1,6 @@
 # 系統架構
 
-本文對齊 6.6.49，沿用本機 HTTP、每帳號 SQLite 與 SDK 閘道。SDK 固定為 0.22.6，完整 commit 同步列於專案及建置鎖定檔。
+本文對齊 6.8.0，沿用本機 HTTP、每帳號 SQLite 與 SDK 閘道。SDK 固定為 0.22.6，完整 commit 同步列於專案及建置鎖定檔。
 
 ## 已存術前報告匯出
 
@@ -99,7 +99,8 @@ PDF／影像以內容雜湊存檔；刪除會處理無引用附件與衍生資�
 - SDK commit 同時固定在專案與建置鎖定檔。WebMAAS timeout 由 SDK 0.22.6 在原操作內重建一次 SSO；平台不另重建帳號或重送 Portal 帳密。PRQ 就診與 SOAP 遇院方調閱審查時，由 SDK 核對並按需送出「了解病情」，送出後不由平台重播整筆讀取。`connection_state.py` 依 SDK ErrorInfo 與原因鏈區分無資料、網路、登入、授權、解析及密碼更新；無法確認連線的錯誤不保存為成功的空資料。
 - `debug_trace.py`／`debug_evidence.py` 在記憶體暫存當次 SDK 操作的時序與回應，成功只保存彙總；異常或 SDK 恢復時才保存詳細證據。平台保留 SDK 原始失敗、恢復結果與原因鏈，遮罩憑證值、標示缺檔及截斷，以 SHA-256 與相對檔名引用。`/api/accounts/<id>/reviews/diagnostics/export` 僅打包該帳號已核對的診斷引用，供 SDK 離線重現。容量、紀錄策略與 ZIP 內容見 [DEBUG 說明](DEBUG.md)。
 - 分析任務的 run journal 保存模組名稱與代碼，舊 journal 從帳號 `analysis_runs.options.modules` 一次批次補讀，不載入完整病人結果。爬蟲紀錄只提供分析續跑及 DEBUG，檢閱由所屬工具處理。
-- Google 使用官方 `google-auth`，先預覽逐格差異，再明確套用、核對原值及讀回驗證。不同帳號指向同一刀表的寫入會序列處理。
+- Google 使用官方 `google-auth`。手動操作先預覽再套用；`SheetSync` 排程重新取得當日 SOAP，`SheetSyncCore` 以共享雜湊基準分別核對欄位與位置，保留人工變動。`sheet_identity` 對齊永久 ID；`sheet_mutex` 使同機主程式與獨立監控依刀表 ID 序列寫入。跨機使用重讀／讀回核對，不提供跨機原子鎖。獨立 `CalendarMonitor` 以完整成功掃描、固定事件 ID 與操作紀錄更新日曆；詳見[同步契約](SHEET_SYNC.md)。
+- `SheetManagement` 提供 `/api/accounts/<id>/sheet-management/`，沿用該帳號服務帳戶並獨立於院內連線及病人集合。預覽、原生快照、離線意圖、兩階段封存與階段 metadata 持久保存在帳號資料庫；只有新鮮讀取可規劃寫入。`SheetUnavailable` 表示暫時無法讀取，`SheetUncertain` 表示寫入結果不明；已取得 SOAP 的延後批次保存來源版本，明確續跑時重新規劃，未確認批次先核對。封存移除來源前讀取整本所有分頁的原生儲存格，阻擋會因刪頁失效的公式參照。
 - 即時刀房由瀏覽器開啟院內網址；iframe 按需載入。它有獨立的院方登入流程，不由後端代理，也不自動注入帳密。
 
 ## 維護範圍

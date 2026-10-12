@@ -11,7 +11,7 @@ $("#analysisPane").innerHTML = [
   '<div class="analysis-step-heading"><h3><span>3</span> 檢閱分析結果</h3></div><div id="cataractLayout" class="cataract-layout"><aside id="cataractPatients" class="cataract-patients" aria-label="術前分析病人清單" hidden></aside><div class="cataract-main"><div class="analysis-view-toolbar"><label>查看病人<select id="analysisPatient"></select></label><label>模組<select id="analysisView"><option value="retina">視網膜</option><option value="cataract">白內障術前分析</option><option value="surgery">刀表更新</option></select></label><button id="reloadAnalysis" type="button">檢閱本機資料</button><button id="cataractUpdate" type="button" hidden>更新歷年資料</button><button id="analysisScans" type="button" hidden>歷年掃描病歷</button><button id="analysisJSON" type="button">JSON ↓</button></div>',
   '<div id="analysisCoverage" class="small muted"></div><div id="analysisResults"><p class="empty-result">從門診清單或病歷管理選取病人</p></div></div></div>',
   '<div id="comparisonBar" class="comparison-bar" hidden><span id="comparisonCount"></span><button id="showComparison" type="button" class="primary">並排比較</button><button id="clearComparison" type="button">清除選取</button></div>',
-  '<div id="surgeryWorkspace" hidden><div class="section-heading"><h3>手術候選</h3><div class="actions"><button id="reloadSurgery" type="button">重新整理候選</button><button id="previewSheet" type="button" class="primary">產生刀表差異預覽</button></div></div><div id="surgeryCandidates"></div><div id="sheetPreview"></div></div>'
+  '<div id="surgeryWorkspace" hidden><div class="section-heading"><h3>刀表候選</h3><div class="actions"><button id="reloadSurgery" type="button">重新整理候選</button><button id="previewSheet" type="button" class="primary">產生刀表差異預覽</button></div></div><div id="surgeryCandidates"></div><div id="sheetPreview"></div></div>'
 ].join("");
 document.body.insertAdjacentHTML("beforeend", [
   '<dialog id="cohortDialog" aria-labelledby="cohortDialogTitle"><form id="createCohortForm" method="post"><div class="dialog-heading"><h2 id="cohortDialogTitle">建立分析清單</h2><button type="button" data-analysis-close="cohortDialog" aria-label="關閉">×</button></div><div class="record-body"><fieldset id="cohortAccountFields" hidden disabled><legend class="sr-only">選擇抓取帳號</legend><label>抓取帳號<select id="manualAccount" name="account_id" required></select></label><button id="manualAccountSettings" type="button" class="quiet-button">設定登入帳號</button></fieldset><label>清單名稱<input id="newCohortName" name="name" required maxlength="100"></label><p id="newCohortInfo" class="small muted"></p><p id="cohortError" class="form-error" role="alert" hidden></p><div class="dialog-actions"><button type="submit" class="primary">保存清單並選擇模組</button></div></div></form></dialog>',
@@ -103,7 +103,7 @@ async function beginCohort(source) {
   $("#cohortDialog").showModal();
 }
 
-async function loadAnalysis(preferred) {
+async function loadAnalysis(preferred,focusMrn="") {
   analysisState = await ap("cohorts");
   const chosen = preferred || $("#cohortSelect").value;
   $("#cohortSelect").replaceChildren(...analysisState.cohorts.map(c=>new Option(c.name+" · "+c.members.length+" 位",c.id)));
@@ -111,6 +111,7 @@ async function loadAnalysis(preferred) {
   if (analysisState.cohorts.some(c=>c.id===chosen)) $("#cohortSelect").value=chosen;
   $("#analysisStart").max = $("#analysisEnd").max = config.today;
   selectCohort();
+  if(currentCohort?.members.some(member=>member.mrn===focusMrn))$("#analysisPatient").value=focusMrn;
   renderAnalysisRuns();
   if (activePane === "analysis") await loadAnalysisResult();
 }
@@ -345,8 +346,85 @@ async function loadSurgery() {
   const cohortId=currentCohort.id, data=await ap("surgery/candidates",{cohort_id:cohortId});
   if(currentCohort?.id!==cohortId)return;
   surgeryEditors.clear();$("#sheetPreview").replaceChildren();
-  $("#surgeryCandidates").replaceChildren(...data.candidates.map(row=>surgeryCard(row,data.fields)));
-  if(!data.candidates.length)$("#surgeryCandidates").append(el("p","此清單尚無已保存的 # Arrange SOAP；可先抓取門診 SOAP。","empty-result"));
+  $("#surgeryCandidates").replaceChildren(...data.candidates.map(row=>row.kind==="fu"?fuCard(row,data.fields):surgeryCard(row,data.fields)));
+  const offered=new Set(data.candidates.filter(row=>row.kind!=="fu").map(row=>row.fields.mrn));
+  for(const member of currentCohort.members.filter(member=>!offered.has(member.mrn))){
+    const empty=el("section",undefined,"surgery-candidate");
+    empty.append(el("h3",(member.name||member.mrn)+" · "+member.mrn),el("p","未找到可解析的手術項目。可新增手動項目並填寫刀日、眼別與術式。","small muted"));
+    const add=button("新增手動刀表項目",()=>action(async()=>{
+      await ap("surgery/drafts",{cohort_id:cohortId,mrn:member.mrn});await loadSurgery();
+    }));add.disabled=!!config?.read_only;empty.append(add);$("#surgeryCandidates").append(empty);
+  }
+  if(!currentCohort.members.length)$("#surgeryCandidates").append(el("p","待處理清單尚無病人。","empty-result"));
+}
+function fuCard(row,labels) {
+  const card=el("article",undefined,"surgery-candidate"),selectLabel=el("label",undefined,"check-label"),selected=el("input"),inputs={};
+  selected.type="checkbox";selected.checked=true;
+  selected.addEventListener("change",()=>$("#sheetPreview").replaceChildren());
+  selectLabel.append(selected,el("span","FU 追蹤 · "+(row.fields.name||row.fields.mrn)+" · "+row.fields.mrn));card.append(selectLabel);
+  card.append(el("p","追蹤清單草稿；其餘資料可於 FU 分頁填寫。","small muted"));
+  if(row.source_stale||row.stale)card.append(el("p","來源 SOAP 已更新或刪除；請重新檢閱並轉送目前版本。","preview-conflict"));
+  const grid=el("div",undefined,"surgery-edit-grid");
+  for(const key of ["mrn","name","hospital","tag"]){
+    const label=el("label",labels[key]||key),input=el("input");input.type="text";input.readOnly=true;
+    input.value=row.fields[key]||"";input.className="muted-input";input.setAttribute("aria-label",(labels[key]||key)+" · "+row.fields.mrn);
+    label.append(input);grid.append(label);inputs[key]=input;
+  }
+  const sources=el("details");sources.append(el("summary","SOAP 來源 · "+row.sources.length+" 次紀錄"));
+  for(const source of row.sources){
+    const block=el("div",undefined,"excerpt");block.append(el("strong",source.date),el("pre",source.excerpt),
+      el("pre","SOAP 版本："+(source.version||source.source_version||"未提供"),"small muted"),
+      button("查看完整 SOAP",()=>action(()=>openSavedRecord(source.record_id))));sources.append(block);
+  }
+  card.append(grid,sources);surgeryEditors.set(row.id,{row,card,selected,inputs});return card;
+}
+function surgeryDestination(row,inputs,invalidatePreview) {
+  const element=el("section"),enabled=el("input"),control=el("div",undefined,"exam-original"),select=el("select");
+  enabled.type="checkbox";control.hidden=true;
+  const label=el("label",undefined,"check-label reviewed");label.append(enabled,el("span","套用目的地／改期"));
+  const selectLabel=el("label","目的刀表區塊");selectLabel.append(select);
+  select.setAttribute("aria-label","目的刀表區塊 · "+row.fields.mrn);
+  const status=el("p",undefined,"small muted");status.setAttribute("role","status");status.setAttribute("aria-live","polite");
+  let blocks=null,loading=false,preferred=row.destination?.block_sync_id||"";
+  const matching=()=>blocks?.filter(block=>block.date===inputs.date.value&&block.hospital===(inputs.hospital?.value.trim()||"高榮"))||[];
+  const caption=block=>{
+    const found=/^(\d{6})!(\d+)$/.exec(block.ref||"");
+    const reference=found?found[1]+" 第 "+found[2]+" 列":block.ref||"";
+    return block.label?(block.ref?block.label.replace(block.ref,reference):block.label):reference||block.date+" · "+block.hospital;
+  };
+  function refresh() {
+    const previous=select.value||preferred,options=matching();
+    control.hidden=!enabled.checked;select.disabled=blocks===null;select.required=options.length>1;
+    select.replaceChildren(new Option(blocks===null?"請先讀取目的區塊":options.length>1?"請選擇目的區塊":options.length?"採用唯一區塊":"依刀日與醫院新增區塊",""),
+      ...options.map(block=>new Option(caption(block),block.block_sync_id)));
+    select.value=options.some(block=>block.block_sync_id===previous)?previous:options.length===1?options[0].block_sync_id:"";
+    if(loading)status.textContent="正在讀取 Google 刀表區塊…";
+    else if(blocks===null)status.textContent="請讀取刀表，核對目的刀日與醫院的區塊。";
+    else status.textContent=options.length>1?"此刀日與醫院有多個區塊，請明確選擇一個。":options.length?"已找到此刀日與醫院的唯一區塊。":"目前沒有相符區塊；預覽將檢查新增位置。";
+  }
+  async function read() {
+    if(loading)return;
+    preferred=select.value||preferred;loading=true;readButton.disabled=true;blocks=null;refresh();invalidatePreview();
+    try {
+      const value=await ap("surgery/locations",{});
+      if(!Array.isArray(value.blocks))throw new Error("刀表區塊讀取結果不正確，請重新讀取。");
+      blocks=value.blocks;loading=false;refresh();
+    } catch(error) {loading=false;refresh();status.textContent=error.message;throw error;}
+    finally {readButton.disabled=false;}
+  }
+  const readButton=button("讀取目的區塊",()=>action(read));
+  enabled.addEventListener("change",()=>{refresh();invalidatePreview();});
+  select.addEventListener("change",()=>{preferred=select.value;invalidatePreview();});
+  for(const input of [inputs.date,inputs.hospital].filter(Boolean))input.addEventListener("input",refresh);
+  control.append(readButton,selectLabel,status);element.append(label,
+    el("p","勾選後，明確以此卡片填寫的刀日與醫院安排目的地；未勾選時會保護刀表已人工調整的位置。","small muted"),control);
+  refresh();
+  return {element,enabled,select,read,refresh,proposal(fields){
+    if(blocks===null)throw new Error("請先讀取目的區塊，核對刀日與醫院。");
+    const options=matching(),chosen=options.find(block=>block.block_sync_id===select.value);
+    if(options.length>1&&!chosen){select.reportValidity();throw new Error("同一刀日與醫院有多個區塊，請選擇目的刀表區塊。");}
+    return {date:fields.date,hospital:fields.hospital?.trim()||"高榮",block_sync_id:chosen?.block_sync_id||""};
+  }};
 }
 function surgeryCard(row,labels) {
   const card=el("article",undefined,"surgery-candidate"), selectLabel=el("label",undefined,"check-label"), selected=el("input");
@@ -354,6 +432,8 @@ function surgeryCard(row,labels) {
   const invalidatePreview=()=>$("#sheetPreview").replaceChildren();
   selected.addEventListener("change",invalidatePreview);
   selectLabel.append(selected,el("span",(row.fields.name||row.fields.mrn)+" · "+row.fields.mrn));card.append(selectLabel);
+  if(row.source_type==="manual"||row.manual)card.append(el("p","手動刀表草稿：請核對並填妥必要欄位，再產生差異預覽。","small muted"));
+  if(row.source_stale||row.stale)card.append(el("p","來源 SOAP 已更新或刪除；請重新檢閱並轉送目前版本。","preview-conflict"));
   const grid=el("div",undefined,"surgery-edit-grid"), inputs={}, checks={};
   for(const [key,label] of Object.entries(labels)) {
     const wrapper=el("label",undefined,key==="plan"?"plan-field":""), line=el("span"), check=el("input");
@@ -379,6 +459,7 @@ function surgeryCard(row,labels) {
   const sources=el("details");sources.append(el("summary","SOAP 來源 · "+row.sources.length+" 次紀錄"));
   for(const source of row.sources) {
     const block=el("div",undefined,"excerpt");block.append(el("strong",source.date),el("pre",source.excerpt),
+      el("pre","SOAP 版本："+(source.version||source.source_version||"未提供"),"small muted"),
       button("查看完整 SOAP",()=>action(()=>openSavedRecord(source.record_id))));sources.append(block);
   }
   for(const [key,values] of Object.entries(row.differences||{}))sources.append(el("p",(labels[key]||key)+" 歷次值："+values.join(" → ")));
@@ -398,7 +479,7 @@ function surgeryCard(row,labels) {
   for(const schedule of row.schedules) {
     const node=el("div",undefined,"schedule-option");
     node.append(el("span",[schedule.date,schedule.start_time,schedule.procedure,schedule.side,schedule.room,schedule.status].filter(Boolean).join(" · ")),
-      button("採用此刀日",()=>{inputs.date.value=schedule.date;reviewed.checked=true;$("#sheetPreview").replaceChildren();}));
+      button("採用此刀日",()=>{inputs.date.value=schedule.date;route.refresh();reviewed.checked=true;$("#sheetPreview").replaceChildren();}));
     schedules.append(node);
   }
   card.append(schedules);
@@ -409,15 +490,18 @@ function surgeryCard(row,labels) {
   const targetLabel=el("label","刀表對應", "exam-original"), target=el("select");
   target.append(new Option("自動核對唯一匹配",""));targetLabel.append(target);card.append(targetLabel);
   target.addEventListener("change",invalidatePreview);
-  surgeryEditors.set(row.id,{row,card,selected,inputs,checks,reviewed,target});
+  const route=surgeryDestination(row,inputs,invalidatePreview);card.append(route.element);
+  surgeryEditors.set(row.id,{row,card,selected,inputs,checks,reviewed,target,destination:route.enabled,route});
   return card;
 }
 function collectProposals() {
   return [...surgeryEditors.values()].filter(e=>e.selected.checked).map(e=>{
     const fields=Object.fromEntries(Object.entries(e.inputs).map(([k,n])=>[k,n.value]));
+    if(e.row.kind==="fu")return {id:e.row.id,fields,selected_fields:Object.keys(fields)};
     const selected=Object.entries(e.checks).filter(([,n])=>n.checked).map(([k])=>k);
     return {id:e.row.id,fields,selected_fields:selected,clear_fields:selected.filter(k=>!fields[k]&&!!e.row.fields[k]),
-      reviewed:e.reviewed.checked,target:e.target.value==="new"?"":e.target.value,new_event:e.target.value==="new"};
+      reviewed:e.reviewed.checked,target:e.target.value==="new"?"":e.target.value,new_event:e.target.value==="new",
+      ...(e.destination.checked?{destination:e.route.proposal(fields)}:{})};
   });
 }
 async function createSheetPreview() {
@@ -431,12 +515,19 @@ async function createSheetPreview() {
 function previewNode(value) {
   const container=el("section",undefined,"sheet-preview");
   container.append(el("h3","刀表差異預覽"),el("p",value.message||"核對變更後，再按「套用更新」。","small muted"));
+  if(Array.isArray(value.source_versions)){
+    const sources=el("details",undefined,"exam-original");sources.open=false;
+    sources.append(el("summary","本次預覽的 SOAP 來源版本 · "+value.source_versions.length+" 筆"));
+    for(const source of value.source_versions)sources.append(el("pre",(source.record_id||"未提供紀錄識別碼")+" · "+(source.version||source.source_version||"未提供版本")));
+    if(!value.source_versions.length)sources.append(el("p","本次沒有 SOAP 來源版本。","small muted"));
+    container.append(sources);
+  }
   for(const structure of value.structures||[])container.append(el("div",structure,"sheet-structure"));
   for(const item of value.items) {
     if(item.status==="conflict") {
       const box=el("div",undefined,"preview-conflict");box.append(el("strong",item.fields.name+" · "+item.reason));
       const editor=surgeryEditors.get(item.id);
-      if(editor){
+      if(editor?.target&&Array.isArray(item.options)){
         editor.target.replaceChildren(new Option("請選擇對應手術",""),
           ...item.options.map(o=>new Option(o.ref+" · "+o.fields.date+" "+o.fields.side+" "+o.fields.procedure,o.ref)),
           new Option("確認為另一次手術，新增","new"));
@@ -445,15 +536,28 @@ function previewNode(value) {
       container.append(box);continue;
     }
     const details=el("details");details.open=true;
-    const names={insert:"新增",move:"改期搬移",update:"更新"};
-    details.append(el("summary",(names[item.action]||"更新")+" · "+item.fields.name+" · "+item.fields.mrn+" · "+item.position));
-    if(!item.changes.length)details.append(el("p","欄位內容相同","small muted"));
+    const names={insert:"新增",move:"改期搬移",update:"更新",keep:"保留既有資料"};
+    details.append(el("summary",(names[item.action]||"更新")+" · "+item.fields.name+" · "+item.fields.mrn+" · "+(item.position||"原列不在現行刀表")));
+    if(item.reason)details.append(el("p",item.reason,"small muted"));
+    if(!item.changes.length&&!item.reason)details.append(el("p","欄位內容相同","small muted"));
     else {
       const table=el("table",undefined,"source-table"), head=el("thead"), hrow=el("tr"), body=el("tbody");
       for(const text of ["欄位／位置","原內容","更新內容"])hrow.append(el("th",text));head.append(hrow);
       for(const change of item.changes){const tr=el("tr");tr.append(el("td",change.label+" "+(change.cell||"")),el("td",change.before||"（空白）","before-value"),el("td",change.after||"（清空）","after-value"));body.append(tr);}
       table.append(head,body);details.append(table);
     }
+    const identity=el("details",undefined,"exam-original"),identityTable=el("table",undefined,"source-table"),identityBody=el("tbody");identity.open=false;
+    identity.append(el("summary","同步識別與位置"));
+    const identityRow=(label,value)=>{
+      const row=el("tr"),heading=el("th",label);heading.setAttribute("scope","row");row.append(heading,el("td",value));identityBody.append(row);
+    };
+    const routeText=route=>[route.date||"未記錄刀日",route.hospital||"未記錄醫院","區塊 ID："+(route.block_sync_id||"尚未配置")].join(" · ");
+    identityRow("ScheduleSyncId",item.sync_id||"尚未配置");
+    if(item.previous_position||item.previous_route||item.route)identityRow("原位置",item.previous_position||"新增項目");
+    if(item.previous_route)identityRow("原區塊",routeText(item.previous_route));
+    identityRow("目的位置",item.position||"待確認");
+    if(item.route)identityRow("目的區塊",routeText(item.route));
+    identityTable.append(identityBody);identity.append(identityTable);details.append(identity);
     container.append(details);
   }
   const actions=el("div",undefined,"actions");

@@ -1,0 +1,595 @@
+"""Independent, durable Sheets-to-Calendar worker; never loads hospital credentials."""
+from __future__ import annotations
+
+import argparse
+import json
+import secrets
+import sqlite3
+import sys
+import threading
+import uuid
+import webbrowser
+from contextlib import contextmanager
+from datetime import datetime, timedelta
+from pathlib import Path
+
+from google.auth.transport.requests import AuthorizedSession
+from google.oauth2 import service_account
+
+from .calendar_client import CalendarClient, CalendarError
+from .calendar_sync import (
+    OWNER_KEY,
+    digest,
+    event_id,
+    headers,
+    matches,
+    resource,
+    scan,
+    sheet_kind,
+    value,
+)
+from .google_sheets import GoogleSettings, SheetError, SheetsClient, spreadsheet_id
+from .portable_credentials import seal, unseal
+from .settings import TAIPEI, timestamp
+from .sheet_plan import cell_at, fingerprint
+from .sheet_schema import monthly_row
+
+SCOPES = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/calendar.events"]
+
+
+class MonitorStore:
+    def __init__(self, directory):
+        self.directory = Path(directory).resolve()
+        self.directory.mkdir(parents=True, exist_ok=True)
+        self.path = self.directory / "calendar.sqlite3"
+        self.lock = threading.RLock()
+        self.handle = (self.directory / ".lock").open("a+b")
+        if sys.platform == "win32":
+            import msvcrt
+            try:
+                self.handle.write(b"0")
+                self.handle.flush()
+                self.handle.seek(0)
+                msvcrt.locking(self.handle.fileno(), msvcrt.LK_NBLCK, 1)
+            except OSError as exc:
+                self.handle.close()
+                raise ValueError("這個監控資料目錄已有程式使用。") from exc
+        with self.connect() as db:
+            db.execute("CREATE TABLE IF NOT EXISTS documents (kind TEXT,id TEXT,payload TEXT NOT NULL,PRIMARY KEY(kind,id))")
+            db.execute("CREATE TABLE IF NOT EXISTS credential (id INTEGER PRIMARY KEY, secret BLOB)")
+            db.execute("INSERT OR IGNORE INTO credential VALUES(1,NULL)")
+        if self.get("config", "settings") is None:
+            self.save("config", "settings", {"spreadsheet_id": "", "calendar_id": "", "email": "",
+                "enabled": False, "include_fu": True, "hours": 1, "setup_done": False,
+                "worker_id": uuid.uuid4().hex, "next_check": "", "last_attempt": "", "autorun": False})
+
+    @contextmanager
+    def connect(self):
+        with self.lock:
+            db = sqlite3.connect(self.path, timeout=30)
+            db.execute("PRAGMA synchronous=FULL")
+            try:
+                with db:
+                    yield db
+            finally:
+                db.close()
+
+    def get(self, kind, key):
+        with self.connect() as db:
+            row = db.execute("SELECT payload FROM documents WHERE kind=? AND id=?", (kind, key)).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def all(self, kind):
+        with self.connect() as db:
+            rows = db.execute("SELECT payload FROM documents WHERE kind=? ORDER BY id", (kind,)).fetchall()
+        return [json.loads(row[0]) for row in rows]
+
+    def save(self, kind, key, payload):
+        with self.connect() as db:
+            db.execute("INSERT OR REPLACE INTO documents VALUES(?,?,?)", (kind, key, json.dumps(payload, ensure_ascii=False)))
+            if kind == "history":
+                db.execute("DELETE FROM documents WHERE kind='history' AND id NOT IN (SELECT id FROM documents WHERE kind='history' ORDER BY id DESC LIMIT 200)")
+
+    def key(self, supplied=None, remove=False):
+        with self.connect() as db:
+            if supplied is not None:
+                GoogleSettings.validate_key(supplied)
+                db.execute("UPDATE credential SET secret=? WHERE id=1", (seal(db, json.dumps(supplied).encode()),))
+            if remove:
+                db.execute("UPDATE credential SET secret=NULL WHERE id=1")
+            row = db.execute("SELECT secret FROM credential WHERE id=1").fetchone()
+            return json.loads(unseal(db, row[0])) if row[0] is not None else None
+
+    def configured(self):
+        with self.connect() as db:
+            return db.execute("SELECT secret IS NOT NULL FROM credential WHERE id=1").fetchone()[0] == 1
+
+    def close(self):
+        self.handle.close()
+
+
+def autorun(enabled, directory):
+    if sys.platform != "win32":
+        if enabled:
+            raise ValueError("登入後啟動僅適用於 Windows。")
+        return
+    import subprocess
+    import winreg
+    if not getattr(sys, "frozen", False) and enabled:
+        raise ValueError("請使用監控 EXE 設定登入後啟動。")
+    name = "VGHKSCalendarMonitor-" + digest(str(Path(directory).resolve()))[:12]
+    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run") as key:
+        if enabled:
+            command = subprocess.list2cmdline([sys.executable, "--no-browser", "--data-dir", str(directory)])
+            winreg.SetValueEx(key, name, 0, winreg.REG_SZ, command)
+        else:
+            try:
+                winreg.DeleteValue(key, name)
+            except FileNotFoundError:
+                pass
+
+
+def metadata_owner(book):
+    owners = [m for m in book.get("developerMetadata", []) if m.get("metadataKey") == OWNER_KEY]
+    if len(owners) > 1:
+        raise ValueError("刀表有重複監控主機登記，請先核對。")
+    if not owners:
+        return None, None
+    try:
+        return owners[0], json.loads(owners[0]["metadataValue"])
+    except (ValueError, KeyError, TypeError) as exc:
+        raise ValueError("監控主機登記格式無法辨識，未變更設定。") from exc
+
+
+def owner_matches(owner, config):
+    return owner == {k: config[k] for k in ("worker_id", "spreadsheet_id", "calendar_id")}
+
+
+def normalize_hospital_requests(book):
+    requests_ = []
+    for sheet in book.get("sheets", []):
+        if sheet_kind(sheet) != "MONTHLY":
+            continue
+        _, cols = headers(sheet)
+        if not {"醫院", "日期／報到時間", "病歷號"} <= cols.keys():
+            continue
+        hospital = ""
+        for index, row in enumerate(sheet.get("rows", [])[1:], 1):
+            parsed = monthly_row(row, cols)
+            if parsed["kind"] == "day":
+                hospital = parsed["hospital"]
+                continue
+            if parsed["kind"] == "invalid_header":
+                hospital = ""
+                continue
+            if not hospital or parsed["kind"] != "patient":
+                continue
+            cell = cell_at(row, cols["醫院"])
+            if cell.get("userEnteredValue", {}).get("formulaValue"):
+                if value(row, cols, "醫院") != hospital:
+                    raise ValueError(sheet["properties"]["title"] + " 院區欄為公式且與刀日不同，請先核對。")
+                continue
+            if value(row, cols, "醫院") == hospital:
+                continue
+            requests_.append({"updateCells": {"range": {"sheetId": sheet["properties"]["sheetId"],
+                "startRowIndex": index, "endRowIndex": index + 1, "startColumnIndex": cols["醫院"],
+                "endColumnIndex": cols["醫院"] + 1}, "rows": [{"values": [{"userEnteredValue": {"stringValue": hospital}}]}],
+                "fields": "userEnteredValue"}})
+    return requests_
+
+
+class CalendarMonitor:
+    def __init__(self, directory, *, clients=None, background=True):
+        self.store = MonitorStore(directory)
+        self.clients_factory = clients
+        self.stop = threading.Event()
+        self.busy = threading.Lock()
+        self.state_lock = threading.RLock()
+        self.status = {"running": False, "message": "監控尚未啟用。", "issues": [], "updated": 0, "deleted": 0}
+        self.launch_token = secrets.token_urlsafe(32)
+        self.session_token = secrets.token_urlsafe(32)
+        self.csrf_token = secrets.token_urlsafe(32)
+        self.thread = threading.Thread(target=self._loop, name="calendar-monitor", daemon=True)
+        if background:
+            self.thread.start()
+
+    def public(self):
+        with self.state_lock:
+            return {**self.store.get("config", "settings"), **self.status,
+                    "configured": self.store.configured(), "data_dir": str(self.store.directory),
+                    "history": self.store.all("history")[-20:]}
+
+    def configure(self, values):
+        if not self.busy.acquire(blocking=False):
+            raise ValueError("同步正在執行，請完成後再變更設定。")
+        try:
+            config = self.store.get("config", "settings")
+            changed = dict(config)
+            for field in ("spreadsheet_id", "calendar_id", "include_fu", "hours", "enabled", "autorun"):
+                if field in values:
+                    changed[field] = values[field]
+            changed["spreadsheet_id"] = spreadsheet_id(changed["spreadsheet_id"])
+            if not isinstance(changed["calendar_id"], str) or not changed["calendar_id"].strip() or len(changed["calendar_id"]) > 512:
+                raise ValueError("請輸入目標 Google Calendar ID。")
+            changed["calendar_id"] = changed["calendar_id"].strip()
+            if type(changed["hours"]) is not int or not 1 <= changed["hours"] <= 720:
+                raise ValueError("監控頻率需為 1–720 小時。")
+            if any(type(changed[k]) is not bool for k in ("enabled", "include_fu", "autorun")):
+                raise ValueError("監控選項格式不正確。")
+            target_changed = any(changed[k] != config[k] for k in ("spreadsheet_id", "calendar_id"))
+            if target_changed and self.store.all("event"):
+                raise ValueError("此資料目錄已有事件綁定；更換刀表或日曆請建立新的監控資料目錄。")
+            if target_changed or values.get("key"):
+                changed.update(enabled=False, setup_done=False)
+            if changed["enabled"] and not changed["setup_done"]:
+                raise ValueError("請先執行「檢查並準備刀表」，完成後再啟用。")
+            if values.get("key"):
+                self.store.key(values["key"])
+                changed["email"] = values["key"]["client_email"]
+            if changed["autorun"] != config["autorun"]:
+                autorun(changed["autorun"], self.store.directory)
+            if changed["enabled"] and not config["enabled"]:
+                changed["next_check"] = timestamp()
+            self.store.save("config", "settings", changed)
+            return self.public()
+        finally:
+            self.busy.release()
+
+    @contextmanager
+    def clients(self):
+        config = self.store.get("config", "settings")
+        if self.clients_factory:
+            yield self.clients_factory(config)
+            return
+        raw = self.store.key()
+        if not raw:
+            raise ValueError("請先匯入服務帳戶金鑰。")
+        credentials = service_account.Credentials.from_service_account_info(raw, scopes=SCOPES)
+        sheets = SheetsClient(config["spreadsheet_id"], AuthorizedSession(credentials))
+        calendar = CalendarClient(config["calendar_id"], AuthorizedSession(credentials))
+        try:
+            yield sheets, calendar
+        finally:
+            sheets.close()
+            calendar.close()
+
+    def _migrate(self, sheets, book):
+        from .sheet_identity import plan_identity_setup
+        before = scan(book)
+        missing_old = [e for e in self.store.all("event") if e["uid"] not in before["identities"] and e.get("status") != "deleted"]
+        new_without_id = any(not p["uid"] for p in before["patients"])
+        if missing_old and new_without_id:
+            raise ValueError("同時發現原排程消失與未識別病人列，疑似只搬移可見欄位；請保留原事件並核對 ID。")
+        plan = plan_identity_setup(book, include_archives=True)
+        if plan["issues"]:
+            raise ValueError("；".join(i.get("reason") or f"{i.get('sheet', '')} {i['code']}" for i in plan["issues"][:8]))
+        expected = scan(plan["book"])
+        if expected["issues"]:
+            raise ValueError("；".join(expected["issues"][:8]))
+        if missing_old and any(p["uid"] not in before["identities"] for p in expected["patients"]):
+            raise ValueError("舊排程識別消失且有新識別待配置，請核對是否僅搬移可見欄位；未變更刀表或日曆。")
+        self._validate_bindings(plan["book"], expected)
+        requests_ = plan["requests"] + normalize_hospital_requests(plan["book"])
+        if not requests_:
+            return book
+        fresh = sheets.read_all()
+        if fingerprint(fresh) != fingerprint(book):
+            raise ValueError("刀表在準備期間有變動，請重新執行；未寫入。")
+        sheets.write(requests_)
+        result = sheets.read_all()
+        actual = scan(result)
+        if actual["issues"]:
+            raise ValueError("系統欄回讀需核對：" + "；".join(actual["issues"][:6]))
+        pairs = {p["uid"]: p["identity"] for p in actual["patients"]}
+        if any(pairs.get(p["uid"]) != p["identity"] for p in expected["patients"]):
+            raise ValueError("系統欄寫入時病人列已移動，請人工核對；未操作日曆。")
+        self._validate_bindings(result, actual)
+        return result
+
+    def _validate_bindings(self, book, snapshot):
+        from .sheet_sync_state import field_hash, read_sync_state
+        shared = read_sync_state(book)
+        if shared["issues"]:
+            raise ValueError("主程式同步基準格式需核對，未變更刀表或日曆。")
+        config = self.store.get("config", "settings")
+        patient_ids = {item["uid"] for item in snapshot["patients"]}
+        header_ids = snapshot["identities"] - patient_ids - snapshot["archive_ids"]
+        bound_ids = {old["uid"] for old in self.store.all("event") if old.get("status") != "deleted"}
+        bound_ids.update(uid for uid, state in shared["states"].items() if state.get("mrn_hash"))
+        if header_ids & bound_ids:
+            raise ValueError("已綁定患者的排程 ID 變成刀日標題，請核對列類型與識別；未變更刀表或日曆。")
+        for item in snapshot["patients"]:
+            self._binding(item, self.store.get("event", item["uid"]), config)
+            state = shared["states"].get(item["uid"], {})
+            bound_mrn = state.get("mrn_hash") or state.get("fields", {}).get("mrn")
+            if bound_mrn and bound_mrn != field_hash("mrn", item["mrn"]):
+                raise ValueError(item["sheet"] + " 排程 ID 與主程式原病歷號綁定不符，未變更刀表或日曆。")
+
+    def pause(self):
+        # Pausing must also work before the first configuration is complete.
+        if not self.busy.acquire(blocking=False):
+            raise ValueError("同步正在執行，完成後即可暫停。")
+        try:
+            config = self.store.get("config", "settings")
+            config["enabled"] = False
+            self.store.save("config", "settings", config)
+            return self.public()
+        finally:
+            self.busy.release()
+
+    def prepare(self, takeover=False):
+        if not self.busy.acquire(blocking=False):
+            raise ValueError("同步正在執行。")
+        try:
+            config = self.store.get("config", "settings")
+            config["enabled"] = False
+            self.store.save("config", "settings", config)
+            from .sheet_mutex import sheet_mutex
+            with self.clients() as (sheets, calendar), sheet_mutex(config["spreadsheet_id"]):
+                calendar.probe()
+                book = sheets.read_all()
+                metadata, owner = metadata_owner(book)
+                if owner and not owner_matches(owner, config) and not takeover:
+                    raise ValueError("刀表已登記其他監控主機。停止舊主機後，明確選擇接替主機再準備。")
+                book = self._migrate(sheets, book)
+                if scan(book)["issues"]:
+                    raise ValueError("；".join(scan(book)["issues"][:8]))
+                expected_owner = {k: config[k] for k in ("worker_id", "spreadsheet_id", "calendar_id")}
+                owner_value = json.dumps(expected_owner, sort_keys=True)
+                request = ({"updateDeveloperMetadata": {"dataFilters": [{"developerMetadataLookup": {"metadataId": metadata["metadataId"]}}],
+                    "developerMetadata": {"metadataValue": owner_value}, "fields": "metadataValue"}} if metadata else
+                    {"createDeveloperMetadata": {"developerMetadata": {"metadataKey": OWNER_KEY, "metadataValue": owner_value,
+                        "visibility": "DOCUMENT", "location": {"spreadsheet": True}}}})
+                sheets.write([request])
+                _, verified_owner = metadata_owner(sheets.read_all())
+                if not owner_matches(verified_owner, config):
+                    raise ValueError("主機登記回讀不一致，監控保持停用。")
+            config["setup_done"] = True
+            self.store.save("config", "settings", config)
+            self._status(message="準備完成。啟用後每小時同步；目前仍停用。", issues=[])
+            return self.public()
+        finally:
+            self.busy.release()
+
+    def remove_key(self):
+        if not self.busy.acquire(blocking=False):
+            raise ValueError("同步正在執行。")
+        try:
+            config = self.store.get("config", "settings")
+            config.update(enabled=False, setup_done=False, email="")
+            self.store.key(remove=True)
+            self.store.save("config", "settings", config)
+            return self.public()
+        finally:
+            self.busy.release()
+
+    def _status(self, **values):
+        with self.state_lock:
+            self.status.update(values)
+
+    def _binding(self, item, old, config):
+        if old and old["identity"] != item["identity"]:
+            raise ValueError(item["sheet"] + " 排程 ID 對應病人已變更，疑似只搬移可見欄位；未更新日曆。")
+        sheet_event = item["event_id"]
+        if old and sheet_event and sheet_event not in {old["event_id"], old.get("legacy_event_id")}:
+            raise ValueError(item["sheet"] + " 事件綁定與監控紀錄不一致，請核對。")
+        return (old or {}).get("event_id") or sheet_event or event_id(config["spreadsheet_id"], item["uid"])
+
+    def _write_binding(self, sheets, item, eid):
+        fresh = sheets.read_all()
+        current = scan(fresh)
+        if current["issues"]:
+            raise ValueError("回寫事件 ID 前刀表有衝突，事件已保存在監控紀錄，稍後重試。")
+        found = [p for p in current["patients"] if p["uid"] == item["uid"]]
+        if len(found) != 1 or found[0]["identity"] != item["identity"]:
+            raise ValueError("回寫事件 ID 前病人列已搬移或變更，請重新核對。")
+        target = found[0]
+        if target["event_id"] == eid:
+            return
+        if target["event_id"] and target["event_id"] != item["event_id"]:
+            raise ValueError("既有事件 ID 已由其他操作變更，未覆寫。")
+        col = target["cols"]["CalendarEventId"]
+        sheets.write([{"updateCells": {"range": {"sheetId": target["sheet_id"], "startRowIndex": target["row"],
+            "endRowIndex": target["row"] + 1, "startColumnIndex": col, "endColumnIndex": col + 1},
+            "rows": [{"values": [{"userEnteredValue": {"stringValue": eid}}]}], "fields": "userEnteredValue"}}])
+        verified = scan(sheets.read_all())
+        result = [p for p in verified["patients"] if p["uid"] == item["uid"]]
+        if verified["issues"] or len(result) != 1 or result[0]["event_id"] != eid or result[0]["identity"] != item["identity"]:
+            raise ValueError("事件 ID 回讀不一致，請先核對刀表；監控已保留事件綁定。")
+
+    def run_once(self):
+        if not self.busy.acquire(blocking=False):
+            return {"ok": False, "busy": True}
+        updated = deleted = 0
+        now = timestamp()
+        config = self.store.get("config", "settings")
+        self._status(running=True, message="正在讀取並核對刀表…", issues=[])
+        try:
+            if not config["setup_done"]:
+                raise ValueError("請先檢查並準備刀表。")
+            from .sheet_mutex import sheet_mutex
+            with self.clients() as (sheets, calendar), sheet_mutex(config["spreadsheet_id"]):
+                book = sheets.read_all()
+                _, owner = metadata_owner(book)
+                if not owner_matches(owner, config):
+                    raise ValueError("這台主機不是目前登記的監控主機，已停止同步。")
+                book = self._migrate(sheets, book)
+                snapshot = scan(book, config["include_fu"])
+                if snapshot["issues"]:
+                    raise ValueError("；".join(snapshot["issues"][:8]))
+                previous = self.store.get("scan", "last")
+                deletion_safe = bool(previous)
+                # Any absent sheet disables deletion; archived IDs remain protective.
+                # Presence anywhere protects an existing event, even if the
+                # row's type changed and it is no longer an eligible patient.
+                active = snapshot["identities"]
+                for item in snapshot["patients"]:
+                    old = self.store.get("event", item["uid"])
+                    eid = self._binding(item, old, config)
+                    expected = resource(item, config["spreadsheet_id"])
+                    if expected is None:
+                        if old or item["event_id"]:
+                            raise ValueError(item["sheet"] + " 已綁定追蹤列清空日期，請人工確認；事件保留。")
+                        continue
+                    pending = {"uid": item["uid"], "identity": item["identity"], "event_id": eid,
+                        "sheet_id": item["sheet_id"], "hash": digest(expected), "resource": expected,
+                        "status": "pending", "missing": 0, "updated_at": now}
+                    if old and old.get("legacy_event_id"):
+                        pending["legacy_event_id"] = old["legacy_event_id"]
+                    self.store.save("event", item["uid"], pending)
+                    actual = calendar.get(eid)
+                    if "@" in eid and not actual:
+                        raise ValueError("刀表的舊 iCalUID 查無事件，請人工核對；未以舊格式建立另一事件。")
+                    if actual and "@" in eid:
+                        pending["legacy_event_id"] = eid
+                        eid = actual["id"]
+                        pending["event_id"] = eid
+                        self.store.save("event", item["uid"], pending)
+                    private = (actual or {}).get("extendedProperties", {}).get("private", {})
+                    if actual and private.get("vghksSyncId") and private["vghksSyncId"] != item["uid"]:
+                        raise ValueError("日曆事件已綁定另一筆排程，未覆寫。")
+                    if actual and private.get("vghksSource") and private["vghksSource"] != config["spreadsheet_id"]:
+                        raise ValueError("日曆事件屬於另一份刀表，未覆寫。")
+                    if actual and not item["event_id"] and not private.get("vghksSyncId"):
+                        raise ValueError("固定日曆 ID 已被未識別事件使用，未覆寫。")
+                    if actual and not private.get("vghksSyncId") and actual.get("summary", "").split(" | ")[0].strip() != item["mrn"]:
+                        raise ValueError("既有日曆事件的病歷號與刀表不同，請先核對綁定。")
+                    if not matches(actual, expected):
+                        result = calendar.update(eid, expected) if actual else calendar.insert(eid, expected)
+                        if result is None:
+                            raise CalendarError("日曆事件未能寫入，將於下一輪核對。")
+                        if not matches(calendar.get(eid), expected):
+                            raise CalendarError("日曆事件回讀與刀表預期不符，已保留待核對狀態。")
+                        updated += 1
+                    self._write_binding(sheets, item, eid)
+                    self.store.save("event", item["uid"], {**pending, "event_id": eid, "status": "ready"})
+                # Re-read the complete workbook before considering any disappearance.
+                final = scan(sheets.read_all(), config["include_fu"])
+                if final["issues"] or final["identities"] != snapshot["identities"]:
+                    raise ValueError("同步期間刀表結構或識別有變動，本輪不刪除事件。")
+                for old in self.store.all("event"):
+                    if old["uid"] in active:
+                        if old.get("missing"):
+                            self.store.save("event", old["uid"], {**old, "missing": 0})
+                        continue
+                    if old.get("status") == "deleted":
+                        continue
+                    count = old.get("missing", 0) + 1 if deletion_safe and old["sheet_id"] in final["sheet_ids"] else 0
+                    self.store.save("event", old["uid"], {**old, "missing": count})
+                    if count < 2:
+                        continue
+                    actual = calendar.get(old["event_id"])
+                    private = (actual or {}).get("extendedProperties", {}).get("private", {})
+                    if actual and (private.get("vghksSyncId") != old["uid"] or private.get("vghksSource") != config["spreadsheet_id"]):
+                        raise ValueError("待刪事件無法確認擁有權，保留並要求人工核對。")
+                    self.store.save("event", old["uid"], {**old, "missing": count, "status": "deleting"})
+                    calendar.delete(old["event_id"])
+                    if calendar.get(old["event_id"]) is not None:
+                        raise CalendarError("刪除事件尚未確認，下輪會先核對。")
+                    self.store.save("event", old["uid"], {**old, "missing": count, "status": "deleted"})
+                    deleted += 1
+                self.store.save("scan", "last", {"sheet_ids": sorted(snapshot["sheet_ids"]), "at": now})
+            result = {"ok": True, "updated": updated, "deleted": deleted, "at": now,
+                      "message": f"同步完成：更新 {updated} 筆，刪除 {deleted} 筆。"}
+            self._status(**{k: result[k] for k in ("updated", "deleted", "message")}, issues=[])
+        except Exception as exc:
+            message = str(exc) if isinstance(exc, (ValueError, CalendarError, SheetError)) else "同步未完成，已保存待核對狀態；請檢查網路與設定。"
+            result = {"ok": False, "at": now, "message": message, "updated": updated, "deleted": deleted}
+            self._status(message=message, issues=[message], updated=updated, deleted=deleted)
+            # Errors break consecutive-success deletion confirmation.
+            for old in self.store.all("event"):
+                if old.get("missing"):
+                    self.store.save("event", old["uid"], {**old, "missing": 0})
+        finally:
+            config["last_attempt"] = now
+            config["next_check"] = (datetime.now(TAIPEI) + timedelta(hours=config["hours"])).isoformat()
+            self.store.save("config", "settings", config)
+            self.store.save("history", now, result)
+            self._status(running=False)
+            self.busy.release()
+        return result
+
+    def run_background(self):
+        if self.busy.locked():
+            raise ValueError("同步正在執行。")
+        threading.Thread(target=self.run_once, name="calendar-manual", daemon=True).start()
+        return {"ok": True}
+
+    def _loop(self):
+        while not self.stop.wait(10):
+            config = self.store.get("config", "settings")
+            if config["enabled"] and config["next_check"] <= timestamp():
+                self.run_once()
+
+    def close(self):
+        self.stop.set()
+        if self.thread.is_alive():
+            self.thread.join()
+        with self.busy:
+            self.store.close()
+
+
+def self_test(path):
+    # Imported only for offline verification; no credentials or network access.
+    from .selftest_calendar import self_test as run
+    return run(path)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="VGHKS 刀表日曆監控")
+    parser.add_argument("--data-dir", type=Path)
+    parser.add_argument("--no-browser", action="store_true")
+    parser.add_argument("--port", type=int, default=0)
+    parser.add_argument("--self-test-report", type=Path)
+    args = parser.parse_args()
+    if args.self_test_report:
+        return self_test(args.self_test_report)
+    base = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parents[1]
+    directory = (args.data_dir or base / "VGHKS-calendar-data").resolve()
+    runtime = directory / ".runtime.json"
+    monitor = None
+    try:
+        try:
+            monitor = CalendarMonitor(directory)
+        except ValueError:
+            # Autorun starts without a browser; launching the EXE again opens
+            # its existing authenticated control surface instead of a second worker.
+            import urllib.request
+            from urllib.parse import urlsplit
+            try:
+                details = json.loads(runtime.read_text(encoding="utf-8"))
+                address = urlsplit(details["url"])
+                if address.scheme != "http" or address.hostname != "127.0.0.1" or address.path != "/" or not address.port:
+                    raise ValueError("監控控制網址無法辨識。")
+                with urllib.request.urlopen(f"http://127.0.0.1:{address.port}/api/instance", timeout=3) as response:
+                    if json.load(response).get("instance") != details["instance"]:
+                        raise ValueError("監控工作階段已變更。")
+                if not args.no_browser:
+                    webbrowser.open(details["url"])
+                return 0
+            except (OSError, ValueError, KeyError):
+                raise ValueError("監控已在執行，請使用原本開啟的監控頁面。") from None
+        from .calendar_monitor_server import MonitorServer
+        with MonitorServer(args.port, monitor) as server:
+            url = server.origin + "/#" + monitor.launch_token
+            runtime.write_text(json.dumps({"url": url, "instance": monitor.store.get("config", "settings")["worker_id"]}), encoding="utf-8")
+            if sys.stdout:
+                print("VGHKS-calendar-monitor: " + url, flush=True)
+            if not args.no_browser:
+                webbrowser.open(url)
+            server.serve_forever(poll_interval=0.3)
+    except KeyboardInterrupt:
+        pass
+    except Exception as exc:
+        message = str(exc) if isinstance(exc, ValueError) else "無法啟動日曆監控，請檢查資料目錄與埠號。"
+        if sys.platform == "win32" and sys.stdout is None:
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(0, message, "刀表日曆監控", 0x10)
+        elif sys.stderr:
+            print(message, file=sys.stderr)
+        return 1
+    finally:
+        if monitor:
+            runtime.unlink(missing_ok=True)
+            monitor.close()
+    return 0

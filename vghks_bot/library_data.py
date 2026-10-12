@@ -7,6 +7,7 @@ from contextlib import nullcontext
 from datetime import date
 
 from .library import encoded
+from .patient_handoff import purge_sources
 from .settings import timestamp
 
 CATEGORIES = {
@@ -48,6 +49,7 @@ class LibraryData:
 
     def soap_cleared(self, ids, mrns):
         with self.library.connect() as db:
+            purge_sources(db, record_ids=ids)
             keys = [(row["mrn"], row["key"]) for row in db.execute("SELECT mrn,key FROM analysis_steps WHERE kind='cataract_soap' "
                     "AND json_extract(payload,'$.record_id') IN (SELECT value FROM json_each(?))", (json.dumps(ids),))]
             for table in ("analysis_steps", "analysis_versions"):
@@ -157,6 +159,11 @@ class LibraryData:
             self.app.store.purge_index_copies(selected if "visits" in categories else [], preview["lists"])
             self.app.analysis.store.invalidate_previews(selected)
             with self.library.connect() as db:
+                if "analysis" in categories:
+                    purge_sources(db, mrns=selected)
+                    if db.execute("SELECT 1 FROM sqlite_master WHERE name='surgery_drafts'").fetchone():
+                        db.execute("DELETE FROM surgery_drafts WHERE json_extract(payload,'$.fields.mrn') "
+                                   "IN (SELECT value FROM json_each(?))", (json.dumps(sorted(selected)),))
                 packed = json.dumps(sorted(selected))
                 scope = "mrn IN (SELECT value FROM json_each(?))"
                 keys = [(row["mrn"], row["key"]) for row in db.execute("SELECT * FROM analysis_steps WHERE " + scope, (packed,))

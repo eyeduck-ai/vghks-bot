@@ -10,8 +10,9 @@ from vghks_sdk import __version__ as sdk_version
 ROOT = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser()
 parser.add_argument("--report", type=Path, default=ROOT / ".build" / "bundle-verification.json")
+parser.add_argument("--executable", choices=("VGHKS-bot", "VGHKS-calendar-monitor"), default="VGHKS-bot")
 args = parser.parse_args()
-exe = ROOT / "dist" / "VGHKS-bot.exe"
+exe = ROOT / "dist" / (args.executable + ".exe")
 bundle = CArchiveReader(str(exe))
 names = {name.replace("\\", "/"): name for name in bundle.toc}
 assets = []
@@ -27,7 +28,7 @@ licenses = bundle.extract(names["vghks_bot/licenses/THIRD_PARTY_NOTICES.txt"])
 for dependency in (b"google-auth", b"cryptography", b"vghks-sdk"):
     assert dependency in licenses
 assert f"vghks-sdk {sdk_version}".encode() in licenses
-report = {"ok": True, "size_bytes": exe.stat().st_size, "sha256": hashlib.sha256(exe.read_bytes()).hexdigest(),
+report = {"ok": True, "executable": exe.name, "size_bytes": exe.stat().st_size, "sha256": hashlib.sha256(exe.read_bytes()).hexdigest(),
           "assets_identical": assets, "credentials_blank": True, "third_party_notices": True,
           "sdk_version": sdk_version, "tag_scopes": {tag["id"]: tag["scope"] for tag in defaults["categories"]}}
 args.report.parent.mkdir(parents=True, exist_ok=True)

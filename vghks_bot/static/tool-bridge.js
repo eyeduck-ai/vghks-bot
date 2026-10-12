@@ -5,6 +5,10 @@ if (/^[a-f0-9]{32}$/.test(embeddedAccount || "")) {
   document.documentElement.dataset.density = "compact";
   window.addEventListener("message", event => {
     if(event.origin===location.origin&&event.source===parent&&event.data?.type==="bot:soap-updated")action(()=>loadSurgery());
+    if(event.origin===location.origin&&event.source===parent&&event.data?.type==="bot:worklist-updated"&&event.data.account===embeddedAccount)
+      action(()=>loadAnalysis(event.data.cohort));
+    if(event.origin===location.origin&&event.source===parent&&event.data?.type==="bot:tool-focus"&&event.data.account===embeddedAccount)
+      action(async()=>{await loadAnalysis(event.data.cohort,event.data.mrn);if($("#analysisView").value==="cataract")await window.CataractUI.autoStart({selectedOnly:!!event.data.selected_only});});
   });
   window.addEventListener("workspace-ready", () => action(async () => {
     const query = new URLSearchParams(location.search);
@@ -37,7 +41,7 @@ if (/^[a-f0-9]{32}$/.test(embeddedAccount || "")) {
     $("#saveCohort").textContent = "儲存清單";
     for (const heading of $$(".analysis-step-heading")) heading.hidden = true;
     showPane("analysis");
-    await loadAnalysis(query.get("cohort"));
-    if (module === "cataract") await window.CataractUI.autoStart();
+    await loadAnalysis(query.get("cohort"),query.get("focus")||"");
+    if (module === "cataract") await window.CataractUI.autoStart({selectedOnly:query.get("queue")==="selected"});
   }));
 }
