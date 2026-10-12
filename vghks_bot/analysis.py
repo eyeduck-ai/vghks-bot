@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import copy
 import json
-import threading
 import uuid
 from collections import Counter
 from dataclasses import replace
@@ -14,7 +13,7 @@ from .analysis_numeric import MODULES, term_match
 from .analysis_store import AnalysisStore, digest, identifier
 from .connection_state import should_pause
 from .demographics import merge_demographics
-from .google_sheets import GoogleSettings, SheetError, SheetUncertain
+from .google_sheets import SheetError, SheetUncertain
 from .ophthalmic_orders import (
     SCOPE_KEY,
     eye_order_contexts,
@@ -25,8 +24,9 @@ from .patient_handoff import public_document
 from .report_cache import result_complete
 from .scanner import Cancelled, ScanState, safe_failure
 from .settings import parse_mrns, timestamp, today
-from .sheet_mutex import sheet_mutex
+from .sheet_journal import OPD_KEY, confirm, reclaim
 from .sheet_plan import fingerprint, verify
+from .sheet_service import SheetService
 from .storage import ACTIVE, StorageError
 from .surgery_candidates import FIELD_NAMES, candidates, enrich, followup_candidates
 
@@ -35,13 +35,45 @@ class Analysis:
     def __init__(self, app):
         self.app = app
         self.store = AnalysisStore(app.store.library)
-        self.google = GoogleSettings(app.store.directory)
-        self.sheet_lock = threading.Lock()
-        self.sheet_busy = False
-        self.client_factory = self.google.client
+        self.sheets = app.sheets = SheetService(app)
+        self.google = self.sheets.google
+        self.sheets.receipt_sources.append(self._marker_receipts)
         from .cataract_queue import CataractQueue
 
         self.cataract_queue = CataractQueue(self)
+
+    # Compatibility for callers that configure analysis clients in offline tests.
+    @property
+    def client_factory(self):
+        return self.sheets.client_factory
+
+    @client_factory.setter
+    def client_factory(self, value):
+        self.sheets.client_factory = value
+
+    @client_factory.deleter
+    def client_factory(self):
+        del self.sheets.client_factory
+
+    @property
+    def sheet_lock(self):
+        return self.sheets.lock
+
+    @sheet_lock.setter
+    def sheet_lock(self, value):
+        self.sheets.lock = value
+
+    @property
+    def sheet_busy(self):
+        return self.sheets.busy
+
+    @sheet_busy.setter
+    def sheet_busy(self, value):
+        self.sheets.busy = value
+
+    def _marker_receipts(self, spreadsheet_id):
+        return [(p, OPD_KEY, [p["id"]], lambda p: self.store.save_document("sheet_previews", p))
+                for p in self.store.marker_receipts(spreadsheet_id)]
 
     def handle(self, path, values):
         routes = {
@@ -711,28 +743,11 @@ class Analysis:
 
     @staticmethod
     def public_preview(preview):
-        return {k: v for k, v in preview.items() if k not in {"requests", "expectations", "baseline", "source_digest"}}
+        return {k: v for k, v in preview.items() if k not in {
+            "requests", "expectations", "baseline", "source_digest", "confirmed_markers", "retired_markers"}}
 
     def sheet_operation(self, callback):
-        # A v5 root shares this lock across its account workspaces. A second
-        # account waits; duplicate operations within one workspace stay blocked.
-        with self.app.lock:
-            if self.sheet_busy:
-                raise ValueError("刀表作業進行中，請稍候。")
-            self.sheet_busy = True
-        if not self.sheet_lock.acquire(blocking=hasattr(self.app, "root")):
-            self.sheet_busy = False
-            raise ValueError("刀表作業進行中，請稍候。")
-        client = None
-        try:
-            client = self.client_factory()
-            with sheet_mutex(client.key):
-                return callback(client)
-        finally:
-            if client:
-                client.close()
-            self.sheet_busy = False
-            self.sheet_lock.release()
+        return self.sheets.sheet_operation(callback)
 
     def preview(self, values):
         proposals = self.proposals(values)
@@ -762,12 +777,16 @@ class Analysis:
                                          for uid, state in preview.get("sync_states", {}).items()):
             outcome = "changed"
         if outcome == "verified":
+            confirm(preview, preview["id"])
             preview.update(status="applied", message="已寫入並核對。", applied_at=timestamp())
         elif outcome == "changed":
+            confirm(preview, preview["id"])
             preview.update(status="applied_changed", message="更新已送達，但部分內容之後有變動，請檢查刀表。")
         elif preview["status"] in {"applying", "uncertain"}:
             preview.update(status="uncertain", message="尚未找到此批更新；可重試原預覽，系統以同一批次代碼防止重複新增。")
         self.store.save_document("sheet_previews", preview)
+        if outcome in {"verified", "changed"} and not getattr(getattr(self.app, "root", self.app), "read_only", False):
+            reclaim(client, book, [(preview, OPD_KEY, [preview["id"]], lambda p: self.store.save_document("sheet_previews", p))])
         return book, outcome
 
     def reconcile(self, values):
@@ -829,7 +848,7 @@ class Analysis:
         return self.sheet_operation(work)
 
     def sheet_history(self, _):
-        return {"previews": [self.public_preview(p) for p in self.store.documents("sheet_previews")]}
+        return {"previews": self.store.preview_summaries()}
 
     def automatic_sheet_sync(self, records, cohort_id, state, *, expected_spreadsheet_id=None):
         from .sheet_sync_core import SheetSyncCore

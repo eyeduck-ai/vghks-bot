@@ -7,6 +7,7 @@ import secrets
 import sqlite3
 import sys
 import threading
+import time
 import uuid
 import webbrowser
 from contextlib import contextmanager
@@ -82,6 +83,11 @@ class MonitorStore:
     def all(self, kind):
         with self.connect() as db:
             rows = db.execute("SELECT payload FROM documents WHERE kind=? ORDER BY id", (kind,)).fetchall()
+        return [json.loads(row[0]) for row in rows]
+
+    def recent(self, kind, limit=20):
+        with self.connect() as db:
+            rows = db.execute("SELECT payload FROM documents WHERE kind=? ORDER BY id DESC LIMIT ?", (kind, limit)).fetchall()
         return [json.loads(row[0]) for row in rows]
 
     def save(self, kind, key, payload):
@@ -186,6 +192,10 @@ class CalendarMonitor:
         self.busy = threading.Lock()
         self.state_lock = threading.RLock()
         self.status = {"running": False, "message": "監控尚未啟用。", "issues": [], "updated": 0, "deleted": 0}
+        self.status.update(self.store.get("health", "last") or {})
+        self.status["running"] = False
+        self.pause_epoch = self.active_epoch = 0
+        self.last_scan_ok = False
         self.launch_token = secrets.token_urlsafe(32)
         self.session_token = secrets.token_urlsafe(32)
         self.csrf_token = secrets.token_urlsafe(32)
@@ -197,7 +207,7 @@ class CalendarMonitor:
         with self.state_lock:
             return {**self.store.get("config", "settings"), **self.status,
                     "configured": self.store.configured(), "data_dir": str(self.store.directory),
-                    "history": self.store.all("history")[-20:]}
+                    "worker_alive": self.thread.is_alive(), "history": self.store.recent("history")}
 
     def configure(self, values):
         if not self.busy.acquire(blocking=False):
@@ -272,11 +282,11 @@ class CalendarMonitor:
         requests_ = plan["requests"] + normalize_hospital_requests(plan["book"])
         if not requests_:
             return book
-        fresh = sheets.read_all()
+        fresh = self._read_monitor(sheets)
         if fingerprint(fresh) != fingerprint(book):
             raise ValueError("刀表在準備期間有變動，請重新執行；未寫入。")
         sheets.write(requests_)
-        result = sheets.read_all()
+        result = self._read_monitor(sheets)
         actual = scan(result)
         if actual["issues"]:
             raise ValueError("系統欄回讀需核對：" + "；".join(actual["issues"][:6]))
@@ -307,15 +317,18 @@ class CalendarMonitor:
 
     def pause(self):
         # Pausing must also work before the first configuration is complete.
-        if not self.busy.acquire(blocking=False):
-            raise ValueError("同步正在執行，完成後即可暫停。")
-        try:
+        with self.state_lock:
             config = self.store.get("config", "settings")
             config["enabled"] = False
             self.store.save("config", "settings", config)
+            self.pause_epoch += 1
+            if self.busy.locked():
+                self.status["message"] = "已要求暫停，將在目前操作核對後停止；未完成綁定會保留。"
             return self.public()
-        finally:
-            self.busy.release()
+
+    def _checkpoint(self):
+        if self.stop.is_set() or self.pause_epoch != self.active_epoch:
+            raise CalendarError("已暫停同步，未完成操作已保留，恢復後會先核對原事件。", code="paused")
 
     def prepare(self, takeover=False):
         if not self.busy.acquire(blocking=False):
@@ -327,7 +340,7 @@ class CalendarMonitor:
             from .sheet_mutex import sheet_mutex
             with self.clients() as (sheets, calendar), sheet_mutex(config["spreadsheet_id"]):
                 calendar.probe()
-                book = sheets.read_all()
+                book = self._read_monitor(sheets)
                 metadata, owner = metadata_owner(book)
                 if owner and not owner_matches(owner, config) and not takeover:
                     raise ValueError("刀表已登記其他監控主機。停止舊主機後，明確選擇接替主機再準備。")
@@ -341,7 +354,8 @@ class CalendarMonitor:
                     {"createDeveloperMetadata": {"developerMetadata": {"metadataKey": OWNER_KEY, "metadataValue": owner_value,
                         "visibility": "DOCUMENT", "location": {"spreadsheet": True}}}})
                 sheets.write([request])
-                _, verified_owner = metadata_owner(sheets.read_all())
+                reader = getattr(sheets, "read_metadata", None)
+                _, verified_owner = metadata_owner(reader() if reader else self._read_monitor(sheets))
                 if not owner_matches(verified_owner, config):
                     raise ValueError("主機登記回讀不一致，監控保持停用。")
             config["setup_done"] = True
@@ -375,41 +389,64 @@ class CalendarMonitor:
             raise ValueError(item["sheet"] + " 事件綁定與監控紀錄不一致，請核對。")
         return (old or {}).get("event_id") or sheet_event or event_id(config["spreadsheet_id"], item["uid"])
 
-    def _write_binding(self, sheets, item, eid):
-        fresh = sheets.read_all()
-        current = scan(fresh)
-        if current["issues"]:
-            raise ValueError("回寫事件 ID 前刀表有衝突，事件已保存在監控紀錄，稍後重試。")
-        found = [p for p in current["patients"] if p["uid"] == item["uid"]]
-        if len(found) != 1 or found[0]["identity"] != item["identity"]:
-            raise ValueError("回寫事件 ID 前病人列已搬移或變更，請重新核對。")
-        target = found[0]
-        if target["event_id"] == eid:
-            return
-        if target["event_id"] and target["event_id"] != item["event_id"]:
-            raise ValueError("既有事件 ID 已由其他操作變更，未覆寫。")
-        col = target["cols"]["CalendarEventId"]
-        sheets.write([{"updateCells": {"range": {"sheetId": target["sheet_id"], "startRowIndex": target["row"],
-            "endRowIndex": target["row"] + 1, "startColumnIndex": col, "endColumnIndex": col + 1},
-            "rows": [{"values": [{"userEnteredValue": {"stringValue": eid}}]}], "fields": "userEnteredValue"}}])
-        verified = scan(sheets.read_all())
-        result = [p for p in verified["patients"] if p["uid"] == item["uid"]]
-        if verified["issues"] or len(result) != 1 or result[0]["event_id"] != eid or result[0]["identity"] != item["identity"]:
-            raise ValueError("事件 ID 回讀不一致，請先核對刀表；監控已保留事件綁定。")
+    @staticmethod
+    def _read_monitor(sheets):
+        reader = getattr(sheets, "read_for_monitor", None) or sheets.read_all
+        return reader()
+
+    def _write_bindings(self, sheets, bindings):
+        # Re-locate permanent IDs immediately before each bounded batch. Never
+        # reuse initial row numbers after Calendar requests or a concurrent move.
+        for start in range(0, len(bindings), 100):
+            self._checkpoint()
+            batch = bindings[start:start + 100]
+            current = scan(self._read_monitor(sheets))
+            if current["issues"]:
+                raise ValueError("回寫事件 ID 前刀表有衝突，事件已保存在監控紀錄，稍後重試。")
+            indexed = {p["uid"]: p for p in current["patients"]}
+            requests_ = []
+            for item, eid in batch:
+                target = indexed.get(item["uid"])
+                if not target or target["identity"] != item["identity"]:
+                    raise ValueError("回寫事件 ID 前病人列已搬移或變更，請重新核對。")
+                if target["event_id"] == eid:
+                    continue
+                if target["event_id"] and target["event_id"] != item["event_id"]:
+                    raise ValueError("既有事件 ID 已由其他操作變更，未覆寫。")
+                col = target["cols"]["CalendarEventId"]
+                requests_.append({"updateCells": {"range": {"sheetId": target["sheet_id"], "startRowIndex": target["row"],
+                    "endRowIndex": target["row"] + 1, "startColumnIndex": col, "endColumnIndex": col + 1},
+                    "rows": [{"values": [{"userEnteredValue": {"stringValue": eid}}]}], "fields": "userEnteredValue"}})
+            if requests_:
+                sheets.write(requests_)
+            verified = scan(self._read_monitor(sheets))
+            indexed = {p["uid"]: p for p in verified["patients"]}
+            if verified["issues"] or any(not indexed.get(item["uid"]) or indexed[item["uid"]]["event_id"] != eid
+                    or indexed[item["uid"]]["identity"] != item["identity"] for item, eid in batch):
+                raise ValueError("事件 ID 回讀不一致，請先核對刀表；監控已保留事件綁定。")
 
     def run_once(self):
+        with self.state_lock:
+            epoch = self.pause_epoch
         if not self.busy.acquire(blocking=False):
             return {"ok": False, "busy": True}
         updated = deleted = 0
         now = timestamp()
-        config = self.store.get("config", "settings")
+        started = time.monotonic()
+        self.active_epoch = epoch
+        config, result, metrics, sheets, calendar = {}, {"ok": False, "at": now}, {}, None, None
         self._status(running=True, message="正在讀取並核對刀表…", issues=[])
         try:
+            config = self.store.get("config", "settings")
+            self._checkpoint()
             if not config["setup_done"]:
                 raise ValueError("請先檢查並準備刀表。")
             from .sheet_mutex import sheet_mutex
             with self.clients() as (sheets, calendar), sheet_mutex(config["spreadsheet_id"]):
-                book = sheets.read_all()
+                for client in (sheets, calendar):
+                    if hasattr(client, "http"):
+                        client.http.checkpoint = self._checkpoint
+                book = self._read_monitor(sheets)
                 _, owner = metadata_owner(book)
                 if not owner_matches(owner, config):
                     raise ValueError("這台主機不是目前登記的監控主機，已停止同步。")
@@ -423,7 +460,9 @@ class CalendarMonitor:
                 # Presence anywhere protects an existing event, even if the
                 # row's type changed and it is no longer an eligible patient.
                 active = snapshot["identities"]
+                bindings = []
                 for item in snapshot["patients"]:
+                    self._checkpoint()
                     old = self.store.get("event", item["uid"])
                     eid = self._binding(item, old, config)
                     expected = resource(item, config["spreadsheet_id"])
@@ -461,20 +500,25 @@ class CalendarMonitor:
                         if not matches(calendar.get(eid), expected):
                             raise CalendarError("日曆事件回讀與刀表預期不符，已保留待核對狀態。")
                         updated += 1
-                    self._write_binding(sheets, item, eid)
+                    if item["event_id"] != eid:
+                        bindings.append((item, eid))
                     self.store.save("event", item["uid"], {**pending, "event_id": eid, "status": "ready"})
+                self._write_bindings(sheets, bindings)
+                self._checkpoint()
                 # Re-read the complete workbook before considering any disappearance.
-                final = scan(sheets.read_all(), config["include_fu"])
+                final = scan(self._read_monitor(sheets), config["include_fu"])
                 if final["issues"] or final["identities"] != snapshot["identities"]:
                     raise ValueError("同步期間刀表結構或識別有變動，本輪不刪除事件。")
                 for old in self.store.all("event"):
+                    self._checkpoint()
                     if old["uid"] in active:
                         if old.get("missing"):
                             self.store.save("event", old["uid"], {**old, "missing": 0})
                         continue
                     if old.get("status") == "deleted":
                         continue
-                    count = old.get("missing", 0) + 1 if deletion_safe and old["sheet_id"] in final["sheet_ids"] else 0
+                    prior = old.get("missing", 0) if self.last_scan_ok else 0
+                    count = prior + 1 if deletion_safe and old["sheet_id"] in final["sheet_ids"] else 0
                     self.store.save("event", old["uid"], {**old, "missing": count})
                     if count < 2:
                         continue
@@ -492,21 +536,40 @@ class CalendarMonitor:
             result = {"ok": True, "updated": updated, "deleted": deleted, "at": now,
                       "message": f"同步完成：更新 {updated} 筆，刪除 {deleted} 筆。"}
             self._status(**{k: result[k] for k in ("updated", "deleted", "message")}, issues=[])
+            self.last_scan_ok = True
         except Exception as exc:
+            self.last_scan_ok = False
             message = str(exc) if isinstance(exc, (ValueError, CalendarError, SheetError)) else "同步未完成，已保存待核對狀態；請檢查網路與設定。"
-            result = {"ok": False, "at": now, "message": message, "updated": updated, "deleted": deleted}
+            result = {"ok": False, "at": now, "message": message, "updated": updated, "deleted": deleted,
+                      "failure_code": getattr(exc, "code", "") or "conflict", "retryable": bool(getattr(exc, "retryable", False))}
             self._status(message=message, issues=[message], updated=updated, deleted=deleted)
             # Errors break consecutive-success deletion confirmation.
             for old in self.store.all("event"):
                 if old.get("missing"):
                     self.store.save("event", old["uid"], {**old, "missing": 0})
         finally:
-            config["last_attempt"] = now
-            config["next_check"] = (datetime.now(TAIPEI) + timedelta(hours=config["hours"])).isoformat()
-            self.store.save("config", "settings", config)
-            self.store.save("history", now, result)
-            self._status(running=False)
-            self.busy.release()
+            try:
+                metrics = {label: {"requests": client.http.requests, "retries": client.http.retries}
+                           for label, client in (("sheets", sheets), ("calendar", calendar)) if hasattr(client, "http")}
+                # Pause can update settings while this round finishes a request.
+                config = self.store.get("config", "settings")
+                failures = 0 if result["ok"] else config.get("consecutive_failures", 0) + 1
+                delay = timedelta(hours=config["hours"])
+                if result.get("retryable"):
+                    delay = min(delay, timedelta(minutes=min(60, 5 * 2**min(failures - 1, 4))))
+                config.update(last_attempt=now, consecutive_failures=failures,
+                              next_check=(datetime.now(TAIPEI) + delay).isoformat())
+                if result["ok"]:
+                    config["last_success"] = timestamp()
+                result.update(duration_seconds=round(time.monotonic() - started, 3), api=metrics)
+                self.store.save("config", "settings", config)
+                self.store.save("history", now, result)
+                self._status(running=False, duration_seconds=result["duration_seconds"], api=metrics,
+                             failure_code=result.get("failure_code", ""))
+                self.store.save("health", "last", self.status)
+            finally:
+                self._status(running=False)
+                self.busy.release()
         return result
 
     def run_background(self):
@@ -517,9 +580,13 @@ class CalendarMonitor:
 
     def _loop(self):
         while not self.stop.wait(10):
-            config = self.store.get("config", "settings")
-            if config["enabled"] and config["next_check"] <= timestamp():
-                self.run_once()
+            try:
+                config = self.store.get("config", "settings")
+                if config["enabled"] and config["next_check"] <= timestamp():
+                    self.run_once()
+            except Exception:
+                # A local storage fault must not silently kill the only worker.
+                self._status(running=False, failure_code="storage", message="無法保存監控狀態，背景程序仍在；請檢查本機資料目錄。")
 
     def close(self):
         self.stop.set()

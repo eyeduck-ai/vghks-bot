@@ -366,6 +366,7 @@ class MemorySheets:
     def __init__(self, book=None):
         self.book = book or book_fixture()
         self.writes = 0
+        self.marker_writes = 0
         self.timeout_after_commit = False
         self.timeout_before_commit = False
 
@@ -376,7 +377,10 @@ class MemorySheets:
         return copy.deepcopy(self.book)
 
     def write(self, requests):
-        self.writes += 1
+        if requests and all("deleteDeveloperMetadata" in request for request in requests):
+            self.marker_writes += 1
+        else:
+            self.writes += 1
         if self.timeout_before_commit:
             raise SheetUncertain("synthetic timeout")
         book = copy.deepcopy(self.book)
@@ -403,6 +407,10 @@ class MemorySheets:
                 if any(v["metadataId"] == m["metadataId"] for v in book["developerMetadata"]):
                     raise SheetError("duplicate metadata")
                 book["developerMetadata"].append(copy.deepcopy(m))
+            elif "deleteDeveloperMetadata" in request:
+                lookup = request["deleteDeveloperMetadata"]["dataFilter"]["developerMetadataLookup"]
+                book["developerMetadata"] = [m for m in book["developerMetadata"]
+                    if not all(m.get(key) == value for key, value in lookup.items())]
             elif "appendDimension" in request:
                 p = request["appendDimension"]
                 s = sheet(p["sheetId"])

@@ -10,7 +10,7 @@ window.SheetSyncUI=(()=>{
   $("#sheetSyncStatus").textContent=[value.running?"正在同步":settings.enabled?"排程已啟用":"排程未啟用",
    value.online===false?"帳號離線":"",settings.enabled?"每 "+(settings.interval_minutes||60)+" 分鐘":"",
    settings.last_run_at?"上次 "+time(settings.last_run_at):"",
-   settings.next_run_at?"下次 "+time(settings.next_run_at):"",last?.message||""].filter(Boolean).join(" · ");
+   settings.next_run_at?"下次 "+time(settings.next_run_at):"",value.scheduler_error?.message||last?.message||""].filter(Boolean).join(" · ");
   $("#sheetSyncRun").disabled=!!root.read_only||!!value.running||value.online===false;
   $("#sheetSyncSettings").disabled=!!root.read_only;
   const pending=value.pending||[],deferred=value.deferred||[];$("#sheetSyncPendingTitle").textContent="待確認項目 · "+(pending.length+deferred.length)+" 筆";

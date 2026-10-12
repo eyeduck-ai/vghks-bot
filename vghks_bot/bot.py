@@ -22,7 +22,7 @@ from .jobs import Application, BusyError
 from .review import Review
 from .scanned_records import ScanArchive
 from .scanner import create_sdk, safe_failure
-from .settings import FOLLOWUP_TAG, Account, credentials, today
+from .settings import FOLLOWUP_TAG, Account, credentials, timestamp, today
 from .sheet_management import SheetManagement
 from .sheet_sync import SheetSync
 from .storage import StorageError
@@ -198,12 +198,18 @@ class BotApplication:
         self.launch_token, self.session_token, self.csrf_token = (secrets.token_urlsafe(32) for _ in range(3))
         self.closing = False
         self.scheduler_stop = threading.Event()
+        self.scheduler_errors = {}
+        self.scheduler_failure = None
         self.scheduler = threading.Thread(target=self._schedule, name="account-monitors", daemon=True)
         self.scheduler.start()
 
     def _schedule(self):
         while not self.scheduler_stop.wait(30):
-            self.follow_up_tick()
+            try:
+                self.follow_up_tick()
+                self.scheduler_failure = None
+            except Exception:
+                self.scheduler_failure = {"at": timestamp(), "code": "scheduler", "message": "排程檢查未完成，背景程序會再次嘗試。"}
 
     def follow_up_tick(self):
         # Switching or copying a database holds this lock. Never queue work in
@@ -216,10 +222,15 @@ class BotApplication:
             for workspace in list(self.workspaces.values()):
                 for schedule in (workspace.approvals.tracker.schedule, workspace.earnings.monitor.schedule,
                                  workspace.sheet_sync.schedule):
+                    owner = getattr(schedule, "__self__", None)
+                    key = (workspace.account_id, type(owner).__name__ if owner else getattr(schedule, "__name__", "schedule"))
                     try:
                         schedule()
-                    except Exception:
-                        # Local due reminders remain visible; a later tick can retry.
+                        self.scheduler_errors.pop(key, None)
+                    except Exception as exc:
+                        self.scheduler_errors[key] = {"at": timestamp(), "code": type(exc).__name__,
+                            "message": str(exc) if isinstance(exc, (ValueError, StorageError))
+                            else "背景排程未完成，請檢查連線與本機資料目錄；下輪會再次嘗試。"}
                         continue
         finally:
             self.lock.release()

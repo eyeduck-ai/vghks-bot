@@ -1,10 +1,12 @@
 """Account registry and per-account durable workbench documents."""
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import threading
 import uuid
+import zlib
 from contextlib import contextmanager
 from datetime import datetime
 
@@ -104,6 +106,10 @@ class WorkbenchStore:
                 CREATE INDEX IF NOT EXISTS bot_sdk_events_task ON bot_sdk_events(task_id,id);
                 CREATE TABLE IF NOT EXISTS bot_deleted_records (id TEXT PRIMARY KEY, deleted_at TEXT NOT NULL);
                 CREATE INDEX IF NOT EXISTS bot_documents_recent ON bot_documents(kind,updated_at DESC,id);
+                CREATE INDEX IF NOT EXISTS bot_sheet_scope ON bot_documents(kind,json_extract(payload,'$.spreadsheet_id'),
+                    json_extract(payload,'$.status'),updated_at DESC);
+                CREATE TABLE IF NOT EXISTS bot_sheet_backups (
+                    digest TEXT PRIMARY KEY, payload BLOB NOT NULL, created_at TEXT NOT NULL);
                 CREATE INDEX IF NOT EXISTS bot_task_status ON bot_documents(json_extract(payload,'$.status'),updated_at,id)
                     WHERE kind='task';
                 CREATE TABLE IF NOT EXISTS bot_revisions (kind TEXT PRIMARY KEY, revision INTEGER NOT NULL);
@@ -163,6 +169,63 @@ class WorkbenchStore:
             return self.documents(kind)
         with self.library.connect() as db:
             return [json.loads(r[0]) for r in db.execute("SELECT payload FROM bot_documents WHERE kind=? ORDER BY updated_at DESC,id", (kind,))]
+
+    def summaries(self, kind, *, fields, spreadsheet_id=None, include_unconfigured=False, statuses=None, limit=30, order_by="created_at"):
+        """Project small list rows in SQLite; never decode a backup to show a list."""
+        fields = sorted(fields)
+        if any(not field.replace("_", "").isalnum() for field in [*fields, order_by]):
+            raise ValueError("資料欄位不正確。")
+        columns = ",".join("'" + field + "',json_extract(payload,'$." + field + "')" for field in fields)
+        clauses, args = ["kind=?"], [kind]
+        if spreadsheet_id is not None:
+            clauses.append("json_extract(payload,'$.spreadsheet_id') IN (SELECT value FROM json_each(?))")
+            args.append(json.dumps([spreadsheet_id, ""] if include_unconfigured else [spreadsheet_id]))
+        if statuses is not None:
+            clauses.append("json_extract(payload,'$.status') IN (SELECT value FROM json_each(?))")
+            args.append(json.dumps(list(statuses)))
+        suffix = ""
+        if limit is not None:
+            if type(limit) is not int or not 1 <= limit <= 1000:
+                raise ValueError("清單筆數不正確。")
+            suffix = " LIMIT ?"
+            args.append(limit)
+        with self.library.connect() as db:
+            rows = db.execute("SELECT json_object(" + columns + ") FROM bot_documents WHERE " + " AND ".join(clauses)
+                              + " ORDER BY coalesce(json_extract(payload,'$." + order_by + "'),updated_at) DESC,id" + suffix, args).fetchall()
+        return [{key: value for key, value in json.loads(row[0]).items() if value is not None} for row in rows]
+
+    def sheet_receipts(self, kind, spreadsheet_id):
+        with self.library.connect() as db:
+            rows = db.execute("""SELECT payload FROM bot_documents WHERE kind=? AND json_extract(payload,'$.spreadsheet_id')=?
+                AND json_extract(payload,'$.status') IN ('copied','applied','applied_changed')
+                AND json_extract(payload,'$.marker') IS NOT NULL
+                AND (NOT EXISTS (SELECT 1 FROM json_each(bot_documents.payload,'$.retired_markers')
+                    WHERE value=json_extract(bot_documents.payload,'$.marker'))
+                    OR EXISTS (SELECT 1 FROM json_each(bot_documents.payload,'$.confirmed_markers') AS c
+                        WHERE NOT EXISTS (SELECT 1 FROM json_each(bot_documents.payload,'$.retired_markers') AS r
+                            WHERE r.value=c.value))) ORDER BY updated_at LIMIT 100""",
+                (kind, spreadsheet_id)).fetchall()
+        return [json.loads(row[0]) for row in rows]
+
+    def save_sheet_backup(self, value):
+        raw = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        digest = hashlib.sha256(raw).hexdigest()
+        with self.library.connect() as db:
+            db.execute("INSERT OR IGNORE INTO bot_sheet_backups VALUES(?,?,?)", (digest, zlib.compress(raw), timestamp()))
+        return digest
+
+    def sheet_backup(self, digest):
+        with self.library.connect() as db:
+            row = db.execute("SELECT payload FROM bot_sheet_backups WHERE digest=?", (digest,)).fetchone()
+        if not row:
+            raise ValueError("找不到本機封存備份，停止移除原月份；請還原完整資料目錄。")
+        try:
+            raw = zlib.decompress(row[0])
+            if hashlib.sha256(raw).hexdigest() != digest:
+                raise ValueError("checksum")
+            return json.loads(raw)
+        except (ValueError, zlib.error) as exc:
+            raise ValueError("本機封存備份核對失敗，原月份保留，請先修復備份。") from exc
 
     def documents(self, kind, *, filters=None, keys=None, limit=None, offset=0):
         clauses, args = ["d.kind=?"], [kind]

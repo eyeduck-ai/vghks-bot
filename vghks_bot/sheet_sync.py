@@ -42,13 +42,14 @@ class SheetSync:
         tasks = self.db.task_summaries(key=settings.get("last_task", "")) if settings.get("last_task") else []
         pending = self.db.all("sheet_sync_pending")
         return {"settings": settings, "online": self.app.gateway.online,
+                "scheduler_error": getattr(self.app.root, "scheduler_errors", {}).get((self.app.account_id, "SheetSync"))
+                                   or getattr(self.app.root, "scheduler_failure", None),
                 "running": any(t["status"] in ACTIVE for t in tasks),
                 "last_result": self.db.get("sheet_sync_result", "latest", required=False),
                 "deferred": [{k: v for k, v in row.items() if k != "source_versions"}
                              for row in self.db.all("sheet_sync_deferred") if row.get("status") != "completed"],
                 "pending": [p for p in pending if not p.get("dismissed")],
-                "history": sorted(self.db.all("sheet_sync_history"),
-                                  key=lambda v: v.get("created_at", ""), reverse=True)[:30]}
+                "history": self.db.documents("sheet_sync_history", limit=30)}
 
     def schedule(self):
         if (self.app.closing or self.app.root.read_only or not self.app.entered

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -27,6 +28,14 @@ from vghks_bot.sheet_schema import (  # noqa: E402
 )
 
 FIXTURES = ROOT / "tests" / "fixtures"
+
+
+def gas_revision():
+    manifest = json.loads((FIXTURES / "gas_contract.json").read_text(encoding="utf-8"))
+    if (manifest.get("schema") != 1 or manifest.get("repository") != "eyeduck-ai/op_spreadsheet"
+            or not re.fullmatch(r"[0-9a-f]{40}", manifest.get("revision", ""))):
+        raise ValueError("Invalid GAS contract revision manifest")
+    return manifest["revision"]
 
 
 def literal(value):
@@ -96,15 +105,20 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--gas-repo", type=Path)
     args = parser.parse_args()
+    revision = gas_revision()
     parsing = json.loads((FIXTURES / "schema_parsing.json").read_text(encoding="utf-8"))
     formatting = json.loads((FIXTURES / "sheet_contract.json").read_text(encoding="utf-8"))
     if args.gas_repo:
+        actual_revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=args.gas_repo,
+                                         check=True, capture_output=True, text=True).stdout.strip()
+        if actual_revision != revision:
+            raise ValueError("GAS source revision differs from the pinned contract")
         actual_parsing = exported_contract(args.gas_repo, "parser_contract.js", "parserContract")
         actual_formatting = exported_contract(args.gas_repo, "sheet_contract.js", "sheetContract")
         if parsing != actual_parsing or formatting != actual_formatting:
             raise ValueError("Saved fixtures differ from the supplied GAS source; review and regenerate them")
     count = check_contract(parsing, formatting)
-    print(f"Shared Sheets contract passed: {count} synthetic cases (main, monitor, GAS)")
+    print(f"Shared Sheets contract passed: {count} synthetic cases (main, monitor, GAS {revision[:7]})")
 
 
 if __name__ == "__main__":
