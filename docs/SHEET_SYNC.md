@@ -119,7 +119,9 @@ Google 明確拒絕寫入（例如編輯權限不足）時，修正原因後可�
 
 正式刀表的識別欄已由 EXE 初始化，可直接使用 GAS 日常選單，不需要再執行 GAS 初始化。GAS 保留建立新月、選取列新增刀日、整理目前分頁、水晶體清單、月表與 FU 雙向轉送及年度封存。「維護工具 → 修復刀表格式」只在需要修復既有分頁格式、驗證或編輯觸發器時使用，不建立 FU、不配置既有排程 ID，也不批次改寫報到時間；同步設定與既有資料識別碼配置皆由 EXE 負責。舊日曆設定、同步修復、交接與遷移功能空殼已刪除；歷史觸發器只保留必要的格式轉接或安全空操作。
 
-GAS 保留格式、排序、月份／刀日建立、FU 操作與封存，不執行日曆同步。[2026.10.12.2 更新](https://github.com/eyeduck-ai/op_spreadsheet/commit/4c6b4981c4052329b06955ab5f61d086ae7d914b) 已由原有 clasp 流程[部署成功並確認正式刀表綁定](https://github.com/eyeduck-ai/op_spreadsheet/actions/runs/38158850134)，包含 `Push to Apps Script` 成功及 `verified=true`、`parent_match=true`。72 項 smoke、格式契約、監控交接及解析契約均通過；Windows 端另以實際 GAS 匯出的 72 項案例交叉核對。月表、FU 及年度封存均只隱藏系統欄，不自動建立保護，也不調整既有人工保護。此 GAS 確實綁定正式刀表；最初提供的測試副本沒有套用到同一綁定專案。核對工作不更換既有部署目標或秘密設定，也不輸出 Script ID、token 或金鑰。
+GAS 保留格式、排序、月份／刀日建立、FU 操作與封存，不執行日曆同步。[2026.10.14 更新](https://github.com/eyeduck-ai/op_spreadsheet/commit/94b10b6252bb63d2c0e0d22e96f5244664054896) 已由原有 clasp 流程[部署成功並確認正式刀表綁定](https://github.com/eyeduck-ai/op_spreadsheet/actions/runs/38574972847)，包含 `Push to Apps Script` 成功及 `verified=true`、`parent_match=true`。73 項 smoke、格式契約、監控交接、解析及新增流程契約均通過；Windows 端另以實際 GAS 匯出的 74 項解析／寫入案例交叉核對。月表、FU 及年度封存均只隱藏系統欄，不自動建立保護，也不調整既有人工保護。此 GAS 確實綁定正式刀表；最初提供的測試副本沒有套用到同一綁定專案。核對工作不更換既有部署目標或秘密設定，也不輸出 Script ID、token 或金鑰。
+
+GAS 的 FU 重送快取只保存永久 ScheduleSyncId，移除事件 ID、月份／列號與內容雜湊回退；重讀後核對病人再定位。新增月份沿用既有表頭，新增病人繼承目的刀日院區並保留報到時間；真正空白列才直接使用，有公式或註記則插列。人工尾欄納入掃描與排序，暫時排序鍵排除於病人解析。沒有新增雲端隱藏頁或系統欄，歷史觸發器仍為格式轉接／空操作。
 
 ## 驗收
 
