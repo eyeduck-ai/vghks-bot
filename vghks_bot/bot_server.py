@@ -90,6 +90,7 @@ class BotHandler(Handler):
         assets = {"/": ("bot.html", "text/html; charset=utf-8"),
                   "/bot.js": ("bot.js", "text/javascript; charset=utf-8"),
                   "/review-history.js": ("review-history.js", "text/javascript; charset=utf-8"),
+                  "/registration-history.js": ("registration-history.js", "text/javascript; charset=utf-8"),
                   "/review-handoff.js": ("review-handoff.js", "text/javascript; charset=utf-8"),
                   "/scan-browser.js": ("scan-browser.js", "text/javascript; charset=utf-8"),
                   "/file-compare.js": ("file-compare.js", "text/javascript; charset=utf-8"),

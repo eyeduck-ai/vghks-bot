@@ -9,6 +9,7 @@ from collections import defaultdict
 from datetime import date
 
 from vghks_sdk import SoapRecord, VisitCase
+from vghks_sdk import __version__ as sdk_version
 from vghks_sdk.core.errors import error_info
 from vghks_sdk.identifiers import normalize_mrn
 
@@ -32,6 +33,7 @@ from .surgery_schedule import KIND as SURGERY_KIND
 from .tags import classification
 
 FOREGROUND_KINDS = {"numeric", "registrations", "resolve", "history", "earnings_options"} | (APPROVAL_KINDS - {"approval_refresh", "approval_sync"})
+REGISTRATION_SCHEMA = 1  # Includes the explicit no_show icon, including null for unknown.
 
 
 def case_key(case):
@@ -779,7 +781,8 @@ class Review:
                 return {"status": "deleted", "record_id": key}
             valid = bool(cached and current_cache(record["date"], cached["updated_at"]))
         else:
-            valid = bool(cached and fresh(cached["updated_at"], 60))
+            valid = bool(cached and cached.get("registration_schema") == REGISTRATION_SCHEMA
+                         and fresh(cached["updated_at"], 60))
         if valid and not task["force"]:
             return {**cached, "cached": True}
         with self.app.sdk_factory(self.app.settings) as sdk:
@@ -795,7 +798,8 @@ class Review:
             else:
                 payload = clean(sdk.patients.get_registration_history(mrn))
                 validate_patient(payload, mrn)
-        return self.db.save(kind, {"id": key, "mrn": mrn, "record_id": key if kind == "numeric" else "", "status": "ready", "payload": payload, "cached": False, "queried_on": today().isoformat()})
+        metadata = {"registration_schema": REGISTRATION_SCHEMA, "sdk_version": sdk_version} if kind == "registrations" else {}
+        return self.db.save(kind, {"id": key, "mrn": mrn, "record_id": key if kind == "numeric" else "", "status": "ready", "payload": payload, "cached": False, "queried_on": today().isoformat(), **metadata})
 
     def task(self, key, *, summary=False):
         with self.app.store.library.read_snapshot():

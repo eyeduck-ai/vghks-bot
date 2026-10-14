@@ -521,7 +521,7 @@ function appendNumericTables(c,tables){for(const {table:t} of tables.map((table,
  }if(!tables.length)c.append(empty("沒有可顯示的數值表。"));}
 function renderExtension(data,kind){const c=$("#dataContent");c.replaceChildren(node("p",`${data.cached?"本機資料 · ":""}最後取得 ${time(data.updated_at)}`,"caption"));c.append(btn("更新資料",()=>extension(kind,extensionContext.mrn,extensionContext.record_id,true)));if(data.status==="deleted"){c.append(empty("資料已刪除。"));return;}
  if(kind==="numeric")appendNumericTables(c,data.payload?.tables||[]);
- else{const day=data.queried_on||data.updated_at?.slice(0,10)||root.today;const rows=[...(data.payload||[])].sort((a,b)=>(b.visit_date||"").localeCompare(a.visit_date||""));c.append(node("p","查詢基準日 "+day,"caption"));for(const [name,subset] of [["今天及未來",rows.filter(r=>r.visit_date&&r.visit_date>=day)],["過去",rows.filter(r=>r.visit_date&&r.visit_date<day)],["日期不明",rows.filter(r=>!r.visit_date)]]){if(name==="日期不明"&&!subset.length)continue;c.append(node("h3",name),table(["日期","科別","診間／序號","掛號狀態"],subset.map(r=>[r.visit_date||"未註明",r.section_name||r.section_code,(r.room||"—")+" / "+(r.sequence_no||"—"),r.cancelled_at?(r.cancelled_at==="已取消"?"已取消":"已取消 · "+r.cancelled_at):r.status||"狀態未確認"])));if(!subset.length)c.append(node("p","沒有紀錄","caption"));}}
+ else{$("#dataDialog").dataset.view="registrations";window.RegistrationHistoryUI.append(c,data,root.today);}
 
 }
 const libraryFilters=()=>({q:$("#libraryQuery").value,tag:$("#libraryTag").value,start:$("#libraryStart").value,end:$("#libraryEnd").value,task_id:$("#libraryTask").value});
