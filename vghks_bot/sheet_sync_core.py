@@ -27,6 +27,8 @@ from .sheet_plan import (
     patient_key,
     verify,
 )
+from .sheet_schema import HOSPITALS
+from .sheet_service import account_hospital
 from .sheet_sync_state import (
     field_hash,
     plan_sync_state,
@@ -180,6 +182,15 @@ def bind_candidate(book, row, states):
     return entry, old, ""
 
 
+def source_route(fields, state=None, entry=None, *, hospital_default=False):
+    hospital = fields.get("hospital") or "高榮"
+    if hospital_default and entry is not None:
+        # Account campus is a default for new schedules, not evidence of a
+        # hospital change. Date changes must retain the original source campus.
+        hospital = (state or {}).get("source_route", {}).get("hospital") or entry["route"]["hospital"]
+    return {"date": fields["date"], "hospital": hospital, "block_sync_id": ""}
+
+
 def automatic_proposal(book, row, states):
     fields = row["fields"]
     proposal = {"id": row["id"], "fields": fields, "source_records": [s["record_id"] for s in row["sources"]]}
@@ -192,6 +203,8 @@ def automatic_proposal(book, row, states):
         return None, None, [pending(row, reason, proposal)]
     state = source_state(row, old)
     if entry is None:
+        if fields.get("hospital") not in HOSPITALS:
+            return None, None, [pending(row, "帳號院區未對應高榮或聯醫，請手動選擇院區。", proposal)]
         proposal.update(new_event=True, selected_fields=list(fields),
                         destination={"date": fields["date"], "hospital": fields.get("hospital") or "高榮"})
         merged = three_way_fields({}, fields, state)
@@ -203,11 +216,11 @@ def automatic_proposal(book, row, states):
         return None, None, [pending(row, "眼別或術式變更需人工核對。", proposal)]
     merged = three_way_fields(entry["fields"], fields, state)
     state = merged["baseline"]
-    route = route_merge(entry["route"], {"date": fields["date"], "hospital": fields.get("hospital") or "高榮"}, state)
+    route = route_merge(entry["route"], source_route(fields, state, entry, hospital_default=row.get("hospital_default", False)), state)
     state = route["baseline"]
     # Record the observed source separately even when its route is not accepted.
     # A repeat of an old SOAP must never restore a manually moved row.
-    state.setdefault("source_route", {"date": fields["date"], "hospital": fields.get("hospital") or "高榮", "block_sync_id": ""})
+    state.setdefault("source_route", source_route(fields, state, entry, hospital_default=row.get("hospital_default", False)))
     proposal["selected_fields"] = list(merged["updates"])
     if route["action"] == "move":
         proposal["destination"] = route["destination"]
@@ -245,8 +258,8 @@ class SheetSyncCore:
             if old and old.get("mrn_hash") != field_hash("mrn", proposal["fields"]["mrn"]):
                 raise ValueError("排程識別碼綁定的病人不符。")
             if entry and not proposal.get("destination"):
-                route = route_merge(entry["route"], {"date": proposal["fields"]["date"],
-                                    "hospital": proposal["fields"].get("hospital") or "高榮"}, old)
+                route = route_merge(entry["route"], source_route(proposal["fields"], old, entry,
+                                    hospital_default=proposal.get("hospital_default", False)), old)
                 proposal["selected_fields"] = [k for k in proposal.get("selected_fields", proposal["fields"])
                                                 if k not in {"date", "hospital"}]
                 if route["action"] == "move":
@@ -280,8 +293,8 @@ class SheetSyncCore:
             state["route"] = item["route"]
             source_fields = proposal.get("source_fields", proposal["fields"])
             if proposal.get("source_records") and source_fields.get("date"):
-                state["source_route"] = {"date": source_fields["date"],
-                                         "hospital": source_fields.get("hospital") or "高榮", "block_sync_id": ""}
+                state["source_route"] = source_route(source_fields, previous, locate(book, uid),
+                    hospital_default=proposal.get("hospital_default", False))
             updates[uid] = state
         return planner.book, preview, updates
 
@@ -459,11 +472,12 @@ class SheetSyncCore:
                                        lambda p: self.analysis.store.save_document("sheet_previews", p))])
         return preview
 
-    def automatic(self, client, records, cohort_id, scan_state):
+    def automatic(self, client, records, cohort_id, scan_state, *, default_hospital=None):
         from .sheet_plan import FUPlanner
 
         result = {"updated": 0, "pending": [], "preview_ids": []}
-        rows = candidates(records, structured_only=True, strict=True)
+        hospital = account_hospital(self.analysis.app) if default_hospital is None else default_hospital
+        rows = candidates(records, structured_only=True, strict=True, default_hospital=hospital)
         # Remember an ambiguous intermediate version even if no patient fields
         # can be written. Otherwise single A → A+B → single B could reuse key 0.
         multiple = {s["record_id"] for row in rows for s in row["sources"] if s.get("block_count", 1) > 1}
@@ -505,7 +519,7 @@ class SheetSyncCore:
                     self.analysis.store.save_document("sheet_previews", preview)
                 if preview["status"] == "applied":
                     reclaim(client, readback, [(preview, OPD_KEY, [key], lambda p: self.analysis.store.save_document("sheet_previews", p))])
-        fu = followup_candidates(records, self.analysis.app.settings)
+        fu = followup_candidates(records, self.analysis.app.settings, default_hospital=hospital)
         seen_fu = set()
         for row in rows + fu:
             scan_state.check_cancel()

@@ -304,7 +304,7 @@ class FUDraftTests(unittest.TestCase):
 
     def test_duplicate_mrn_tag_is_pending_and_other_tags_are_independent(self):
         client = setup_book()
-        draft = {"id": "fu-1", "fields": {"mrn": "0000001", "name": "測試", "tag": "FU"}}
+        draft = {"id": "fu-1", "fields": {"mrn": "0000001", "name": "測試", "hospital": "高榮", "tag": "FU"}}
         first = FUPlanner(client.read(), client.key, [draft]).build()
         client.write(first["requests"])
         sheet = next(s for s in client.book["sheets"] if s["properties"]["title"] == "FU")

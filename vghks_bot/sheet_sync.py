@@ -14,6 +14,7 @@ from .clinical_identity import classify_opd_registration
 from .google_sheets import SheetError, SheetUnavailable
 from .scanner import ScanState, _checked_list
 from .settings import timestamp, today
+from .sheet_service import account_hospital
 from .storage import ACTIVE
 from .workflow import patient_value
 
@@ -72,6 +73,7 @@ class SheetSync:
                 raise ValueError("請先在更新刀表工具匯入服務帳戶與設定刀表。")
             key, now = uuid.uuid4().hex, timestamp()
             task = {"id": key, "kind": "review", "sheet_sync": True,
+                    "default_hospital": account_hospital(self.app),
                     "name": "當日 SOAP 更新刀表", "created_at": now,
                     "account_id": self.app.account_id, "members": [], "force": True,
                     "refresh": True, "mode": "registration", "cutoff": today().isoformat(),
@@ -118,6 +120,7 @@ class SheetSync:
         state.check_cancel()
         state.update(stage="sheet-sync", message="正在核對來源版本、人工修改與刀表位置…")
         cohort = {"id": uuid.uuid4().hex, "name": "當日 SOAP 刀表候選", "created_at": timestamp(),
+                  "default_hospital": task.get("default_hospital", "高榮"),
                   "members": [{**copy.deepcopy(m), "handoff_sources": [
                       {"record_id": r["id"], "version": r["version"], "record": r,
                        "review_task_id": task["id"]} for r in records if r["mrn"] == m["mrn"]]}
@@ -132,6 +135,7 @@ class SheetSync:
         if intent is None:
             config = self.app.analysis.google.public()
             row = {"id": key, "cohort_id": cohort["id"], "created_at": timestamp(),
+                   "default_hospital": cohort.get("default_hospital", account_hospital(self.app)),
                    "spreadsheet_id": config.get("spreadsheet_id", ""),
                    "source_versions": {r["id"]: digest([r.get("soap", ""), r.get("soap_structure") or {}]) for r in records}}
         else:
@@ -146,7 +150,7 @@ class SheetSync:
         self.db.save("sheet_sync_deferred", row)
         try:
             result = self.app.analysis.automatic_sheet_sync(records, cohort["id"], state,
-                expected_spreadsheet_id=row["spreadsheet_id"])
+                expected_spreadsheet_id=row["spreadsheet_id"], default_hospital=row.get("default_hospital", "高榮"))
         except (SheetError, ValueError) as exc:
             message = str(exc) + " 已保存本次 SOAP 與候選；恢復後可重新核對，尚未確認的批次不會重送。"
             row.update(status="offline" if isinstance(exc, SheetUnavailable) else "blocked", message=message)

@@ -16,7 +16,7 @@ $("#analysisPane").innerHTML = [
 document.body.insertAdjacentHTML("beforeend", [
   '<dialog id="cohortDialog" aria-labelledby="cohortDialogTitle"><form id="createCohortForm" method="post"><div class="dialog-heading"><h2 id="cohortDialogTitle">建立分析清單</h2><button type="button" data-analysis-close="cohortDialog" aria-label="關閉">×</button></div><div class="record-body"><fieldset id="cohortAccountFields" hidden disabled><legend class="sr-only">選擇抓取帳號</legend><label>抓取帳號<select id="manualAccount" name="account_id" required></select></label><button id="manualAccountSettings" type="button" class="quiet-button">設定登入帳號</button></fieldset><label>清單名稱<input id="newCohortName" name="name" required maxlength="100"></label><p id="newCohortInfo" class="small muted"></p><p id="cohortError" class="form-error" role="alert" hidden></p><div class="dialog-actions"><button type="submit" class="primary">保存清單並選擇模組</button></div></div></form></dialog>',
   '<dialog id="comparisonDialog" class="wide-dialog" aria-labelledby="comparisonTitle"><div class="dialog-heading"><h2 id="comparisonTitle">歷次檢查比較</h2><button type="button" data-analysis-close="comparisonDialog" aria-label="關閉">×</button></div><div id="comparisonContent" class="comparison-columns"></div></dialog>',
-  '<dialog id="googleDialog" aria-labelledby="googleTitle"><form id="googleForm" method="post"><div class="dialog-heading"><h2 id="googleTitle">刀表連線設定</h2><button type="button" data-analysis-close="googleDialog" aria-label="關閉">×</button></div><div class="record-body"><ol class="google-setup-steps"><li>在 Google Cloud 啟用 Sheets API，建立服務帳戶及 JSON 金鑰。<a href="https://developers.google.com/identity/protocols/oauth2/service-account#creatinganaccount" target="_blank" rel="noopener">設定說明 ↗</a></li><li>將刀表共用給金鑰中的 client_email，權限選「編輯者」。</li><li>匯入金鑰、儲存並測試讀取；之後在刀表差異預覽按「套用更新」。</li></ol><label>Google Sheets 網址或代碼<input id="googleSheetId" name="spreadsheet_id" required></label><label>服務帳戶 JSON 金鑰<input id="googleKeyFile" name="key_file" type="file" accept=".json,application/json"></label><p id="googleStatus" class="small muted"></p><p class="small muted">金鑰隨此帳號資料庫保存，換電腦不需重新匯入。</p><p id="googleConnectionResult" role="status" class="small"></p><div class="dialog-actions"><button id="removeGoogleKey" type="button" class="danger">移除本機金鑰</button><button type="submit">儲存連線設定</button><button id="testGoogleConnection" type="button" class="primary">儲存並測試讀取</button></div></div></form></dialog>',
+  '<dialog id="googleDialog" aria-labelledby="googleTitle"><form id="googleForm" method="post"><div class="dialog-heading"><h2 id="googleTitle">刀表連線設定</h2><button type="button" data-analysis-close="googleDialog" aria-label="關閉">×</button></div><div class="record-body"><ol class="google-setup-steps"><li>在 Google Cloud 啟用 Sheets API，建立服務帳戶及 JSON 金鑰。<a href="https://developers.google.com/identity/protocols/oauth2/service-account#creatinganaccount" target="_blank" rel="noopener">設定說明 ↗</a></li><li>將刀表共用給金鑰中的 client_email，權限選「編輯者」。</li><li>匯入金鑰、儲存並測試讀取；之後在刀表差異預覽按「套用更新」。</li></ol><div id="googleConnectionCopy"></div><label>Google Sheets 網址或代碼<input id="googleSheetId" name="spreadsheet_id" required></label><label>服務帳戶 JSON 金鑰<input id="googleKeyFile" name="key_file" type="file" accept=".json,application/json"></label><p id="googleStatus" class="small muted"></p><p class="small muted">金鑰隨此帳號資料庫保存，換電腦不需重新匯入。</p><p id="googleConnectionResult" role="status" class="small"></p><div class="dialog-actions"><button id="removeGoogleKey" type="button" class="danger">移除本機金鑰</button><button type="submit">儲存連線設定</button><button id="testGoogleConnection" type="button" class="primary">儲存並測試讀取</button></div></div></form></dialog>',
   '<dialog id="sheetHistoryDialog" class="wide-dialog" aria-labelledby="sheetHistoryTitle"><div class="dialog-heading"><h2 id="sheetHistoryTitle">刀表更新紀錄</h2><button type="button" data-analysis-close="sheetHistoryDialog" aria-label="關閉">×</button></div><div id="sheetHistoryContent" class="record-body"></div></dialog>',
   '<dialog id="rawAnalysisDialog" class="wide-dialog" aria-labelledby="rawAnalysisTitle"><div class="dialog-heading"><h2 id="rawAnalysisTitle">原始資料與版本</h2><button type="button" data-analysis-close="rawAnalysisDialog" aria-label="關閉">×</button></div><div id="rawAnalysisContent" class="record-body"></div></dialog>'
 ].join(""));
@@ -362,12 +362,14 @@ function fuCard(row,labels) {
   selected.type="checkbox";selected.checked=true;
   selected.addEventListener("change",()=>$("#sheetPreview").replaceChildren());
   selectLabel.append(selected,el("span","FU 追蹤 · "+(row.fields.name||row.fields.mrn)+" · "+row.fields.mrn));card.append(selectLabel);
-  card.append(el("p","追蹤清單草稿；其餘資料可於 FU 分頁填寫。","small muted"));
+  card.append(el("p","院區預設採用此帳號設定，可在預覽前修改；既有 FU 保留原內容。其餘資料可於 FU 分頁填寫。","small muted"));
   if(row.source_stale||row.stale)card.append(el("p","來源 SOAP 已更新或刪除；請重新檢閱並轉送目前版本。","preview-conflict"));
   const grid=el("div",undefined,"surgery-edit-grid");
   for(const key of ["mrn","name","hospital","tag"]){
-    const label=el("label",labels[key]||key),input=el("input");input.type="text";input.readOnly=true;
-    input.value=row.fields[key]||"";input.className="muted-input";input.setAttribute("aria-label",(labels[key]||key)+" · "+row.fields.mrn);
+    const label=el("label",labels[key]||key),input=el(key==="hospital"?"select":"input");
+    if(key==="hospital"){input.append(...["","高榮","聯醫"].map(value=>new Option(value||"請選擇院區",value)));input.addEventListener("change",()=>$("#sheetPreview").replaceChildren());}
+    else{input.type="text";input.readOnly=true;input.className="muted-input";}
+    input.value=row.fields[key]||"";input.setAttribute("aria-label",(labels[key]||key)+" · "+row.fields.mrn);
     label.append(input);grid.append(label);inputs[key]=input;
   }
   const sources=el("details");sources.append(el("summary","SOAP 來源 · "+row.sources.length+" 次紀錄"));
@@ -386,7 +388,7 @@ function surgeryDestination(row,inputs,invalidatePreview) {
   select.setAttribute("aria-label","目的刀表區塊 · "+row.fields.mrn);
   const status=el("p",undefined,"small muted");status.setAttribute("role","status");status.setAttribute("aria-live","polite");
   let blocks=null,loading=false,preferred=row.destination?.block_sync_id||"";
-  const matching=()=>blocks?.filter(block=>block.date===inputs.date.value&&block.hospital===(inputs.hospital?.value.trim()||"高榮"))||[];
+  const matching=()=>blocks?.filter(block=>block.date===inputs.date.value&&block.hospital===(inputs.hospital?.value.trim()||""))||[];
   const caption=block=>{
     const found=/^(\d{6})!(\d+)$/.exec(block.ref||"");
     const reference=found?found[1]+" 第 "+found[2]+" 列":block.ref||"";
@@ -420,10 +422,11 @@ function surgeryDestination(row,inputs,invalidatePreview) {
     el("p","勾選後，明確以此卡片填寫的刀日與醫院安排目的地；未勾選時會保護刀表已人工調整的位置。","small muted"),control);
   refresh();
   return {element,enabled,select,read,refresh,proposal(fields){
+    if(!["高榮","聯醫"].includes(fields.hospital?.trim()))throw new Error("請選擇目的院區：高榮或聯醫。");
     if(blocks===null)throw new Error("請先讀取目的區塊，核對刀日與醫院。");
     const options=matching(),chosen=options.find(block=>block.block_sync_id===select.value);
     if(options.length>1&&!chosen){select.reportValidity();throw new Error("同一刀日與醫院有多個區塊，請選擇目的刀表區塊。");}
-    return {date:fields.date,hospital:fields.hospital?.trim()||"高榮",block_sync_id:chosen?.block_sync_id||""};
+    return {date:fields.date,hospital:fields.hospital.trim(),block_sync_id:chosen?.block_sync_id||""};
   }};
 }
 function surgeryCard(row,labels) {
@@ -432,6 +435,7 @@ function surgeryCard(row,labels) {
   const invalidatePreview=()=>$("#sheetPreview").replaceChildren();
   selected.addEventListener("change",invalidatePreview);
   selectLabel.append(selected,el("span",(row.fields.name||row.fields.mrn)+" · "+row.fields.mrn));card.append(selectLabel);
+  if(row.hospital_default)card.append(el("p","新增院區預設採用此帳號設定，可手動修改。既有排程要改院區，請勾選下方「套用目的地／改期」。","small muted"));
   if(row.source_type==="manual"||row.manual)card.append(el("p","手動刀表草稿：請核對並填妥必要欄位，再產生差異預覽。","small muted"));
   if(row.source_stale||row.stale)card.append(el("p","來源 SOAP 已更新或刪除；請重新檢閱並轉送目前版本。","preview-conflict"));
   const grid=el("div",undefined,"surgery-edit-grid"), inputs={}, checks={};
@@ -442,13 +446,13 @@ function surgeryCard(row,labels) {
     check.addEventListener("change",invalidatePreview);
     line.append(check,el("span",label));wrapper.append(line);
     let input;
-    if(key==="side"||key==="ga") {input=el("select");input.append(...(key==="side"?["","OD","OS","OU"]:["","GA"]).map(v=>new Option(v||"未填",v)));}
+    if(["side","ga","hospital"].includes(key)) {input=el("select");input.append(...(key==="side"?["","OD","OS","OU"]:key==="hospital"?["","高榮","聯醫"]:["","GA"]).map(v=>new Option(v||"未填",v)));}
     else {input=el("input");input.type=key==="date"?"date":"text";input.maxLength=4000;}
     input.value=row.fields[key]||"";input.dataset.field=key;
     input.setAttribute("aria-label",label+" · "+row.fields.mrn);
     if(key==="mrn"){input.readOnly=true;input.className="muted-input";}
     input.addEventListener("input",()=>{checks[key].checked=true;$("#sheetPreview").replaceChildren();});
-    if(key==="side"||key==="ga"){
+    if(["side","ga","hospital"].includes(key)){
       const field=el("div"),valueLabel=el("label",label);
       line.setAttribute("aria-label","更新 "+label);field.append(line);valueLabel.append(input);field.append(valueLabel);
       grid.append(field);Choices.enhance(input);
@@ -634,7 +638,11 @@ async function showGoogleSettings() {
   const value=await ap("google");$("#googleSheetId").value=value.spreadsheet_id;
   $("#googleStatus").textContent=googleCredentialStatus(value);
   $("#googleKeyFile").value="";$("#googleConnectionResult").textContent="";$("#googleDialog").showModal();
+  await connectionPicker.load();
 }
+const connectionPicker=window.SheetConnectionPicker.mount({container:$("#googleConnectionCopy"),call:ap,
+  context:()=>embeddedAccount+"/"+(config?.context||""),readOnly:()=>!!config?.read_only,perform:action,
+  onCopy:value=>{$("#googleSheetId").value=value.spreadsheet_id;$("#googleKeyFile").value="";$("#googleStatus").textContent=googleCredentialStatus(value);$("#googleConnectionResult").textContent="連線設定已帶入並保存。";$("#sheetPreview").replaceChildren();}});
 function googleCredentialStatus(value) {
   return value.configured?"已保存可攜式金鑰 · "+value.email:"尚未匯入服務帳戶金鑰";
 }
