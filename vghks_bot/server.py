@@ -114,6 +114,7 @@ class Handler(BaseHTTPRequestHandler):
             "/workspace.js": ("workspace.js", "text/javascript; charset=utf-8"),
             "/dialog-dismiss.js": ("dialog-dismiss.js", "text/javascript; charset=utf-8"),
             "/analysis.js": ("analysis.js", "text/javascript; charset=utf-8"),
+            "/sheet-connection.js": ("sheet-connection.js", "text/javascript; charset=utf-8"),
             "/cataract.js": ("cataract.js", "text/javascript; charset=utf-8"),
             "/cataract-export.js": ("cataract-export.js", "text/javascript; charset=utf-8"),
             "/cataract-numeric.js": ("cataract-numeric.js", "text/javascript; charset=utf-8"),

@@ -26,7 +26,8 @@ from .scanner import Cancelled, ScanState, safe_failure
 from .settings import parse_mrns, timestamp, today
 from .sheet_journal import OPD_KEY, confirm, reclaim
 from .sheet_plan import fingerprint, verify
-from .sheet_service import SheetService
+from .sheet_schema import HOSPITALS
+from .sheet_service import SheetService, account_hospital
 from .storage import ACTIVE, StorageError
 from .surgery_candidates import FIELD_NAMES, candidates, enrich, followup_candidates
 
@@ -84,6 +85,7 @@ class Analysis:
             "delete": self.delete_data, "google": lambda _: self.google.public(),
             "google/save": self.google.save, "google/remove": lambda _: self.google.remove_key(),
             "google/test": self.test_google,
+            "google/sources": self.sheets.connection_sources, "google/copy": self.sheets.copy_connection,
             "surgery/candidates": self.surgery_candidates, "surgery/preview": self.preview,
             "surgery/locations": self.surgery_locations,
             "surgery/drafts": self.surgery_draft,
@@ -610,12 +612,13 @@ class Analysis:
 
     def surgery_candidates(self, values):
         cohort = self.store.document("analysis_cohorts", values.get("cohort_id"))
+        hospital = account_hospital(self.app)
         result = []
         for member in cohort["members"]:
             records = self.candidate_records(member)
-            rows = enrich(candidates(records, structured_only=bool(member.get("handoff_sources"))),
+            rows = enrich(candidates(records, structured_only=bool(member.get("handoff_sources")), default_hospital=hospital),
                           self.store.steps(member["mrn"]))
-            rows.extend(followup_candidates(records, self.app.settings))
+            rows.extend(followup_candidates(records, self.app.settings, default_hospital=hospital))
             versions = {r["id"]: digest([r.get("soap"), r.get("soap_structure")])
                         for r in records}
             for row in rows:
@@ -627,7 +630,7 @@ class Analysis:
                     source["version"] = versions.get(source["record_id"], "")
             result.extend(rows)
         result.extend(self.store.documents("surgery_drafts", cohort_id=cohort["id"]))
-        return {"candidates": result, "fields": FIELD_NAMES, "google": self.google.public()}
+        return {"candidates": result, "fields": FIELD_NAMES, "google": self.google.public(), "default_hospital": hospital}
 
     def surgery_locations(self, _):
         from .sheet_identity import MONTH_PATTERN
@@ -664,7 +667,7 @@ class Analysis:
     def surgery_draft(self, values):
         member = self.member(values)
         fields_ = {key: "" for key in FIELD_NAMES}
-        fields_.update(mrn=member["mrn"], name=member.get("name", ""), hospital="高榮")
+        fields_.update(mrn=member["mrn"], name=member.get("name", ""), hospital=account_hospital(self.app))
         row = {"id": uuid.uuid4().hex, "cohort_id": values["cohort_id"],
                "manual": True, "fields": fields_, "sources": [], "evidence": {},
                "differences": {}, "ambiguities": {}, "schedules": [],
@@ -687,11 +690,14 @@ class Analysis:
             if row.get("kind") == "fu":
                 updates = proposal.get("fields", {})
                 if (not isinstance(updates, dict) or set(updates) - set(row["fields"])
-                        or any(value != row["fields"][key] for key, value in updates.items())
+                        or any(value != row["fields"][key] for key, value in updates.items() if key != "hospital")
                         or proposal.get("clear_fields") or proposal.get("destination")
                         or proposal.get("target") or proposal.get("new_event")):
-                    raise ValueError("FU 只新增病歷號、姓名、高榮與 FU 分類；人工欄位請於刀表填寫。")
-                result.append({"id": row["id"], "kind": "fu", "fields": copy.deepcopy(row["fields"]),
+                    raise ValueError("FU 只新增病歷號、姓名、院區與 FU 分類；只有院區可在預覽前修改。")
+                fields_ = {**row["fields"], **updates}
+                if not isinstance(fields_["hospital"], str) or fields_["hospital"] not in HOSPITALS:
+                    raise ValueError("請選擇 FU 院區：高榮或聯醫。")
+                result.append({"id": row["id"], "kind": "fu", "fields": fields_,
                                "selected_fields": list(row["fields"]), "clear_fields": [],
                                "source_records": [s["record_id"] for s in row["sources"]],
                                "source_versions": [{"record_id": s["record_id"], "version": s["version"]}
@@ -711,6 +717,8 @@ class Analysis:
                 raise ValueError("手術欄位內容不正確或過長。")
             if fields_["mrn"] != row["fields"]["mrn"]:
                 raise ValueError("不可修改來源病歷號。")
+            if fields_["hospital"] not in HOSPITALS:
+                raise ValueError("請選擇手術院區：高榮或聯醫。")
             if not fields_["date"] or not fields_["procedure"] or fields_["side"] not in {"OD", "OS", "OU"}:
                 raise ValueError("請填妥刀日、側別與術式。")
             date.fromisoformat(fields_["date"])
@@ -719,6 +727,7 @@ class Analysis:
             if not isinstance(selected, list) or not isinstance(clear, list) or set(selected + clear) - set(FIELD_NAMES):
                 raise ValueError("勾選欄位不正確。")
             result.append({**proposal, "fields": fields_, "selected_fields": selected, "clear_fields": clear,
+                           "hospital_default": row.get("hospital_default", False),
                            "source_fields": copy.deepcopy(row["fields"]),
                            "source_records": [s["record_id"] for s in row["sources"]],
                            "source_versions": [{"record_id": s["record_id"], "version": s.get("version", "")}
@@ -850,7 +859,7 @@ class Analysis:
     def sheet_history(self, _):
         return {"previews": self.store.preview_summaries()}
 
-    def automatic_sheet_sync(self, records, cohort_id, state, *, expected_spreadsheet_id=None):
+    def automatic_sheet_sync(self, records, cohort_id, state, *, expected_spreadsheet_id=None, default_hospital=None):
         from .sheet_sync_core import SheetSyncCore
 
         def work(client):
@@ -859,6 +868,7 @@ class Analysis:
             # lock; a settings change can race the caller's early validation.
             if expected_spreadsheet_id is not None and client.key != expected_spreadsheet_id:
                 raise ValueError("刀表設定已改變，請切回原刀表再核對已保存候選。")
-            return SheetSyncCore(self).automatic(client, records, cohort_id, state)
+            options = {} if default_hospital is None else {"default_hospital": default_hospital}
+            return SheetSyncCore(self).automatic(client, records, cohort_id, state, **options)
 
         return self.sheet_operation(work)

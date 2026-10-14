@@ -17,7 +17,7 @@ FIELD_NAMES = {"date": "刀日", "hospital": "醫院", "mrn": "病歷號", "name
                "procedure": "術式", "iol": "IOL", "target": "IOL Target", "plan": "Plan"}
 
 
-def followup_candidates(records, settings):
+def followup_candidates(records, settings, *, default_hospital="高榮"):
     """Use the user's existing FU classification, with one permanent draft per MRN."""
     result = {}
     for record in sorted(records, key=lambda r: (r.get("date", ""), r.get("updated_at", ""))):
@@ -28,7 +28,7 @@ def followup_candidates(records, settings):
         mrn = norm(record["mrn"])
         key = str(int(mrn)) if mrn.isdigit() else mrn
         row = result.setdefault(key, {"id": digest(["fu", key])[:32], "kind": "fu",
-            "fields": {"mrn": record["mrn"], "name": record.get("name", ""), "hospital": "高榮", "tag": "FU"},
+            "fields": {"mrn": record["mrn"], "name": record.get("name", ""), "hospital": default_hospital, "tag": "FU"},
             "sources": [], "evidence": {}, "differences": {}, "ambiguities": {},
             "schedules": [], "date_conflict": False, "cancelled_hint": False})
         row["fields"]["name"] = record.get("name") or row["fields"]["name"]
@@ -46,7 +46,7 @@ def labelled(text, names):
                               if "?" not in m.group(1) and "{" not in m.group(1)))
 
 
-def candidates(records, *, structured_only=False, strict=False):
+def candidates(records, *, structured_only=False, strict=False, default_hospital="高榮"):
     result = {}
     for record in sorted(records, key=lambda r: (r.get("date", ""), r.get("updated_at", ""))):
         if structured_only:
@@ -62,13 +62,13 @@ def candidates(records, *, structured_only=False, strict=False):
             stop = re.search(r"\n\s*#|\n\s*\n|\n[SOAP]\s*:", tail)
             excerpt = tail[:stop.start()] if stop else tail
             parsed = parse_surgery(excerpt)
-            fields = {"date": parsed["date_iso"], "hospital": "高榮", "mrn": record["mrn"], "name": record.get("name", ""),
+            fields = {"date": parsed["date_iso"], "hospital": default_hospital, "mrn": record["mrn"], "name": record.get("name", ""),
                       "tel": parsed["tel"], "side": parsed["laterality"],
                       "procedure": PROCEDURES.get(parsed["procedure"], parsed["procedure"]),
                       "iol": parsed["iol"], "target": parsed["target"], "diagnosis": "",
                       "grade": "", "ga": "", "plan": ""}
             evidence = {k: {"record_id": record["id"], "date": record["date"], "text": excerpt}
-                        for k, v in fields.items() if v}
+                        for k, v in fields.items() if v and k != "hospital"}
             ambiguities = {}
             if strict:
                 header = unicodedata.normalize("NFKC", excerpt.splitlines()[0])
@@ -129,7 +129,7 @@ def candidates(records, *, structured_only=False, strict=False):
                         evidence[field] = previous["evidence"].get(field, {})
             prior_ambiguities = (previous or {}).get("ambiguities", {})
             ambiguities = {**prior_ambiguities, **ambiguities}
-            result[key] = {"id": key, "fields": fields, "sources": sources, "evidence": evidence,
+            result[key] = {"id": key, "fields": fields, "hospital_default": True, "sources": sources, "evidence": evidence,
                            "differences": differences, "ambiguities": ambiguities,
                            "schedules": [], "date_conflict": False,
                            "cancelled_hint": bool((previous or {}).get("cancelled_hint") or re.search(r"(?i)取消|cancel(?:led|ed)?", excerpt))}

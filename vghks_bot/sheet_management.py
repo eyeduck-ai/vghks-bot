@@ -361,7 +361,9 @@ class SheetManagement:
                            key=lambda plan: plan.get("created_at", ""), reverse=True)[:30]
             history = sorted((row for row in self.db.all(HISTORY_KIND) if row.get("spreadsheet_id") == key),
                              key=lambda row: row.get("at", ""), reverse=True)[:30]
-        return {**connection, "connection": connection, "months": months, "issues": issues,
+        from .sheet_service import account_hospital
+
+        return {**connection, "connection": connection, "default_hospital": account_hospital(self.app), "months": months, "issues": issues,
                 "plans": [self._public(plan) for plan in plans], "history": history}
 
     def status(self, values=None):

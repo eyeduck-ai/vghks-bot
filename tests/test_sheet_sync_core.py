@@ -352,7 +352,10 @@ class SchedulerTests(unittest.TestCase):
         self.assertEqual(proposals[0]["fields"], {"mrn": record["mrn"], "name": record["name"],
                                                 "hospital": "高榮", "tag": "FU"})
         self.assertTrue(proposals[0]["source_bindings"][0]["source_version"])
-        for updates in ({"hospital": "聯醫"}, {"date": "2026-10-12"}, {"tag": "manual"}):
+        override = self.work.analysis.proposals({"cohort_id": cohort["id"],
+            "proposals": [{"id": rows[0]["id"], "fields": {"hospital": "聯醫"}}]})
+        self.assertEqual(override[0]["fields"]["hospital"], "聯醫")
+        for updates in ({"date": "2026-10-12"}, {"tag": "manual"}):
             with self.assertRaisesRegex(ValueError, "FU 只新增"):
                 self.work.analysis.proposals({"cohort_id": cohort["id"],
                     "proposals": [{"id": rows[0]["id"], "fields": updates}]})

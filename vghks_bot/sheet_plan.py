@@ -594,6 +594,8 @@ class FUPlanner:
             mrn, tag = str(fields.get("mrn") or "").strip(), norm(fields.get("tag") or "FU")
             if not mrn or not patient_key(mrn):
                 raise ValueError("新增 FU 需有病歷號。")
+            if not isinstance(fields.get("hospital"), str) or fields["hospital"] not in HOSPITALS:
+                raise ValueError("新增 FU 需選擇高榮或聯醫。")
             key = patient_key(mrn), tag.casefold()
             if key in claimed:
                 continue  # Several qualifying encounters still mean one MRN+Tag draft.
@@ -633,7 +635,7 @@ class FUPlanner:
                         if k in {"userEnteredFormat", "dataValidation"}} for col in range(grid["columnCount"])]
                 changes = []
                 for field, label, value in (("mrn", "病歷號", mrn), ("name", "姓名", fields.get("name") or ""),
-                                           ("hospital", "醫院", fields.get("hospital") or "高榮"), ("tag", "Tag", tag)):
+                                           ("hospital", "醫院", fields["hospital"]), ("tag", "Tag", tag)):
                     if value:
                         row[cols[label]]["userEnteredValue"] = {"stringValue": str(value)}
                         changes.append({"field": field, "label": label, "before": "", "after": str(value), "column": cols[label]})

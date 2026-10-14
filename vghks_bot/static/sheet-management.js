@@ -6,7 +6,7 @@ window.SheetManagement=(()=>{
  const actions={create_month:"建立月份",create_day:"新增刀日",repair:"檢查／修復結構",archive:"封存過去月份"};
  const statuses={preview:"待套用預覽",draft:"已保存操作草稿",blocked:"需要處理問題",pending:"等待核對",uncertain:"結果尚未確認",failed:"更新未完成",rejected:"Google 已拒絕，請修正後重新預覽",applied:"已完成",applied_changed:"完成後內容有變動",stale:"需要重新預覽",copied:"已複製並核對封存",unchanged:"結構已符合，無需更新"};
  let state=null,owner="",generation=0,busy=false,visible=false,action="create_month",activeId="",freshId="",finalizeId="",editRevision=0,initialized=false;
- let plans=new Map(),verified=new Set(),archiveMonths=new Set();
+ let plans=new Map(),verified=new Set(),archiveMonths=new Set(),hospitalChosen=false;
  const readOnly=()=>!!root?.read_only;
  const live=()=>state?.configured===true&&state.online===true&&state.stale===false;
  const displayTime=value=>value?String(value).slice(0,19).replace("T"," "):"尚無快取";
@@ -81,6 +81,7 @@ window.SheetManagement=(()=>{
  }
  function remember(plan){if(!plan?.id)return;plans.set(plan.id,plan);activeId=plan.id;}
  function acceptStatus(value){
+  if(!hospitalChosen){q("sheetManagementHospital").value=value.default_hospital??"高榮";hospitalChosen=true;}
   state=value;for(const plan of value.plans||[])if(plan?.id)plans.set(plan.id,plan);
   renderConnection();renderMonths();renderPlans();
  }
@@ -186,15 +187,20 @@ window.SheetManagement=(()=>{
   if(value.count_basis)area.append(make("p",value.count_basis,"caption"));if(value.excluded_cancelled)area.append(make("p","已排除 "+value.excluded_cancelled+" 筆劃除排程。","caption"));if(value.issues?.length)area.append(issues(value.issues));if(!value.stale)message("IOL 名單已更新。");
  }
  function credentialStatus(value){return value.configured?"已保存服務帳戶："+(value.email||"已設定"):"尚未匯入服務帳戶金鑰。";}
- async function settings(){const value=await invoke("/analysis/google");q("sheetManagementGoogleSheet").value=value.spreadsheet_id||"";q("sheetManagementGoogleKey").value="";q("sheetManagementGoogleStatus").textContent=credentialStatus(value);q("sheetManagementGoogleResult").textContent="";q("sheetManagementGoogleDialog").showModal();}
+ const connectionPicker=window.SheetConnectionPicker.mount({container:q("sheetManagementGoogleCopy"),call:(path,values)=>invoke("/analysis/"+path,values),context:stamp,readOnly,perform:run,onCopy:connectionSaved});
+ function connectionSaved(value){
+  q("sheetManagementGoogleSheet").value=value.spreadsheet_id;q("sheetManagementGoogleKey").value="";q("sheetManagementGoogleStatus").textContent=credentialStatus(value);invalidate();
+  if(value.spreadsheet_id!==state?.spreadsheet_id){plans.clear();archiveMonths.clear();activeId="";q("sheetManagementReport").replaceChildren();q("sheetManagementReportMeta").textContent="";state={};}
+  state={...state,configured:value.configured,spreadsheet_id:value.spreadsheet_id,online:false,stale:true};renderConnection();renderMonths();renderPlans();q("sheetManagementGoogleResult").textContent="設定已保存。";
+ }
+ async function settings(){const value=await invoke("/analysis/google");q("sheetManagementGoogleSheet").value=value.spreadsheet_id||"";q("sheetManagementGoogleKey").value="";q("sheetManagementGoogleStatus").textContent=credentialStatus(value);q("sheetManagementGoogleResult").textContent="";q("sheetManagementGoogleDialog").showModal();await connectionPicker.load();}
  async function saveSettings(test=false){
   if(readOnly()||!q("sheetManagementGoogleForm").reportValidity())return;
   const revision=generation,key=stamp();
   const values={spreadsheet_id:q("sheetManagementGoogleSheet").value},file=q("sheetManagementGoogleKey").files?.[0];
   if(file){if(file.size>1024*1024)throw new Error("金鑰檔案超過 1 MB，請選擇服務帳戶 JSON 金鑰。");try{values.key=JSON.parse(await file.text());}catch{throw new Error("無法讀取 JSON 金鑰，請重新選擇檔案。");}assertContext(revision,key);}
   q("sheetManagementGoogleResult").textContent="正在保存設定…";
-  try{const value=await invoke("/analysis/google/save",values);q("sheetManagementGoogleKey").value="";q("sheetManagementGoogleStatus").textContent=credentialStatus(value);invalidate();if(value.spreadsheet_id!==state?.spreadsheet_id){plans.clear();archiveMonths.clear();activeId="";q("sheetManagementReport").replaceChildren();q("sheetManagementReportMeta").textContent="";state={};}state={...state,configured:value.configured,spreadsheet_id:value.spreadsheet_id,online:false,stale:true};renderConnection();renderMonths();renderPlans();
-   q("sheetManagementGoogleResult").textContent="設定已保存。";
+  try{const value=await invoke("/analysis/google/save",values);connectionSaved(value);
    if(test){const result=await invoke("/analysis/google/test");q("sheetManagementGoogleResult").textContent=[result.title,result.message].filter(Boolean).join(" · ");await refresh();}
   }catch(error){if(error.name!=="AbortError")q("sheetManagementGoogleResult").textContent=error.message;throw error;}
  }
@@ -209,12 +215,13 @@ window.SheetManagement=(()=>{
   q("sheetManagementPage").removeAttribute("aria-busy");q("sheetManagementReport").replaceChildren();q("sheetManagementReportMeta").textContent="";
   for(const id of ["sheetManagementMonth","sheetManagementDay","sheetManagementReportStart","sheetManagementReportEnd","sheetManagementReportHospital","sheetManagementGoogleKey","sheetManagementGoogleSheet"])q(id).value="";
   for(const id of ["sheetManagementGoogleStatus","sheetManagementGoogleResult","sheetManagementFinalizeText"])q(id).textContent="";
-  q("sheetManagementHospital").value="高榮";q("sheetManagementFinalizeConfirm").checked=false;
+  hospitalChosen=false;connectionPicker.reset();q("sheetManagementHospital").value="";q("sheetManagementFinalizeConfirm").checked=false;
   for(const id of ["sheetManagementGoogleDialog","sheetManagementFinalizeDialog"])if(q(id).open)q(id).close();
   setAction("create_month");message("");renderConnection();renderMonths();renderPlans();
  }
  for(const input of q("sheetManagementOperationForm").querySelectorAll('input[name="sheet_action"]'))input.addEventListener("change",()=>{setAction(input.value);edited();});
  for(const id of ["sheetManagementMonth","sheetManagementDay","sheetManagementHospital"])q(id).addEventListener("input",edited);
+ q("sheetManagementHospital").addEventListener("input",()=>{hospitalChosen=true;});
  q("sheetManagementOperationForm").addEventListener("submit",event=>{event.preventDefault();if(q("sheetManagementOperationForm").reportValidity())void run(()=>preview());});
  q("sheetManagementReportForm").addEventListener("submit",event=>{event.preventDefault();void run(report);});
  for(const id of ["sheetManagementReconnect","sheetManagementRefresh"])q(id).addEventListener("click",()=>run(refresh));

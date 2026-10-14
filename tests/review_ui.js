@@ -345,6 +345,7 @@ async function destinationTests(){
 }
 async function fuTests(){
  const s=surface(),c=s.context,editors=new Map(),calls=[],normalCards=[],opened=[];
+ c.Option=function(text,value){const option=s.node("option",text);option.value=value;return option;};
  c.surgeryEditors=editors;c.el=s.node;c.button=c.btn;c.action=c.act;c.config={read_only:false};
  c.currentCohort={id:"COHORT",members:[{mrn:"P1",name:"追蹤病人"},{mrn:"P2",name:"無候選病人"},{mrn:"P3",name:"手術病人"}]};
  const labels={mrn:"病歷號",name:"姓名",hospital:"醫院",tag:"Tag",date:"刀日",side:"眼別",procedure:"術式"};
@@ -365,9 +366,10 @@ async function fuTests(){
  await c.loadSurgery();assert.deepEqual(normalCards,["OP3"],"FU was rendered as a surgery candidate");
  const editor=editors.get("FU1");assert.ok(editor,"FU card did not join selected proposals");
  assert.deepEqual(Object.keys(editor.inputs),["mrn","name","hospital","tag"]);
- assert.ok(Object.values(editor.inputs).every(input=>input.readOnly),"FU fixed fields were editable");
- assert.equal(editor.card.querySelectorAll("select").length,0,"FU displayed route or surgery selection");
- assert.equal(editor.card.querySelectorAll("input").length,5,"FU displayed extra surgery fields");
+ assert.ok(["mrn","name","tag"].every(key=>editor.inputs[key].readOnly),"FU source fields were editable");
+ assert.equal(editor.inputs.hospital.tagName,"select");
+ assert.equal(editor.card.querySelectorAll("select").length,1,"FU displayed extra route or surgery selection");
+ assert.equal(editor.card.querySelectorAll("input").length,4,"FU displayed extra surgery fields");
  assert.ok(editor.card.all().some(node=>node.textContent==="SOAP 版本：VERSION1"),"FU source omitted its SOAP version");
  const proposal=c.collectProposals()[0];assert.deepEqual(Object.keys(proposal),["id","fields","selected_fields"]);
  assert.deepEqual(JSON.parse(JSON.stringify(proposal.fields)),fu.fields);

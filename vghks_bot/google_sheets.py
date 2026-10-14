@@ -5,7 +5,7 @@ import json
 import re
 import sqlite3
 import threading
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from urllib.parse import quote
 
 import requests
@@ -49,6 +49,35 @@ def spreadsheet_id(value):
 
 
 class GoogleSettings:
+    @staticmethod
+    def saved(directory, *, with_key=False):
+        """Read an existing account without initializing its workspace or DB."""
+        path = directory / "clinical.sqlite3"
+        if not path.is_file():
+            return None
+        try:
+            with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=30)) as db:
+                db.execute("BEGIN")
+                if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='bot_google_config'").fetchone():
+                    return None
+                row = db.execute("SELECT spreadsheet_id,email,secret FROM bot_google_config WHERE id=1").fetchone()
+                if row is None:
+                    return None
+                value = {"spreadsheet_id": row[0], "email": row[1], "configured": row[2] is not None}
+                if with_key and row[2] is not None:
+                    value["key"] = json.loads(unseal(db, row[2]))
+                return value
+        except sqlite3.Error as exc:
+            raise StorageError("無法讀取來源帳號的 Google 連線設定。") from exc
+
+    def copy_from(self, directory):
+        value = self.saved(directory, with_key=True)
+        if not value or not value.get("configured") or not value.get("spreadsheet_id"):
+            raise ValueError("來源帳號尚未設定刀表與服務帳戶金鑰。")
+        # save validates first, then reseals with the destination database's key
+        # in one transaction. No secret is returned to the browser.
+        return self.save({"spreadsheet_id": value["spreadsheet_id"], "key": value["key"]})
+
     def __init__(self, directory):
         self.directory = directory
         self.path = directory / "clinical.sqlite3"
