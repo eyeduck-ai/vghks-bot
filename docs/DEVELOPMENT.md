@@ -81,6 +81,8 @@ Python 虛擬環境的啟動腳本與部分命令列程式含建立時的絕對�
 
 只打包、不跑完整檢查的開發命令是 `python tools/build_exe.py`；它不是 Release 流程。CI 一律使用公開預設值，帳密留白。
 
+6.10.1 的 CI 將完整測試拆成四組並行，彙總核對覆蓋名單；PR 不重複打包，main 才建置雙 EXE，標籤沿用同一成功 main commit 的已驗證產物。本機完整流程不變，來源自測可單獨用 `--source-only` 執行。[CI 與發布細節](RELEASING.md)
+
 ## 清理與本機檔案
 
 ```powershell

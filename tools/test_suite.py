@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 import time
@@ -11,6 +12,31 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+
+
+def flatten(suite):
+    for item in suite:
+        if isinstance(item, unittest.TestSuite):
+            yield from flatten(item)
+        else:
+            yield item
+
+
+def shard_for(test_id, count):
+    # Keep each TestCase together so class setup/teardown runs exactly once.
+    class_id = test_id.rpartition(".")[0]
+    return int(hashlib.sha256(class_id.encode()).hexdigest()[:8], 16) % count
+
+
+def select_shard(suite, index, count):
+    if count < 1 or not 0 <= index < count:
+        raise ValueError("Shard index must be between zero and shard count minus one")
+    tests = sorted(flatten(suite), key=lambda test: test.id())
+    all_ids = [test.id() for test in tests]
+    if len(all_ids) != len(set(all_ids)):
+        raise ValueError("Duplicate test IDs in discovery")
+    selected = [test for test in tests if shard_for(test.id(), count) == index]
+    return unittest.TestSuite(selected), all_ids
 
 
 class Result(unittest.TextTestResult):
@@ -32,10 +58,12 @@ class Result(unittest.TextTestResult):
             self.last_progress = now
 
 
-def reports(result, directory):
+def reports(result, directory, all_ids, index=0, count=1):
     duration = round(time.monotonic() - result.started, 3)
     timing = {"ok": result.wasSuccessful(), "tests": result.testsRun, "duration_seconds": duration,
-              "slowest": sorted(result.timings.items(), key=lambda item: item[1], reverse=True)[:30]}
+              "slowest": sorted(result.timings.items(), key=lambda item: item[1], reverse=True)[:30],
+              "shard_index": index, "shard_count": count,
+              "all_test_ids": all_ids, "completed_test_ids": sorted(result.timings)}
     (directory / "test-timings.json").write_text(json.dumps(timing, indent=2), encoding="utf-8")
     suite = ET.Element("testsuite", name="synthetic", tests=str(result.testsRun), time=str(duration),
                        failures=str(len(result.failures) + len(result.unexpectedSuccesses)), errors=str(len(result.errors)),
@@ -60,12 +88,16 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--pattern", default="test*.py")
     parser.add_argument("--report-dir", type=Path, default=ROOT / ".build" / "ci")
+    parser.add_argument("--shard-index", type=int, default=0)
+    parser.add_argument("--shard-count", type=int, default=1)
     args = parser.parse_args()
     args.report_dir.mkdir(parents=True, exist_ok=True)
     suite = unittest.defaultTestLoader.discover(str(ROOT / "tests"), pattern=args.pattern)
+    suite, all_ids = select_shard(suite, args.shard_index, args.shard_count)
+    print(f"Shard {args.shard_index + 1}/{args.shard_count}: {suite.countTestCases()}/{len(all_ids)} tests", flush=True)
     with (args.report_dir / "tests.log").open("w", encoding="utf-8") as log:
         result = unittest.TextTestRunner(stream=log, verbosity=2, resultclass=Result).run(suite)
-    reports(result, args.report_dir)
+    reports(result, args.report_dir, all_ids, args.shard_index, args.shard_count)
     if not result.wasSuccessful():
         print((args.report_dir / "tests.log").read_text(encoding="utf-8")[-16000:])
         return 1

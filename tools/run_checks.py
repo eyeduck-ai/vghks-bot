@@ -35,6 +35,7 @@ def main():
     phase = parser.add_mutually_exclusive_group()
     phase.add_argument("--checks-only", action="store_true", help="Run fast source/lint/contract checks")
     phase.add_argument("--tests-only", action="store_true", help="Run synthetic tests and source EXE self-tests")
+    phase.add_argument("--source-only", action="store_true", help="Run both source EXE self-tests without rediscovering tests")
     phase.add_argument("--build-only", action="store_true", help="Build after separately required CI checks and tests")
     parser.add_argument("--gas-repo", type=Path, help="Verify the pinned GAS source, not just saved fixtures")
     args = parser.parse_args()
@@ -49,7 +50,7 @@ def main():
             if not path.is_file():
                 raise RuntimeError("Run --tests-only or download this run's test artifact before --build-only: " + filename)
             report_ok(path)
-    if not (args.tests_only or args.build_only):
+    if not (args.tests_only or args.source_only or args.build_only):
         run([python, "tools/verify_repository.py"])
         run([python, "-m", "pip", "check"])
         run([python, "-m", "ruff", "check", "."])
@@ -59,8 +60,9 @@ def main():
         if args.gas_repo:
             contract += ["--gas-repo", str(args.gas_repo)]
         run(contract)
-    if not (args.checks_only or args.build_only):
+    if not (args.checks_only or args.source_only or args.build_only):
         run([python, "tools/test_suite.py"])
+    if not (args.checks_only or args.build_only):
         source = REPORTS / "source-selftest.json"
         run([python, "run.py", "--self-test-report", str(source)])
         report_ok(source)

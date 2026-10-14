@@ -15,9 +15,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from vghks_bot.calendar_sync import arrival, full_day, headers  # noqa: E402
+from vghks_bot.calendar_sync import arrival, full_day, headers, scan  # noqa: E402
 from vghks_bot.sheet_identity import header_columns  # noqa: E402
-from vghks_bot.sheet_plan import columns, typed_day  # noqa: E402
+from vghks_bot.sheet_plan import columns, entries, typed_day  # noqa: E402
 from vghks_bot.sheet_schema import (  # noqa: E402
     DAY_MARKER,
     HOSPITALS,
@@ -101,6 +101,30 @@ def exported_contract(repository, script, function):
     return json.loads(result.stdout)
 
 
+def check_workflows(contract):
+    for phase in ("creation", "moved"):
+        book = {"sheets": [{"properties": {"title": item["name"], "sheetId": item["id"],
+                "gridProperties": {"columnCount": len(item["rows"][0]), "rowCount": 100}},
+                "rows": [[literal(value) for value in row] for row in item["rows"]], "merges": []}
+                for item in contract[phase]]}
+        monitoring = scan(book)
+        if monitoring["issues"]:
+            raise ValueError(f"GAS {phase} creates monitor diagnostics")
+        found = [item for item in monitoring["patients"] if item["uid"] == contract["patient_sync_id"]]
+        planned = [item for sheet in book["sheets"] for item in entries(sheet)
+                   if item["kind"] == "patient" and item["sync_id"] == contract["patient_sync_id"]]
+        if len(found) != 1 or len(planned) != 1:
+            raise ValueError(f"GAS {phase} patient not uniquely identified by both EXEs")
+        expected = (contract[f"{phase}_date"], contract[f"{phase}_hospital"])
+        if ((found[0]["date"], found[0]["hospital"]) != expected
+                or (planned[0]["fields"]["date"], planned[0]["fields"]["hospital"]) != expected
+                or found[0]["event_id"] != contract["patient_event_id"]
+                or arrival(found[0]) != ("08:30", "")
+                or found[0]["fields"]["人工備註"] != "人工欄位保留"):
+            raise ValueError(f"GAS {phase} field or permanent identity contract differs")
+    return 2
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--gas-repo", type=Path)
@@ -108,6 +132,7 @@ def main():
     revision = gas_revision()
     parsing = json.loads((FIXTURES / "schema_parsing.json").read_text(encoding="utf-8"))
     formatting = json.loads((FIXTURES / "sheet_contract.json").read_text(encoding="utf-8"))
+    workflows = json.loads((FIXTURES / "gas_workflows.json").read_text(encoding="utf-8"))
     if args.gas_repo:
         actual_revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=args.gas_repo,
                                          check=True, capture_output=True, text=True).stdout.strip()
@@ -115,9 +140,10 @@ def main():
             raise ValueError("GAS source revision differs from the pinned contract")
         actual_parsing = exported_contract(args.gas_repo, "parser_contract.js", "parserContract")
         actual_formatting = exported_contract(args.gas_repo, "sheet_contract.js", "sheetContract")
-        if parsing != actual_parsing or formatting != actual_formatting:
+        actual_workflows = exported_contract(args.gas_repo, "workflow_contract.js", "workflowContract")
+        if parsing != actual_parsing or formatting != actual_formatting or workflows != actual_workflows:
             raise ValueError("Saved fixtures differ from the supplied GAS source; review and regenerate them")
-    count = check_contract(parsing, formatting)
+    count = check_contract(parsing, formatting) + check_workflows(workflows)
     print(f"Shared Sheets contract passed: {count} synthetic cases (main, monitor, GAS {revision[:7]})")
 
 

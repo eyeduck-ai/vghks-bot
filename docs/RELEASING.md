@@ -1,31 +1,46 @@
 # CI 與版本發布
 
-Windows 主程式及獨立日曆監控 EXE 可先在本機執行 `./build.ps1` 一起建置與離線自測，再帶入內網驗收。GitHub Actions 會重新驗證推送的來源碼；EXE 及本機資料目錄不提交進 Git。
+本機 `./build.ps1` 可建置主程式與獨立日曆監控 EXE，完成離線自測後帶入內網驗收。GitHub Actions 驗證已提交來源；EXE、本機資料目錄與金鑰不提交進 Git。
 
-## 已設定的流程
+## 6.10.1 起的流程
 
-| 觸發 | 行為 |
-| --- | --- |
-| Push 到 `main`、Pull Request | 在 Windows runner 測試、打包、雙 EXE 自測；保存下載用 Artifact |
-| Actions 手動執行 | 同一套驗證與打包，不發布 Release |
-| Push `v*` 標籤 | 先完成全部檢查，再將兩個 EXE、ZIP 與 SHA-256 發布到該標籤的 GitHub Release |
+| 觸發 | 完整測試 | 雙 EXE 打包 | Release |
+| --- | --- | --- | --- |
+| Pull Request 到 main | 四組 Windows 測試並行、來源自測、固定 GAS 原始碼契約 | 不打包 | 不發布 |
+| Push 到 main | 相同必要檢查 | 測試成功後打包、自測、核對與保存 Artifact | 不發布 |
+| Actions 手動執行 windows.yml | 相同必要檢查 | 不打包 | 不發布 |
+| Push v* 標籤 | 核對同一 commit 已成功的 main run | 下載該 run 已驗證的產物 | 核對後發布 |
 
-工作流程：[windows.yml](../.github/workflows/windows.yml)。建置工作只有 `contents: read`；發布工作才取得 `contents: write`。使用內建 `GITHUB_TOKEN`，不需要額外 PAT、院內帳密、Google 金鑰或簽章憑證。
+[windows.yml](../.github/workflows/windows.yml) 將完整測試拆成四組。依 TestCase 的穩定雜湊分組，同一類別的 setup／teardown 留在同一工作；沒有以修改路徑或本機結果略過測試。各組輸出完整探索名單與已完成名單，`tools/ci_artifacts.py collect-tests` 核對四組一致、每項恰好執行一次且全部成功；任一組缺漏、失敗或探索結果不同，建置便停止。兩個原始碼自測只執行一次，與來源／Ruff／JS／固定 GAS 契約放在同一工作。
 
-程式依賴鎖定版本，官方 Actions 固定 commit。Dependabot 每月提出 Actions 更新。Artifact 保留 14 天；Release 附件是正式下載入口。
+GAS 版本固定於 `tests/fixtures/gas_contract.json`，checkout 後執行實際格式、解析及寫入匯出器，包含新月份、同日不同院區與跨月搬移；不自動追蹤 GAS 最新分支。
 
-6.9.0 起，原始碼／固定 GAS 契約與完整合成測試分開回報；雙 EXE 建置必須等待兩者成功，沒有略過原本的檢查。測試執行中回報進度，`tests-<SHA>` Artifact 提供 `tests.log`、`tests.xml` 及 `test-timings.json`。GAS checkout 的版本由 `tests/fixtures/gas_contract.json` 決定，會執行實際匯出器並核對 HEAD。
+main 建置下載同一 workflow run 的完整測試彙總與來源自測報告，再完成雙 EXE 自測、封裝檢查、ZIP 與 SHA-256。`BUILD_INFO.json` 將產物綁定 repository、main commit、Git tree、GAS revision、run ID／attempt、版本及檔案雜湊。
 
-建置工作下載同一 workflow run、相同 SHA 的測試 Artifact，取得兩個原始碼自測報告，再完成 EXE 自測及封裝；不依賴另一台 runner 的本機檔案。`--build-only` 會在建置前核對這些報告，缺少或失敗便停止。
+[release.yml](../.github/workflows/release.yml) 只接受同倉庫、同 commit、成功的 main push 工作流程。下載後核對上述來源資訊、三個檔案的 SHA-256、ZIP 內的 EXE 與六份驗證報告，再建立 Release；不採用 PR 或其他 commit 的產物，也不執行下載內容。若標籤推送較早，最多等待該 main 建置 20 分鐘。
 
-本機完整驗證仍使用 `python tools/run_checks.py --build --gas-repo .build/gas-contract`。需要分階段執行時可用 `--checks-only`、`--tests-only`，前兩者通過後才執行 `--build-only`；後者仍執行雙 EXE 自測與封裝驗證。
+最新 PR 更新會取消該 PR 的過時驗證；main 及標籤工作保留，讓每個已提交版本都有可追溯產物。四組測試改善等待時間，沒有減少完整回歸覆蓋；實際時間仍受 GitHub runner 排隊與效能影響。
+
+## 權限、報告與本機驗證
+
+驗證／建置只有 `contents: read`；發布取得 `contents: write` 與下載所需的 `actions: read`。使用內建 GITHUB_TOKEN，不需要額外 PAT、院內帳密、Google 金鑰或簽章憑證。依賴鎖定版本，官方 Actions 固定 commit，Dependabot 每月提出更新。
+
+Artifact 保留 14 天：`shard-<組別>-<SHA>` 含 tests.log、JUnit tests.xml 與耗時；`tests-<SHA>` 包含四組報告、完整覆蓋彙總及來源自測；`windows-<SHA>` 是可發布產物與 BUILD_INFO。Release 附件是長期正式下載入口。產物過期或缺失時，重新執行該 commit 原本的 main push run，再重跑標籤發布；不要拿其他 commit 的產物替代。
+
+本機完整驗證維持：
+
+```powershell
+.venv/Scripts/python.exe tools/run_checks.py --build --gas-repo .build/gas-contract
+```
+
+分階段可用 `--checks-only`、`--tests-only`，都通過後才執行 `--build-only`。CI 另使用 `--source-only` 跑兩個來源自測，及 `tools/test_suite.py --shard-index 0 --shard-count 4 --report-dir .build/ci/shard-0` 跑單一分組；單組結果不能代表完整驗證。
 
 ## 發布新版本
 
-1. 同步更新 `pyproject.toml` 的版本及 `vghks_bot/__init__.py` 的 `__version__`。
-2. 在 `CHANGELOG.md` 最上方加入 `## <版本>` 與該次變更。
-3. 在本機完成 `tools/run_checks.py --build` 的雙 EXE 自測及必要的院內驗收，再提交並推送 `main`，確認該 commit 的 Windows build 成功；只推送 `main` 會得到測試 Artifact，不會建立 Release。
-4. 需要正式 Release 時，才在已驗證的同一 commit 建立版本標籤並推送：
+1. 同步更新 pyproject.toml 與 `vghks_bot/__init__.py` 的版本，並在 CHANGELOG.md 最上方加入該版本變更。
+2. 完成本機完整驗證與必要院內驗收，提交 PR、通過完整驗證後合併至 main。
+3. 確認合併後同一 commit 的 Windows verification and build 成功。
+4. 在該 commit 建立並推送版本標籤：
 
 ```powershell
 $releaseVersion = (.venv/Scripts/python.exe -c "from vghks_bot import __version__; print(__version__)").Trim()
@@ -33,19 +48,15 @@ git tag -a "v$releaseVersion" -m "VGHKS-bot v$releaseVersion"
 git push origin "v$releaseVersion"
 ```
 
-標籤必須等於兩處程式版本；版本不符會停止。發布只接受已存在標籤，檢查失敗不會建立 Release。既有 Release 不會被此流程覆蓋；修正版本應新增標籤。
+只推送 main 會產生 Artifact；推送標籤才發布 Release。標籤須等於程式版本並指向已驗證 main commit；不符或檢查失敗就停止。既有 Release 不會覆蓋，修正版本使用新標籤。
 
 ## 下載與驗證
 
-- 主程式使用 `VGHKS-bot.exe`；需要日曆同步時另外下載並執行 `VGHKS-calendar-monitor.exe`。
-- ZIP 包含兩個 EXE、操作文件、第三方聲明及兩個程式的原始碼／EXE 自測與封裝核對報告。
-- 使用 PowerShell `Get-FileHash .\VGHKS-bot.exe -Algorithm SHA256`，比對 `SHA256SUMS.txt`；監控 EXE 及 ZIP 亦各有校驗值。
-- 更新前結束兩個程式，再更換 EXE，保留 `VGHKS-bot-data` 與 `VGHKS-calendar-data`；資料格式不相容時依[操作說明](USER_GUIDE.md)處理。
+- 主程式下載 VGHKS-bot.exe；需要日曆同步時另外使用 VGHKS-calendar-monitor.exe。
+- ZIP 包含雙 EXE、操作文件、第三方聲明及原始碼／凍結程式自測與封裝報告。
+- `Get-FileHash .\VGHKS-bot.exe -Algorithm SHA256` 比對 SHA256SUMS.txt；監控 EXE 與 ZIP 也各有校驗值。
+- 更新前結束兩個程式，再更換 EXE，保留 VGHKS-bot-data 與 VGHKS-calendar-data。
 
-目前未設定 Windows 程式碼簽章；CI 驗證與 SHA-256 不代表已簽章。若日後加入簽章，應在簽署完成後才重新計算 checksum。
+目前未設定 Windows 程式碼簽章；CI 與 SHA-256 不代表已簽章。雲端 runner 不在院內網路，只使用合成資料；真實院方回應、權限與內嵌刀房仍需院內驗收。
 
-## CI 可驗證的範圍
-
-雲端 runner 不在院內網路，因此只使用合成資料，測試核心行為、資料庫、API、Google 差異邏輯與凍結後執行。真實回應格式、權限與刀房內嵌限制仍需院內驗收。不要將病歷資料或可攜式資料庫上傳為 CI Artifact。
-
-官方參考：[Workflow permissions](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#permissions)、[Release CLI](https://cli.github.com/manual/gh_release_create)。
+官方參考：[Matrix jobs](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/run-job-variations)、[Workflow artifacts](https://docs.github.com/en/actions/concepts/workflows-and-actions/workflow-artifacts)、[Release CLI](https://cli.github.com/manual/gh_release_create)。

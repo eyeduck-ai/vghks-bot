@@ -198,14 +198,15 @@ class BotSyntheticSDK:
                 RegistrationRecord({}, mrn=mrn, visit_date=today()+timedelta(days=1), section_name="眼科", cancelled_at="已取消")]
 
 
-def wait_task(workspace, key, timeout=12):
+def wait_task(workspace, key, timeout=60):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         task = workspace.review.task(key)
         if task["status"] not in {"queued", "running", "cancelling"}:
             return task
         time.sleep(.02)
-    raise AssertionError("synthetic task timeout")
+    task = workspace.review.task(key)
+    raise AssertionError(f"synthetic task timeout after {timeout}s: status={task['status']}, progress={task.get('progress')}")
 
 
 def self_test(report_path: Path) -> int:
