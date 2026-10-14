@@ -27,6 +27,10 @@ const all=()=>container.all(),summary=()=>all().find(element=>element.role==="st
 const headings=()=>all().filter(element=>element.tagName==="h3").map(element=>element.textContent);
 assert.deepEqual(headings(),["今天及未來（2）","過去（3）","日期不明（1）"]);
 assert.match(summary(),/顯示 6 \/ 6 筆.*未到診 1 筆.*未知 5 筆/);
+const originalFields=all().find(element=>element.tagName==="details");
+assert.equal(originalFields.children.length,1,"closed original fields eagerly built a large table");
+originalFields.open=true;originalFields.events.toggle();originalFields.events.toggle();
+assert.equal(originalFields.children.length,2,"reopening original fields duplicated its table");
 for(const value of ["預計 09:30","70 眼科","診間 02","001","115/10/01 08:30","MWEB","來源取消狀態","115/10/08 09:00","STAFF_SYN","新增欄位","保留值","（空白）",'<img src=x onerror="alert(1)">'])assert.ok(container.textContent.includes(value),value);
 assert.equal(all().filter(element=>element.tagName==="img").length,0,"source text became executable markup");
 assert.ok(all().filter(element=>element.tagName==="summary").length>=2);

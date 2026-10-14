@@ -20,7 +20,10 @@ window.RegistrationHistoryUI=(()=>{
   const fields=Object.entries(row.columns||{});
   if(fields.length){
    const details=node("details",undefined,"registration-original");
-   details.append(node("summary","原始欄位（"+fields.length+"）"),table(["欄位","原值"],fields.map(([key,value])=>[key,text(value)||"（空白）"])));
+   details.append(node("summary","原始欄位（"+fields.length+"）"));
+   let loaded=false;details.addEventListener("toggle",()=>{
+    if(details.open&&!loaded){details.append(table(["欄位","原值"],fields.map(([key,value])=>[key,text(value)||"（空白）"])));loaded=true;}
+   });
    box.append(details);
   }
   return box;
