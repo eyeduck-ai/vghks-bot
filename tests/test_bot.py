@@ -353,7 +353,7 @@ class BotTests(unittest.TestCase):
                         self.assertEqual(headers["X-Content-Type-Options"], "nosniff")
                         for suffix in ("", "?v=old-version"):
                             self.assertEqual(request(path + suffix)[1]["Cache-Control"], "no-store")
-                for path in ("/", "/bot.js", "/review-history.js", "/review-handoff.js", "/sheet-sync-ui.js", "/sheet-management.js", "/sheet-management.css", "/tools", "/favicon.svg",
+                for path in ("/", "/bot.js", "/review-history.js", "/registration-history.js", "/review-handoff.js", "/sheet-sync-ui.js", "/sheet-management.js", "/sheet-management.css", "/tools", "/favicon.svg",
                              "/api/bootstrap", f"/api/accounts/{self.key}/workbench",
                              f"/api/accounts/{self.key}/analysis/asset?id={asset['digest']}"):
                     suffix = "&" if "?" in path else "?"

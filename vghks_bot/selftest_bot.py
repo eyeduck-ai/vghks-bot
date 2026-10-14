@@ -411,6 +411,11 @@ def self_test(report_path: Path) -> int:
             check_launcher(Path(directory))
         result["checks"].append("single-instance UI reconnect, current launch token after database switching, discovery cleanup and restart")
         from .selftest_binary import check_sdk_binary
+        from .selftest_registrations import check_sdk_registrations
+
+        with tempfile.TemporaryDirectory() as directory:
+            check_sdk_registrations(Path(directory))
+        result["checks"].append("SDK registration icons, raw account codes, source columns and versioned offline cache")
 
         with tempfile.TemporaryDirectory() as directory:
             check_sdk_binary(Path(directory))

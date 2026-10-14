@@ -68,6 +68,16 @@ class DemographicsSDK(FollowUpSDK):
         return replace(super().demographics(mrn), birthday="047/01/01" if self.card == "TEST" else "0700101")
 
 
+class RegistrationsSDK(DemographicsSDK):
+    def registrations(self, mrn):
+        from vghks_sdk.parsing.webmaas import parse_registration_records
+
+        from vghks_bot.selftest_registrations import registration_page
+
+        self.calls.append((self.card, "registrations", mrn))
+        return parse_registration_records(registration_page(mrn), mrn)
+
+
 class SessionSDK(DemographicsSDK):
     expired = set()
 
@@ -150,9 +160,10 @@ def main():
     parser.add_argument("--ophthalmic", action="store_true", help="Seed signed refraction and dated PDF comparison samples")
     parser.add_argument("--demographics", action="store_true", help="Synthetic ROC birthdays and a numeric manual MRN")
     parser.add_argument("--lookup-failures", action="store_true", help="Synthetic expired, missing, forbidden and rejected patient queries")
+    parser.add_argument("--registrations", action="store_true", help="Complete registration fields, explicit and unknown attendance")
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="vghks-bot-synthetic-") as directory:
-        sdk = SessionSDK if args.lookup_failures else DemographicsSDK if args.demographics else FollowUpSDK if args.followup else BotSyntheticSDK
+        sdk = SessionSDK if args.lookup_failures else RegistrationsSDK if args.registrations else DemographicsSDK if args.demographics else FollowUpSDK if args.followup else BotSyntheticSDK
         manager = DatabaseManager(Path(directory), Settings(), sdk)
         app = manager.current
         try:
