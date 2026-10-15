@@ -1,6 +1,7 @@
 """Check the source-only publication boundary before building a public release."""
 from __future__ import annotations
 
+import importlib.metadata
 import json
 import os
 import re
@@ -30,6 +31,23 @@ def check_metadata(root=ROOT, tag=""):
     if defaults.get("username") or defaults.get("password"):
         raise ValueError("Public builds must have blank login defaults")
     return project["version"]
+
+
+def check_sdk_installation(root=ROOT):
+    """A matching release version does not prove the pinned Git revision is installed."""
+    project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    requirement = next(v for v in project["dependencies"] if v.startswith("vghks-sdk @ "))
+    url, _, revision = requirement.removeprefix("vghks-sdk @ git+").rpartition("@")
+    try:
+        provenance = json.loads(importlib.metadata.distribution("vghks-sdk").read_text("direct_url.json") or "{}")
+    except (importlib.metadata.PackageNotFoundError, ValueError) as exc:
+        raise ValueError("Cannot verify installed vghks-sdk; reinstall the pinned SDK") from exc
+    vcs = provenance.get("vcs_info", {}) if isinstance(provenance, dict) else {}
+    if (not isinstance(provenance, dict) or not isinstance(vcs, dict) or provenance.get("url") != url
+            or vcs.get("vcs") != "git" or vcs.get("commit_id") != revision):
+        raise ValueError("Installed vghks-sdk differs from the pinned commit; run "
+                         f'python -m pip install --no-deps --force-reinstall "{requirement}"')
+    return revision
 
 
 def check_paths(paths):
@@ -70,9 +88,10 @@ def check_contents(root, paths):
 
 def main():
     version = check_metadata(tag=os.environ.get("RELEASE_TAG", ""))
+    sdk_commit = check_sdk_installation()
     paths = source_paths()
     check_contents(ROOT, paths)
-    print(f"Source boundary OK: {len(paths)} files, version {version}")
+    print(f"Source boundary OK: {len(paths)} files, version {version}, SDK commit {sdk_commit}")
 
 
 if __name__ == "__main__":

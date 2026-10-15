@@ -6,10 +6,14 @@ from urllib.parse import parse_qs, urlsplit
 from bs4 import BeautifulSoup
 from vghks_sdk import ParseError
 from vghks_sdk.core.errors import error_info
+from vghks_sdk.core.operations import operation_spec
 from vghks_sdk.identifiers import normalize_mrn
 
 from .diagnostics import failure_details
 from .settings import timestamp
+
+_PATIENT_IDENTITY = operation_spec("prq.patient_identity")
+_VISIT_CASES = operation_spec("prq.visit_cases")
 
 
 def doctor_identity(value):
@@ -37,7 +41,6 @@ def verified_visit_cases(sdk, mrn, diagnostic=None):
     Capture only identifiers and parsing stages, never HTML, cookies or URLs
     carrying PRQ authentication parameters. The pinned SDK supplies the parsers.
     """
-    from vghks_sdk.adapters.prq import _PATIENT_IDENTITY, _VISIT_CASES
     from vghks_sdk.parsing.prq import (
         _visit_links,
         parse_patient_identity,

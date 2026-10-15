@@ -108,4 +108,13 @@ Python 虛擬環境的啟動腳本與部分命令列程式含建立時的絕對�
 
 ## 更新 SDK
 
-核對上游版本與變更後，同時修改 `pyproject.toml` 和 `requirements-build.lock.txt` 的完整 commit。重新安裝依賴、執行完整流程，並在院內確認真實回應。不要只改其中一處，也不要在 CI 自動追蹤 SDK 的 `main`。
+核對上游版本與變更後，同時修改 `pyproject.toml` 和 `requirements-build.lock.txt` 的完整 commit。`build.ps1` 會核對實際安裝來源；SDK 版本相同但 commit 不符時，只重新安裝 SDK。來源檢查與直接打包也會拒絕不符的 commit，EXE 授權聲明及封裝報告保留完整 commit。
+
+手動更新既有環境時，明確重新安裝 SDK，避免 pip 只按相同版本保留舊程式：
+
+```powershell
+$vghksSdkRequirement = Get-Content requirements-build.lock.txt | Where-Object { $_.StartsWith('vghks-sdk @ ') }
+.venv/Scripts/python.exe -m pip install --no-deps --force-reinstall $vghksSdkRequirement
+```
+
+執行完整檢查、雙 EXE 自測與封裝核對，並在院內確認真實回應。不要只改其中一處，也不要在 CI 自動追蹤 SDK 的 `main`。PRQ 相容處理使用 `core.operations.operation_spec`，不從已拆分的 Adapter 匯入私有操作常數；光照治療、病人身分及不可重送的恢復規則均需回歸。

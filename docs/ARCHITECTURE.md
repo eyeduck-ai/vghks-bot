@@ -1,6 +1,8 @@
 # 系統架構
 
-本文對齊 6.11.0，沿用本機 HTTP、每帳號 SQLite 與 SDK 閘道。SDK 固定為 0.23.5，完整 commit 同步列於專案及建置鎖定檔。
+本文對齊 6.11.1，沿用本機 HTTP、每帳號 SQLite 與 SDK 閘道。SDK 固定為 0.23.5／`67755b32404a118c8507f1d6b6f5c4ca2219f77d`，完整 commit 同步列於專案及建置鎖定檔。
+
+SDK 的 PRQ 與登入已拆為多個模組。平台的醫囑、就診與病人身分相容處理透過 `core.operations.operation_spec` 取得請求契約，仍沿用 `PrqAdapter`、共用 Runtime、操作鎖與 SDK 恢復流程。建置依安裝來源核對 commit，並將 commit 寫入 EXE 授權聲明與封裝報告；不只比較版本號。
 
 ## 掛號紀錄與到診證據
 

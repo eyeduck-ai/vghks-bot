@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vghks-bot"
-version = "6.11.0"
+version = "6.11.1"
 description = "Portable VGHKS outpatient, surgery, approval and earnings workspaces"
 requires-python = ">=3.11"
 dependencies = [
-  "vghks-sdk @ git+https://github.com/eyeduck-ai/vghks-sdk.git@e8373e42a532ea478f55c025b80e7eaada0c5775",
+  "vghks-sdk @ git+https://github.com/eyeduck-ai/vghks-sdk.git@67755b32404a118c8507f1d6b6f5c4ca2219f77d",
   "google-auth==2.58.0",
   "cryptography==50.0.1",
 ]

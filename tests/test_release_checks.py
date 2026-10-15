@@ -1,9 +1,17 @@
+import json
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import Mock, patch
 
-from tools.verify_repository import check_contents, check_metadata, check_paths, source_paths
+from tools.verify_repository import (
+    check_contents,
+    check_metadata,
+    check_paths,
+    check_sdk_installation,
+    source_paths,
+)
 
 
 class ReleaseBoundaryTests(unittest.TestCase):
@@ -22,6 +30,25 @@ class ReleaseBoundaryTests(unittest.TestCase):
         self.assertEqual(check_metadata(tag="v"+version), version)
         with self.assertRaises(ValueError):
             check_metadata(tag="v0.0.0")
+
+    def test_installed_sdk_matches_the_pinned_git_commit(self):
+        revision = check_sdk_installation()
+        self.assertEqual(len(revision), 40)
+
+    def test_same_sdk_version_cannot_hide_a_stale_commit_or_missing_provenance(self):
+        revision = check_sdk_installation()
+        valid = {"url": "https://github.com/eyeduck-ai/vghks-sdk.git",
+                 "vcs_info": {"vcs": "git", "commit_id": revision}}
+        values = [None, "invalid JSON", "[]", json.dumps({**valid, "vcs_info": []}),
+                  json.dumps({**valid, "url": "https://example.invalid/another-sdk.git"}),
+                  json.dumps({**valid, "vcs_info": {"vcs": "git", "commit_id": "0" * 40}})]
+        for value in values:
+            installed = Mock(version="0.23.5")
+            installed.read_text.return_value = value
+            with self.subTest(provenance=value), patch(
+                    "tools.verify_repository.importlib.metadata.distribution", return_value=installed):
+                with self.assertRaisesRegex(ValueError, "SDK|vghks-sdk"):
+                    check_sdk_installation()
 
     def test_unstaged_sources_are_checked_without_including_ignored_private_files(self):
         with tempfile.TemporaryDirectory() as directory:

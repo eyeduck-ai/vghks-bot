@@ -1,4 +1,4 @@
-"""Phototherapy order compatibility alongside SDK 0.23.3; no JavaScript is executed.
+"""Phototherapy order compatibility alongside the pinned SDK; no JavaScript is executed.
 
 PRQ's phototherapy button uses a literal ``filepath`` and a SECTORD PDF
 whose patient identifier lives in the filename. Keep the SDK's request,
@@ -10,20 +10,13 @@ import re
 
 from bs4 import BeautifulSoup
 from vghks_sdk import ConfigurationError, ParseError
-from vghks_sdk.adapters.prq import (
-    _CASE_ORDERS,
-    _CASE_ORDERS_PAGE,
-    _CASE_ORDERS_SELECT,
-    _ORDER_HISTORY,
-    _ORDER_HISTORY_PAGE,
-    _ORDER_HISTORY_SELECT,
-    PrqAdapter,
-)
+from vghks_sdk.adapters.prq import PrqAdapter
 from vghks_sdk.core.jsliteral import (
     evaluate_expression,
     evaluated_string_assignments,
     iter_active_constructor_calls,
 )
+from vghks_sdk.core.operations import operation_spec
 from vghks_sdk.models import ClinicalOrder, OrderDetailRef, OrderReportRef, PdfAttachmentRef
 from vghks_sdk.models._validation import _fully_unquote, _validate_navigation_ref
 from vghks_sdk.parsing.clinical import (
@@ -35,6 +28,13 @@ from vghks_sdk.parsing.clinical import (
 )
 from vghks_sdk.parsing.common import normalize_inline_text, strip_markup
 from vghks_sdk.services.orders import OrdersService
+
+_CASE_ORDERS = operation_spec("prq.case_orders")
+_CASE_ORDERS_PAGE = operation_spec("prq.case_orders_page")
+_CASE_ORDERS_SELECT = operation_spec("prq.case_orders_select")
+_ORDER_HISTORY = operation_spec("prq.order_history")
+_ORDER_HISTORY_PAGE = operation_spec("prq.order_history_page")
+_ORDER_HISTORY_SELECT = operation_spec("prq.order_history_select")
 
 _LIGHT_PDF = re.compile(
     r"^(?://|\\\\)hfs01_1A0(?:\.vghks\.gov\.tw)?[/\\]SECTORD[/\\]lightrep[/\\]"

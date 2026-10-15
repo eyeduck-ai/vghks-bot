@@ -12,13 +12,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from tools.verify_repository import check_sdk_installation  # noqa: E402
 from vghks_bot.settings import Settings  # noqa: E402
 
 
 def notices() -> Path:
+    sdk_commit = check_sdk_installation()
     directory = ROOT / ".build" / "licenses"
     directory.mkdir(parents=True, exist_ok=True)
-    parts = ["Third-party notices for VGHKS-bot\n"]
+    parts = ["Third-party notices for VGHKS-bot\n", f"vghks-sdk commit {sdk_commit}\n"]
     for name in ("vghks-sdk", "requests", "beautifulsoup4", "soupsieve", "truststore", "urllib3", "certifi", "charset-normalizer", "idna", "typing-extensions", "pyinstaller",
                  "google-auth", "cryptography", "cffi", "pycparser", "pyasn1", "pyasn1-modules"):
         package = importlib.metadata.distribution(name)

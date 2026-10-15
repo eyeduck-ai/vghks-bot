@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 from vghks_sdk import AuthenticationError, NotAuthenticatedError, assess_data
 from vghks_sdk.core.errors import SDKError, error_info
+from vghks_sdk.core.operations import operation_spec
 from vghks_sdk.identifiers import normalize_national_id
 from vghks_sdk.models import to_jsonable
 from vghks_sdk.parsing.prq import parse_patient_identity, require_patient_context
@@ -483,19 +484,20 @@ class AccountGateway:
         if callable(getattr(sdk.patients, "resolve_identity", None)):
             return sdk.patients.resolve_identity(identifier)
         runtime = sdk._runtime
-        from vghks_sdk.adapters.prq import _PATIENT_CONTEXT, _PATIENT_IDENTITY
+        patient_context = operation_spec("prq.patient_context")
+        patient_identity = operation_spec("prq.patient_identity")
 
         def operation():
             hid = runtime.auth.hid_for("prq")
             base = runtime.settings.prq_base_url.rstrip("/")
-            html = runtime.request_text(_PATIENT_CONTEXT, f"{base}/QueryPatientRecord.do",
+            html = runtime.request_text(patient_context, f"{base}/QueryPatientRecord.do",
                 params={"Use": "Case", "hid": hid},
                 data={"id": identifier, "queryID": identifier, "queryPtID": "", "type": "2"})
             require_patient_context(html)
-            header = runtime.request_text(_PATIENT_IDENTITY, f"{base}/Page/JSP/KS_Patient.jsp")
+            header = runtime.request_text(patient_identity, f"{base}/Page/JSP/KS_Patient.jsp")
             return parse_patient_identity(header, expected_national_id=identifier)
 
-        return runtime.execute(_PATIENT_CONTEXT, operation, operation_name="resolve_patient_identity")
+        return runtime.execute(patient_context, operation, operation_name="resolve_patient_identity")
 
 
 class ServiceProxy:
