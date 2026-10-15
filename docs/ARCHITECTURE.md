@@ -1,6 +1,10 @@
 # 系統架構
 
-本文對齊 6.11.2，沿用本機 HTTP、每帳號 SQLite 與 SDK 閘道。SDK 固定為 0.23.5／`67755b32404a118c8507f1d6b6f5c4ca2219f77d`，完整 commit 同步列於專案及建置鎖定檔。
+本文對齊 6.12.1，沿用本機 HTTP、每帳號 SQLite 與 SDK 閘道。SDK 固定為 0.23.5／`67755b32404a118c8507f1d6b6f5c4ca2219f77d`，完整 commit 同步列於專案及建置鎖定檔。
+
+`sheet_statistics.py` 共用月份／封存讀取列與永久 ID 去重結果，分別計算排程列數、眼數、拆項術式及型號眼數。`report` 保留原篩選與列數欄位，新增 `monthly`、`eye_count`、型號／術式 `eye_count`、`review_items` 與分類缺漏。取消判定共用實際顯示格式，包含條件格式與富文字；統計不呼叫院內 SDK、不回寫臨床欄位。
+
+年度封存以原生插列補月並保留年度 sheet ID；格式轉換與原生快照在寫前持久化。`sheet_archive_lock.py` 與 GAS 共用固定 `DOCUMENT` metadata ID 2147483646，互斥標記與主程式複製批次原子建立，僅原交易移除來源批次可以解除。Sheets 原生寫入在送出前核對標記；監控在遷移及日曆操作前檢查。GAS 完整計畫使用私人 gzip Drive 檔，Script Properties 保存精簡進度。
 
 SDK 的 PRQ 與登入已拆為多個模組。平台的醫囑、就診與病人身分相容處理透過 `core.operations.operation_spec` 取得請求契約，仍沿用 `PrqAdapter`、共用 Runtime、操作鎖與 SDK 恢復流程。建置依安裝來源核對 commit，並將 commit 寫入 EXE 授權聲明與封裝報告；不只比較版本號。
 

@@ -30,6 +30,7 @@ from .sheet_schema import (
     monthly_row,
     sheet_headers,
 )
+from .sheet_statistics import ARCHIVE_CONTRACT_NOTE
 
 SOURCE_MONTH = "ArchiveSourceMonth"
 ROW_TYPE = "ArchiveRowType"
@@ -399,11 +400,52 @@ def _copy_row_dimensions(requests, target, start, source, count):
             "fields": ",".join(properties)}})
 
 
+def _freeze_existing_archive(requests, target):
+    """Explicit, backed-up presentation migration, included in the copy preview."""
+    if not target.get("conditionalFormats"):
+        return False
+    rows = [[_archive_cell(target, cell) for cell in row] for row in target.get("rows", [])]
+    _write_rows(requests, target, 0, rows, len(_labels(target, ARCHIVE_HEADER_ROW)))
+    for index in reversed(range(len(target["conditionalFormats"]))):
+        requests.append({"deleteConditionalFormatRule": {"sheetId": target["properties"]["sheetId"], "index": index}})
+    target["conditionalFormats"] = []
+    return True
+
+
+def _insert_archive_rows(requests, target, start, count):
+    """Model native insertion, preserving sheet identity and existing row content."""
+    if target.get("charts") or any(cell.get("userEnteredValue", {}).get("formulaValue") and
+            not _scalar_constant_formula(cell["userEnteredValue"]["formulaValue"])
+            for row in target.get("rows", []) for cell in row):
+        raise ValueError("既有封存含圖表或相依公式，不能安全補入較早月份；請先人工核對。")
+    for merge in target.get("merges", []):
+        if merge.get("startRowIndex", 0) < start < merge["endRowIndex"]:
+            raise ValueError("補入月份的位置跨越既有合併儲存格，請先人工核對。")
+    requests.append({"insertDimension": {"range": {"sheetId": target["properties"]["sheetId"],
+        "dimension": "ROWS", "startIndex": start, "endIndex": start + count}, "inheritFromBefore": False}})
+    requests.append({"updateDimensionProperties": {"range": {"sheetId": target["properties"]["sheetId"],
+        "dimension": "ROWS", "startIndex": start, "endIndex": start + count},
+        "properties": {"pixelSize": 21, "hiddenByUser": False}, "fields": "pixelSize,hiddenByUser"}})
+    target["properties"]["gridProperties"]["rowCount"] += count
+    target["rows"][start:start] = [[] for _ in range(count)]
+    dimensions = target.setdefault("row_metadata", [])
+    while len(dimensions) < start:
+        dimensions.append({})
+    dimensions[start:start] = [{} for _ in range(count)]
+    ranges = list(target.get("merges", []))
+    for protection in target.get("protectedRanges", []):
+        ranges.extend([protection.get("range", {}), *protection.get("unprotectedRanges", [])])
+    for value in ranges:
+        if value.get("startRowIndex", 0) >= start:
+            value["startRowIndex"] = value.get("startRowIndex", 0) + count
+        if value.get("endRowIndex", 0) > start:
+            value["endRowIndex"] += count
+
+
 def build_archive(book, months, today=None, transaction_id=None):
     """Build only the copy phase. The caller must save native backup before POST.
 
-    Existing archives are append-only; backfilling before a previously archived
-    month fails closed rather than moving existing archived formulas/rows.
+    Earlier months use native row insertion, never replace the annual sheet.
     """
     day = today or local_today()
     if isinstance(day, datetime):
@@ -436,8 +478,7 @@ def build_archive(book, months, today=None, transaction_id=None):
         title = "刀表封存_" + month[:4]
         target = expected.get(title)
         labels = source["labels"]
-        if target is not None and target.get("conditionalFormats"):
-            raise ValueError(f"{title} 既有封存含條件格式，可能覆蓋新封存的固定樣式；請先人工核對，不覆寫既有規則。")
+        migrated = _freeze_existing_archive(requests, target) if target is not None else False
         if target is None:
             used = {s["properties"]["sheetId"] for s in result["sheets"]}
             used.update(p["sheetId"] for p in result.get("all_sheet_properties", []))
@@ -460,8 +501,8 @@ def build_archive(book, months, today=None, transaction_id=None):
             _copy_row_dimensions(requests, target, 5, source["sheet"], 1)
         target_labels, cols, archived = _archive_structure(target)
         _assert_editable(target)
-        if month in archived or archived and month < archived[-1]:
-            raise ValueError(f"{month} 已封存或早於既有封存區段；不覆寫／搬移既有封存。")
+        if month in archived:
+            raise ValueError(f"{month} 已封存；不覆寫既有封存。")
         # Header-name remap is safe for named fields. An unnamed spacer must have
         # the same clinical position; never infer where an unnamed manual column belongs.
         base = [label for label in target_labels if label not in {SOURCE_MONTH, ROW_TYPE}]
@@ -490,7 +531,9 @@ def build_archive(book, months, today=None, transaction_id=None):
         if source_blanks and [label for label in labels[:source_blanks[0]] if label not in {EVENT_HEADER, SYNC_ID_HEADER}] != [
                 label for label in target_labels[:target_blanks[0]] if label not in {EVENT_HEADER, SYNC_ID_HEADER, SOURCE_MONTH, ROW_TYPE}]:
             raise ValueError("來源與封存的空白分隔欄位置不一致。")
-        start = max(6, len(_rows(target)))
+        start = next((index for index, row in enumerate(target["rows"][6:], 6)
+                      if _text(row, cols, ROW_TYPE) == MONTH_HEADER and _text(row, cols, SOURCE_MONTH) > month),
+                     max(6, len(_rows(target))))
         rows = []
         separator = [{} for _ in range(width)]
         header_formulas = 0
@@ -511,6 +554,7 @@ def build_archive(book, months, today=None, transaction_id=None):
                 copied["note"] = (copied.get("note", "") + "\n封存時固定摘要；原始表頭公式：\n" + formula).lstrip("\n")
             separator[mapping[index]] = copied
         separator[cols[DATE_HEADER]]["userEnteredValue"] = {"stringValue": month}
+        separator[cols[DATE_HEADER]]["note"] = (separator[cols[DATE_HEADER]].get("note", "") + "\n" + ARCHIVE_CONTRACT_NOTE).strip()
         separator[cols[SOURCE_MONTH]], separator[cols[ROW_TYPE]] = _literal(month), _literal(MONTH_HEADER)
         rows.append(separator)
         for index, kind in enumerate(source["kinds"], 1):
@@ -521,6 +565,9 @@ def build_archive(book, months, today=None, transaction_id=None):
             if kind:
                 row[cols[SOURCE_MONTH]], row[cols[ROW_TYPE]] = _literal(month), _literal(kind)
             rows.append(row)
+        backfill = start < len(_rows(target))
+        if backfill:
+            _insert_archive_rows(requests, target, start, len(rows))
         _write_rows(requests, target, start, rows, width)
         _copy_row_dimensions(requests, target, start, source["sheet"], len(rows))
         for merge in source["sheet"].get("merges", []):
@@ -551,7 +598,7 @@ def build_archive(book, months, today=None, transaction_id=None):
                 compared.pop("hiddenByUser", None)
                 wanted.pop("hiddenByUser", None)
             if compared and wanted and any(compared.get(k, 100 if k == "pixelSize" else False) != v for k, v in wanted.items()):
-                raise ValueError("來源月份與既有封存的欄寬／隱藏設定不同，不能覆寫封存格式。")
+                continue  # One annual column has one width; preserve the existing owner's choice.
             if wanted and not metadata[col]:
                 metadata[col] = copy.deepcopy(wanted)
                 requests.append({"updateDimensionProperties": {"range": {"sheetId": target["properties"]["sheetId"],
@@ -567,6 +614,7 @@ def build_archive(book, months, today=None, transaction_id=None):
         summaries.append({"month": month, "target": title, "patients": source["patients"],
                           "blocks": source["kinds"].count(DATE_ROW), "copied_rows": len(rows),
                           "header_formula_snapshots": header_formulas,
+                          "backfill": backfill, "migrated_existing_format": migrated,
                           "conditional_format_snapshot": bool(source["sheet"].get("conditionalFormats"))})
     return {"transaction_id": transaction_id or uuid.uuid4().hex, "phase": "copy", "requests": requests,
             "book": result, "expected": result, "sources": sources, "targets": targets,

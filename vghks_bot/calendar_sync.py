@@ -9,7 +9,14 @@ from datetime import date, datetime, timedelta
 from .analysis_numeric import norm
 from .settings import TAIPEI
 from .sheet_plan import cell_at, cell_text, patient_key
-from .sheet_schema import DATE_HEADER, EVENT_ALIASES, full_date, monthly_row, sheet_headers
+from .sheet_schema import (
+    DATE_HEADER,
+    EVENT_ALIASES,
+    cancelled_cell,
+    full_date,
+    monthly_row,
+    sheet_headers,
+)
 
 SYNC_HEADER = "ScheduleSyncId"
 EVENT_HEADER = "CalendarEventId"
@@ -126,8 +133,7 @@ def scan(book, include_fu=True):
             if kind == "FU" and value(row, cols, "日期") and not day:
                 issues.append(ref + " 追蹤日期無法辨識")
             hospital = block["hospital"] if kind == "MONTHLY" else value(row, cols, "醫院")
-            cancelled = bool(cell_at(row, cols["病歷號"]).get("userEnteredFormat", {})
-                             .get("textFormat", {}).get("strikethrough"))
+            cancelled = kind == "MONTHLY" and cancelled_cell(cell_at(row, cols["病歷號"]))
             patients.append({"uid": uid, "event_id": eid, "identity": identity(mrn, person),
                 "kind": kind, "sheet_id": sid, "sheet": name, "row": index, "cols": cols,
                 "date": day, "hospital": hospital, "mrn": mrn, "name": person,

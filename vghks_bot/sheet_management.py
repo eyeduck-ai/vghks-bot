@@ -13,12 +13,17 @@ import copy
 import re
 import secrets
 import uuid
-from collections import Counter
 
 from .analysis_numeric import norm
 from .analysis_store import digest
 from .google_sheets import SheetError, SheetUnavailable, SheetUncertain
 from .settings import timestamp
+from .sheet_archive_lock import (
+    acquire_request,
+    archive_lock,
+    assert_archive_available,
+    release_request,
+)
 from .sheet_identity import (
     EVENT_ID_HEADER,
     MONTH_PATTERN,
@@ -39,7 +44,8 @@ from .sheet_plan import (
     fingerprint,
     range_,
 )
-from .sheet_schema import HOSPITALS, full_date, monthly_row
+from .sheet_schema import HOSPITALS, cancelled_cell, full_date, monthly_row
+from .sheet_statistics import ARCHIVE_CONTRACT_NOTE, LEGACY_ARCHIVE_NOTE, statistics
 
 PLAN_KIND = "sheet_management_plan"
 CACHE_KIND = "sheet_management_cache"
@@ -156,6 +162,8 @@ def _verify(book, checks):
 
 def _summary(book):
     months, issues = [], []
+    if archive_lock(book):
+        issues.append({"code": "archive_in_progress", "reason": "有未完成封存；自動寫入暫停，請回原入口核對並完成。"})
     for sheet in sorted(book.get("sheets", []), key=lambda sheet: sheet["properties"]["title"]):
         title = sheet["properties"]["title"]
         if not MONTH_PATTERN.fullmatch(title):
@@ -200,20 +208,23 @@ def _standard_month(book, month):
     return sheet, requests
 
 
-def _report_candidate(sheet, row, index, route, cols, field_cols):
+def _report_candidate(sheet, row, index, route, cols, field_cols, legacy_archive=False):
     fields = {field: cell_text(cell_at(row, col)) for field, col in field_cols.items()}
     mrn_cell = cell_at(row, cols["病歷號"])
-    entered_line = mrn_cell.get("userEnteredFormat", {}).get("textFormat", {}).get("strikethrough", False)
-    cancelled = bool(mrn_cell.get("effectiveFormat", {}).get("textFormat", {}).get("strikethrough", entered_line))
+    cancelled = cancelled_cell(mrn_cell)
     final_col, uid_col = cols.get("IOL Final"), cols.get(SYNC_ID_HEADER)
     values = {label: _content(cell_at(row, col)) for label, col in cols.items()
               if label not in {"ArchiveSourceMonth", "ArchiveRowType"}}
+    # The annual header is a union of monthly custom columns. An empty added
+    # column has the same content as an absent source column.
+    values = {label: value for label, value in values.items() if value}
     return {**{field: fields.get(field, "") for field in ("mrn", "name", "side", "procedure", "iol")},
             **route, "iol_target": fields.get("target", ""),
             "iol_final": cell_text(cell_at(row, final_col)) if final_col is not None else "",
             "position": f"{sheet['properties']['title']}!{index + 1}",
             "sync_id": cell_text(cell_at(row, uid_col)).strip() if uid_col is not None else "",
-            "_cancelled": cancelled, "_signature": digest([values, route, cancelled])}
+            "_cancelled": cancelled, "_legacy_archive": legacy_archive,
+            "_signature": digest([values, route, cancelled])}
 
 
 def _report_rows(book):
@@ -234,7 +245,8 @@ def _report_rows(book):
                 continue
             if not {"ArchiveSourceMonth", "ArchiveRowType"} <= cols.keys():
                 raise ValueError("封存缺少 ArchiveSourceMonth 或 ArchiveRowType。")
-            month, context = "", None
+            month, context, legacy = "", None, False
+            archive_note = cell_at(cell_at(sheet["rows"], 0), 0).get("note", "")
             for index, row in enumerate(sheet["rows"][header + 1:], header + 1):
                 source = cell_text(cell_at(row, cols["ArchiveSourceMonth"])).strip()
                 row_type = cell_text(cell_at(row, cols["ArchiveRowType"])).strip().upper()
@@ -243,6 +255,8 @@ def _report_rows(book):
                 valid_source = bool(MONTH_PATTERN.fullmatch(source) and source[:4] == title[-4:])
                 if row_type == "MONTH_HEADER":
                     month, context = source if valid_source else "", None
+                    legacy = (LEGACY_ARCHIVE_NOTE in archive_note and
+                              not any(ARCHIVE_CONTRACT_NOTE in cell.get("note", "") for cell in row))
                     if valid_source:
                         continue
                 elif source == month and valid_source:
@@ -253,7 +267,7 @@ def _report_rows(book):
                         if context:
                             continue
                     elif row_type == "PATIENT" and context and parsed["kind"] == "patient":
-                        result.append(_report_candidate(sheet, row, index, context, cols, field_cols))
+                        result.append(_report_candidate(sheet, row, index, context, cols, field_cols, legacy))
                         continue
                 context = None
                 issues.append({"code": "invalid_archive_context", "sheet": title, "row": index,
@@ -420,6 +434,10 @@ class SheetManagement:
             changes = [f"封存 {item['month']} 至 {item['target']}：{item['patients']} 筆病人、{item['blocks']} 個刀日區塊。"
                        for item in summary.get("months", [])]
             changes.append("先保留原生備份並核對封存副本；第二步確認後才移除原月份。")
+            changes.extend(f"{item['target']}：先備份既有封存，再將條件格式固定為目前樣式；舊 GAS 取消狀態仍需依備份核對。"
+                           for item in summary.get("months", []) if item.get("migrated_existing_format"))
+            changes.extend(f"{item['month']}：以原生插列補入較早月份，保留年度分頁 ID 與既有內容。"
+                           for item in summary.get("months", []) if item.get("backfill"))
             changes.extend(summary[key] for key in ("formula_policy", "format_policy") if summary.get(key))
             plan.update(archive_plan=archive, phase="copy", requests=archive["requests"],
                         changes=changes, expected=[], marker=plan["id"] + ":copy")
@@ -481,6 +499,7 @@ class SheetManagement:
                         return self._public(unresolved)
                     return self._public(plan)
                 original = self._read(client, archive=action == "archive")
+                assert_archive_available(original)
                 cache = self._cache_success(client.key, original)
                 plan.update(spreadsheet_id=client.key, baseline=fingerprint(original), stale=False,
                             status="preview", cached_at=cache["cached_at"])
@@ -490,6 +509,9 @@ class SheetManagement:
                     plan.update(status="blocked", message=str(exc), requests=[])
                 if plan["status"] == "preview":
                     if plan["requests"]:
+                        if action == "archive":
+                            plan["archive_lock"] = True
+                            plan["requests"].insert(0, acquire_request(plan["id"]))
                         plan["metadata_id"] = self._add_marker(original, plan["requests"], plan["marker"])
                         plan["message"] = "請核對結構變更，再套用此預覽。"
                     else:
@@ -514,8 +536,12 @@ class SheetManagement:
 
     def _check_work(self, client, plan, book=None):
         self._same_sheet(client, plan)
+        if plan["action"] == "archive":
+            client.archive_owner = plan["id"]
         book = book if book is not None else self._read(client, archive=plan["action"] == "archive")
         plan["cached_at"] = self._cache_success(client.key, book)["cached_at"]
+        if plan.get("archive_lock") and plan.get("phase") == "copy" and archive_lock(book) != plan["id"] and self._committed(book, plan):
+            return self._save(plan, status="blocked", stale=False, message="封存互斥標記缺少或不一致，保留來源，請人工核對。")
         if not self._committed(book, plan):
             if plan["status"] in {"pending", "uncertain", "failed"}:
                 return self._save(plan, status="uncertain", stale=False,
@@ -580,6 +606,8 @@ class SheetManagement:
                 nonlocal plan
                 plan = self._plan(values)
                 self._same_sheet(client, plan)
+                if plan["action"] == "archive":
+                    client.archive_owner = plan["id"]
                 if plan["status"] in {"pending", "uncertain", "applied", "applied_changed", "failed"}:
                     return self._check_work(client, plan)
                 if plan["status"] not in {"preview", "copied"} or plan.get("stale"):
@@ -588,6 +616,7 @@ class SheetManagement:
                 if unresolved:
                     return self._blocked_by(plan, unresolved)
                 book = self._read(client, archive=plan["action"] == "archive")
+                assert_archive_available(book, plan["id"] if plan["action"] == "archive" else "")
                 plan["cached_at"] = self._cache_success(client.key, book)["cached_at"]
                 if self._committed(book, plan):
                     if plan["status"] != "copied":
@@ -602,6 +631,10 @@ class SheetManagement:
                     except ValueError as exc:
                         return self._save(plan, status="blocked", message=str(exc), requests=[])
                     plan.update(archive_plan=archive, phase="delete", requests=archive["requests"], marker=plan["id"] + ":delete")
+                    if plan.get("archive_lock"):
+                        if archive_lock(book) != plan["id"]:
+                            return self._save(plan, status="blocked", message="封存互斥標記遺失，未移除來源。")
+                        plan["requests"].append(release_request(plan["id"]))
                     plan["metadata_id"] = self._add_marker(book, plan["requests"], plan["marker"])
                     plan["baseline"] = fingerprint(book)
                 if fingerprint(book) != plan["baseline"]:
@@ -654,19 +687,12 @@ class SheetManagement:
         state = self.refresh()
         cache = self._cache(state["spreadsheet_id"])
         candidates, issues = _report_rows(cache.get("book", {}))
-        items, excluded = [], 0
-        for item in candidates:
-            if (start and item["date"] < start or end and item["date"] > end
-                    or hospital and item["hospital"] != hospital):
-                continue
-            if item["_cancelled"]:
-                excluded += 1
-                continue
-            items.append({key: value for key, value in item.items() if not key.startswith("_")})
-        items.sort(key=lambda item: (item["date"], item["hospital"], item["position"]))
-        counts = Counter(item["iol"] or "未填" for item in items)
+        candidates = [item for item in candidates if not (
+            start and item["date"] < start or end and item["date"] > end
+            or hospital and item["hospital"] != hospital)]
+        result = statistics(candidates, cache.get("book", {}), start, end)
+        issues += result.pop("statistics_issues")
         return {"spreadsheet_id": state["spreadsheet_id"], "online": state["online"], "stale": state["stale"],
                 "cached_at": state["cached_at"], "message": state["message"], "filters": {"start": start, "end": end, "hospital": hospital},
-                "items": items, "models": [{"model": model, "count": count} for model, count in sorted(counts.items())],
-                "total": len(items), "excluded_cancelled": excluded, "count_basis": "排程列數；OU 不自動推算為兩片 IOL。",
+                **result,
                 "issues": issues + state["issues"], "complete": not issues and not state["issues"] and not state["stale"]}

@@ -13,6 +13,7 @@
 .sheet-management-operations legend{font-size:12px;color:var(--muted);margin-bottom:8px}
 .sheet-management-operations label{display:flex;align-items:center;gap:8px;border:1px solid var(--line);padding:9px 11px;background:#fafbf8;border-radius:4px;cursor:pointer}
 .sheet-management-operations label:has(input:checked){border-color:var(--green);background:#edf4e8;color:var(--green)}
+#sheetManagementOperationForm input[type="radio"],#sheetManagementArchiveMonths input[type="checkbox"]{margin:0;width:17px;height:17px;min-width:0;padding:0;flex:0 0 auto;accent-color:var(--green)}
 #sheetManagementOperationForm [data-sheet-fields]{border:0;padding:0;margin:0 0 14px;min-width:0}
 #sheetManagementOperationForm [data-sheet-fields] label{margin-block:10px}
 #sheetManagementArchiveMonths{display:flex;gap:8px 20px;flex-wrap:wrap;margin-top:12px}

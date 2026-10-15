@@ -96,6 +96,15 @@
      </form><h3>已保存操作與預覽</h3><div id="sheetManagementPlans"></div><details><summary>操作紀錄</summary><div id="sheetManagementHistory"></div></details>
     </section>
    </div>
+   <section class="sheet-management-panel sheet-management-report-panel" aria-labelledby="sheetManagementStatisticsTitle">
+    <h2 id="sheetManagementStatisticsTitle">每月手術統計</h2><p class="caption">OD／OS 計 1 眼、OU 計 2 眼；病歷號刪節線取消列排除。各術式可重疊，總眼數獨立計算。</p>
+    <form id="sheetManagementStatisticsForm" class="toolbar" method="post" action="/api/sheet-management/report">
+     <label for="sheetManagementStatisticsStart">開始月份<input id="sheetManagementStatisticsStart" name="start_month" type="month" required min="2000-01" max="2099-12" placeholder="YYYY-MM"></label>
+     <label for="sheetManagementStatisticsEnd">結束月份<input id="sheetManagementStatisticsEnd" name="end_month" type="month" required min="2000-01" max="2099-12" placeholder="YYYY-MM"></label>
+     <label for="sheetManagementStatisticsHospital">院區<select id="sheetManagementStatisticsHospital" name="hospital"><option value="">全部院區</option><option value="高榮">高榮</option><option value="聯醫">聯醫</option></select></label>
+     <button id="sheetManagementStatisticsButton" type="submit" class="primary">查看每月統計</button>
+    </form><p id="sheetManagementStatisticsMeta" class="caption" role="status" aria-live="polite"></p><div id="sheetManagementStatistics"></div>
+   </section>
    <section class="sheet-management-panel sheet-management-report-panel" aria-labelledby="sheetManagementReportTitle"><h2 id="sheetManagementReportTitle">IOL 名單與型號統計</h2><form id="sheetManagementReportForm" class="toolbar" method="post" action="/api/sheet-management/report"><label for="sheetManagementReportStart">開始刀日<input id="sheetManagementReportStart" name="start" type="date" required min="2000-01-01" max="2099-12-31"></label><label for="sheetManagementReportEnd">結束刀日<input id="sheetManagementReportEnd" name="end" type="date" required min="2000-01-01" max="2099-12-31"></label><label for="sheetManagementReportHospital">院區<select id="sheetManagementReportHospital" name="hospital"><option value="">全部院區</option><option value="高榮">高榮</option><option value="聯醫">聯醫</option></select></label><button id="sheetManagementReportButton" type="submit" class="primary">查看 IOL 名單</button></form><p id="sheetManagementReportMeta" class="caption" role="status" aria-live="polite"></p><div id="sheetManagementReport"></div></section>
   </section>
   <section id="surgeryPage" class="page" hidden>

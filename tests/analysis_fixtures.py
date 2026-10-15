@@ -430,6 +430,9 @@ class MemorySheets:
                 rule = p["rule"]
                 s = sheet(rule["ranges"][0]["sheetId"])
                 s.setdefault("conditionalFormats", []).insert(p["index"], copy.deepcopy(rule))
+            elif "deleteConditionalFormatRule" in request:
+                p = request["deleteConditionalFormatRule"]
+                del sheet(p["sheetId"])["conditionalFormats"][p["index"]]
             elif "addProtectedRange" in request:
                 p = request["addProtectedRange"]["protectedRange"]
                 sheet(p["range"]["sheetId"]).setdefault("protectedRanges", []).append(copy.deepcopy(p))
@@ -444,6 +447,18 @@ class MemorySheets:
                 extend(s, start)
                 if adding:
                     s["rows"][start:start] = [[] for _ in range(end - start)]
+                    dimensions = s.setdefault("row_metadata", [])
+                    while len(dimensions) < start:
+                        dimensions.append({})
+                    dimensions[start:start] = [{} for _ in range(end - start)]
+                    ranges = list(s.get("merges", []))
+                    for protection in s.get("protectedRanges", []):
+                        ranges.extend([protection.get("range", {}), *protection.get("unprotectedRanges", [])])
+                    for value in ranges:
+                        if value.get("startRowIndex", 0) >= start:
+                            value["startRowIndex"] = value.get("startRowIndex", 0) + end - start
+                        if value.get("endRowIndex", 0) > start:
+                            value["endRowIndex"] += end - start
                 else:
                     del s["rows"][start:end]
                 s["properties"]["gridProperties"]["rowCount"] += (end - start) * (

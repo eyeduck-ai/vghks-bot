@@ -37,11 +37,12 @@ window.SheetManagement=(()=>{
   controls();
  }
  function controls(){
-  for(const id of ["sheetManagementReconnect","sheetManagementRefresh","sheetManagementPreviewButton","sheetManagementReportButton","sheetManagementGoogleSave","sheetManagementGoogleTest","sheetManagementGoogleRemove","sheetManagementFinalizeButton"]){
+  for(const id of ["sheetManagementReconnect","sheetManagementRefresh","sheetManagementPreviewButton","sheetManagementReportButton","sheetManagementStatisticsButton","sheetManagementGoogleSave","sheetManagementGoogleTest","sheetManagementGoogleRemove","sheetManagementFinalizeButton"]){
    const value=q(id);value.disabled=busy||readOnly();
   }
   q("sheetManagementSettings").disabled=busy;
   q("sheetManagementReportButton").disabled=busy||readOnly()||!state?.configured;
+  q("sheetManagementStatisticsButton").disabled=busy||readOnly()||!state?.configured;
   for(const value of q("sheetManagementPlans").querySelectorAll("button[data-plan-action]")){
    const plan=plans.get(value.dataset.planId),kind=value.dataset.planAction;
    value.disabled=busy||readOnly()||(kind==="apply"?!canApply(plan):kind==="finalize"?!canFinalize(plan):kind==="check"?!state?.configured:false);
@@ -50,7 +51,7 @@ window.SheetManagement=(()=>{
  function issues(values){
   const list=make("ul",undefined,"sheet-management-issues");
   for(const item of values||[]){
-   const text=typeof item==="string"?item:[item.sheet||item.ref,item.row!==undefined?"第 "+(Number(item.row)+1)+" 列":"",item.reason||item.message||item.code].filter(Boolean).join(" · ");
+   const text=typeof item==="string"?item:[item.sheet||item.ref||item.position||item.month,item.row!==undefined?"第 "+(Number(item.row)+1)+" 列":"",item.reason||item.message||item.code].filter(Boolean).join(" · ");
    list.append(make("li",text||"請核對刀表結構。"));
   }
   return list;
@@ -167,6 +168,33 @@ window.SheetManagement=(()=>{
   for(const title of headers){const th=make("th",title);th.scope="col";head.append(th);}thead.append(head);
   for(const row of rows){const tr=make("tr");for(const value of row)tr.append(make("td",value??"—"));body.append(tr);}table.append(thead,body);wrap.append(table);return wrap;
  }
+ async function statistics(){
+  if(readOnly())throw new Error("目前資料庫為唯讀，可檢閱已保存狀態。");
+  if(!q("sheetManagementStatisticsForm").reportValidity())return;
+  const start=q("sheetManagementStatisticsStart").value,end=q("sheetManagementStatisticsEnd").value;
+  if(!/^20\d{2}-(0[1-9]|1[0-2])$/.test(start)||!/^20\d{2}-(0[1-9]|1[0-2])$/.test(end)||start>end)throw new Error("請確認起訖月份，結束月份不可早於開始月份。");
+  const [year,month]=end.split("-").map(Number),last=new Date(Date.UTC(year,month,0)).getUTCDate();
+  message("正在讀取月份刀表與年度封存…");
+  let value;
+  try{value=await call("report",{start:start+"-01",end:end+"-"+last,hospital:q("sheetManagementStatisticsHospital").value});}
+  catch(error){if(error.name!=="AbortError"){offline("每月統計查詢未完成，請重新連線後再查詢。");q("sheetManagementStatisticsMeta").textContent="尚未取得最新資料；以下為先前查詢結果。";}throw error;}
+  if(value.stale)offline("每月統計目前使用快取，請重新連線後再查詢。");
+  else{state={...state,online:true,stale:false,cached_at:value.cached_at||state?.cached_at};renderConnection();}
+  const area=q("sheetManagementStatistics");area.replaceChildren();
+  if(value.stale&&!value.cached_at){q("sheetManagementStatisticsMeta").textContent="尚無可用快取；重新連線後查詢。";return;}
+  q("sheetManagementStatisticsMeta").textContent=(value.stale?"快取資料":"即時資料")+" · "+(value.complete?"資料完整":"尚有待核對或未取得資料")+" · 最近快取 "+displayTime(value.cached_at);
+  const months=value.monthly||[],quantity=(item,key)=>item.available===false?"未取得":item[key]??0;
+  area.append(reportTable(["月份","排程列數","總眼數","LenSx 眼數","CATA 眼數","取消排除列數","側別待核對列數"],months.map(item=>[item.month,quantity(item,"total"),quantity(item,"eye_count"),quantity(item,"lensx_eye_count"),quantity(item,"cata_eye_count"),quantity(item,"excluded_cancelled"),quantity(item,"excluded_unknown_side")])));
+  for(const month of months){
+   if(month.available===false)continue;
+   const detail=make("details",undefined,"sheet-management-month");detail.append(make("summary",month.month+" · 術式、水晶體與來源明細"));
+   detail.append(make("h3","各術式"),reportTable(["術式","排程列數","眼數"],(month.procedures||[]).map(item=>[item.procedure,item.count,item.eye_count])));
+   detail.append(make("h3","水晶體型號"),reportTable(["型號","排程列數","眼數／片數"],(month.models||[]).map(item=>[item.model,item.count,item.eye_count])));
+   detail.append(make("h3","排程來源"),reportTable(["刀日","院區","病歷號","姓名","側別","術式","IOL","眼數","來源位置","待核對"],(month.items||[]).map(item=>[item.date,item.hospital,item.mrn,item.name,item.side,item.procedure,item.iol,item.eye_count,item.position,(item.review_codes||[]).length?"是":""])));area.append(detail);
+  }
+  if((value.issues||[]).length)area.append(make("h3","待核對與缺漏"),issues(value.issues));
+  if(!value.stale)message("每月手術統計已更新。");
+ }
  async function report(){
   if(readOnly())throw new Error("目前資料庫為唯讀，可檢閱已保存狀態。");
   if(!q("sheetManagementReportForm").reportValidity())return;
@@ -181,7 +209,7 @@ window.SheetManagement=(()=>{
   const area=q("sheetManagementReport");area.replaceChildren();
   if(value.stale&&!value.cached_at){q("sheetManagementReportMeta").textContent="目前無法取得刀表，尚無可用快取；重新連線後查詢。";area.append(make("p","尚未取得 IOL 名單與型號統計，請重新連線後查詢。","caption"));return;}
   q("sheetManagementReportMeta").textContent=(value.stale?"快取資料":"即時資料")+" · "+(value.total??value.items?.length??0)+" 筆排程 · 最近快取 "+displayTime(value.cached_at);
-  area.append(make("h3","IOL 型號與數量"),reportTable(["型號","數量"],(value.models||[]).map(item=>[item.model||"未填",item.count??0])),make("h3","病人名單"));
+  area.append(make("h3","IOL 型號與數量"),reportTable(["型號","排程列數","眼數／片數"],(value.models||[]).map(item=>[item.model||"未填",item.count??0,item.eye_count??"—"])),make("h3","病人名單"));
   const items=value.items||[];
   area.append(items.length?reportTable(["刀日","院區","病歷號","姓名","側別","術式","IOL","Target","Final","位置"],items.map(item=>[item.date,item.hospital,item.mrn,item.name,item.side,item.procedure,item.iol,item.iol_target,item.iol_final,typeof item.position==="string"?item.position:item.position?.ref||"—"])):make("p","此範圍沒有排程。","caption"));
   if(value.count_basis)area.append(make("p",value.count_basis,"caption"));if(value.excluded_cancelled)area.append(make("p","已排除 "+value.excluded_cancelled+" 筆劃除排程。","caption"));if(value.issues?.length)area.append(issues(value.issues));if(!value.stale)message("IOL 名單已更新。");
@@ -190,7 +218,7 @@ window.SheetManagement=(()=>{
  const connectionPicker=window.SheetConnectionPicker.mount({container:q("sheetManagementGoogleCopy"),call:(path,values)=>invoke("/analysis/"+path,values),context:stamp,readOnly,perform:run,onCopy:connectionSaved});
  function connectionSaved(value){
   q("sheetManagementGoogleSheet").value=value.spreadsheet_id;q("sheetManagementGoogleKey").value="";q("sheetManagementGoogleStatus").textContent=credentialStatus(value);invalidate();
-  if(value.spreadsheet_id!==state?.spreadsheet_id){plans.clear();archiveMonths.clear();activeId="";q("sheetManagementReport").replaceChildren();q("sheetManagementReportMeta").textContent="";state={};}
+  if(value.spreadsheet_id!==state?.spreadsheet_id){plans.clear();archiveMonths.clear();activeId="";for(const id of ["sheetManagementReport","sheetManagementStatistics"])q(id).replaceChildren();for(const id of ["sheetManagementReportMeta","sheetManagementStatisticsMeta"])q(id).textContent="";state={};}
   state={...state,configured:value.configured,spreadsheet_id:value.spreadsheet_id,online:false,stale:true};renderConnection();renderMonths();renderPlans();q("sheetManagementGoogleResult").textContent="設定已保存。";
  }
  async function settings(){const value=await invoke("/analysis/google");q("sheetManagementGoogleSheet").value=value.spreadsheet_id||"";q("sheetManagementGoogleKey").value="";q("sheetManagementGoogleStatus").textContent=credentialStatus(value);q("sheetManagementGoogleResult").textContent="";q("sheetManagementGoogleDialog").showModal();await connectionPicker.load();}
@@ -207,13 +235,14 @@ window.SheetManagement=(()=>{
  async function open(){
   visible=true;if(owner!==stamp()){reset();owner=stamp();visible=true;}
   if(!initialized){initialized=true;const today=root?.today||new Date().toISOString().slice(0,10);q("sheetManagementDay").value=q("sheetManagementReportStart").value=q("sheetManagementReportEnd").value=today;
+   q("sheetManagementStatisticsStart").value=q("sheetManagementStatisticsEnd").value=today.slice(0,7);
    const parts=today.slice(0,7).split("-").map(Number),next=new Date(parts[0],parts[1],1);q("sheetManagementMonth").value=next.getFullYear()+"-"+String(next.getMonth()+1).padStart(2,"0");}
   return run(async()=>{invalidate();const value=await call("status");acceptStatus(value);if(value.configured&&!readOnly()&&navigator.onLine!==false)await refresh();});
  }
  function reset(){
   generation++;owner="";busy=false;visible=false;state=null;plans=new Map();verified=new Set();archiveMonths=new Set();freshId=activeId=finalizeId="";initialized=false;editRevision=0;
-  q("sheetManagementPage").removeAttribute("aria-busy");q("sheetManagementReport").replaceChildren();q("sheetManagementReportMeta").textContent="";
-  for(const id of ["sheetManagementMonth","sheetManagementDay","sheetManagementReportStart","sheetManagementReportEnd","sheetManagementReportHospital","sheetManagementGoogleKey","sheetManagementGoogleSheet"])q(id).value="";
+  q("sheetManagementPage").removeAttribute("aria-busy");for(const id of ["sheetManagementReport","sheetManagementStatistics"])q(id).replaceChildren();for(const id of ["sheetManagementReportMeta","sheetManagementStatisticsMeta"])q(id).textContent="";
+  for(const id of ["sheetManagementMonth","sheetManagementDay","sheetManagementReportStart","sheetManagementReportEnd","sheetManagementReportHospital","sheetManagementStatisticsStart","sheetManagementStatisticsEnd","sheetManagementStatisticsHospital","sheetManagementGoogleKey","sheetManagementGoogleSheet"])q(id).value="";
   for(const id of ["sheetManagementGoogleStatus","sheetManagementGoogleResult","sheetManagementFinalizeText"])q(id).textContent="";
   hospitalChosen=false;connectionPicker.reset();q("sheetManagementHospital").value="";q("sheetManagementFinalizeConfirm").checked=false;
   for(const id of ["sheetManagementGoogleDialog","sheetManagementFinalizeDialog"])if(q(id).open)q(id).close();
@@ -224,6 +253,7 @@ window.SheetManagement=(()=>{
  q("sheetManagementHospital").addEventListener("input",()=>{hospitalChosen=true;});
  q("sheetManagementOperationForm").addEventListener("submit",event=>{event.preventDefault();if(q("sheetManagementOperationForm").reportValidity())void run(()=>preview());});
  q("sheetManagementReportForm").addEventListener("submit",event=>{event.preventDefault();void run(report);});
+ q("sheetManagementStatisticsForm").addEventListener("submit",event=>{event.preventDefault();void run(statistics);});
  for(const id of ["sheetManagementReconnect","sheetManagementRefresh"])q(id).addEventListener("click",()=>run(refresh));
  q("sheetManagementSettings").addEventListener("click",()=>run(settings));
  q("sheetManagementGoogleForm").addEventListener("submit",event=>{event.preventDefault();void run(()=>saveSettings());});

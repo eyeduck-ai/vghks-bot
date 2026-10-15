@@ -338,6 +338,10 @@ class SheetsClient:
                 sheet["row_metadata"][start:start + len(dimensions)] = dimensions
 
     def write(self, requests_):
+        from .sheet_archive_lock import assert_archive_available
+
+        if requests_:
+            assert_archive_available(self.read_metadata(), getattr(self, "archive_owner", ""))
         return self.request("POST", ":batchUpdate", json={"requests": requests_, "includeSpreadsheetInResponse": False})
 
 

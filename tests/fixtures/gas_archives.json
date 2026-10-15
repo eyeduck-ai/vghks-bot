@@ -1,0 +1,4039 @@
+{
+  "schema": 2,
+  "lock": {
+    "id": 2147483646,
+    "key": "vghks.sheet.archive.lock"
+  },
+  "before": {
+    "properties": {
+      "timeZone": "Asia/Taipei"
+    },
+    "developerMetadata": [],
+    "sheets": [
+      {
+        "properties": {
+          "sheetId": 101,
+          "title": "202609",
+          "gridProperties": {
+            "rowCount": 100,
+            "columnCount": 25,
+            "frozenRowCount": 1
+          }
+        },
+        "rows": [
+          [
+            {
+              "userEnteredValue": {
+                "stringValue": "日期／報到時間"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "醫院"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "病歷號"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "姓名"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "TEL"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "GA"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "側別"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "診斷"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "Grade"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "術式"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "IOL"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "IOL Target"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "IOL Final"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "Axis"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "Plan"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "心得"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": ""
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "SN"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "CDE"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "Energy Time"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "Energy %"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "屈光數據"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "CalendarEventId"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "ScheduleSyncId"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "人工備註"
+              }
+            }
+          ],
+          [
+            {
+              "userEnteredValue": {
+                "stringValue": "2026-09-15"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "高榮"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "◆ 刀日"
+              }
+            },
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "00000000000000000000000000002775"
+              }
+            },
+            {}
+          ],
+          [
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "TEST101"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "合成病人"
+              }
+            },
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "OU"
+              }
+            },
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "LenSx-Phaco-IOL"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "SN60WF"
+              }
+            },
+            {},
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "保留 +20.0"
+              }
+            },
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "synthetic-event-101"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "00000000000000000000000000002776"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "人工富文字"
+              },
+              "note": "完整保留註記",
+              "textFormatRuns": [
+                {
+                  "startIndex": 0,
+                  "format": {
+                    "italic": true
+                  }
+                }
+              ]
+            }
+          ],
+          [
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "CANCEL101"
+              },
+              "effectiveFormat": {
+                "textFormat": {
+                  "strikethrough": true
+                }
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "合成病人"
+              }
+            },
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "OU"
+              }
+            },
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "LenSx-Phaco-IOL"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "SN60WF"
+              }
+            },
+            {},
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "保留 +20.0"
+              }
+            },
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "synthetic-cancel-101"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "00000000000000000000000000002777"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "人工富文字"
+              },
+              "note": "完整保留註記",
+              "textFormatRuns": [
+                {
+                  "startIndex": 0,
+                  "format": {
+                    "italic": true
+                  }
+                }
+              ]
+            }
+          ]
+        ],
+        "column_widths": [
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          }
+        ],
+        "row_metadata": [
+          {
+            "pixelSize": 35
+          },
+          {},
+          {
+            "pixelSize": 57,
+            "hiddenByUser": true
+          }
+        ],
+        "merges": [
+          {
+            "sheetId": 101,
+            "startRowIndex": 2,
+            "endRowIndex": 3,
+            "startColumnIndex": 14,
+            "endColumnIndex": 16
+          }
+        ],
+        "conditionalFormats": [
+          {
+            "ranges": [
+              {
+                "sheetId": 101,
+                "startRowIndex": 1
+              }
+            ],
+            "booleanRule": {
+              "condition": {
+                "type": "CUSTOM_FORMULA",
+                "values": [
+                  {
+                    "userEnteredValue": "=FALSE"
+                  }
+                ]
+              },
+              "format": {
+                "textFormat": {
+                  "strikethrough": true
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "properties": {
+          "sheetId": 102,
+          "title": "202606",
+          "gridProperties": {
+            "rowCount": 100,
+            "columnCount": 25,
+            "frozenRowCount": 1
+          }
+        },
+        "rows": [
+          [
+            {
+              "userEnteredValue": {
+                "stringValue": "日期／報到時間"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "醫院"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "病歷號"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "姓名"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "TEL"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "GA"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "側別"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "診斷"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "Grade"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "術式"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "IOL"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "IOL Target"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "IOL Final"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "Axis"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "Plan"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "心得"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": ""
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "SN"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "CDE"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "Energy Time"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "Energy %"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "屈光數據"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "CalendarEventId"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "ScheduleSyncId"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "人工備註"
+              }
+            }
+          ],
+          [
+            {
+              "userEnteredValue": {
+                "stringValue": "2026-06-15"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "高榮"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "◆ 刀日"
+              }
+            },
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "000000000000000000000000000027d9"
+              }
+            },
+            {}
+          ],
+          [
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "TEST102"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "合成病人"
+              }
+            },
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "OD"
+              }
+            },
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "VT+MP"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": ""
+              }
+            },
+            {},
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "保留 +20.0"
+              }
+            },
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "synthetic-event-102"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "000000000000000000000000000027da"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "人工富文字"
+              },
+              "note": "完整保留註記",
+              "textFormatRuns": [
+                {
+                  "startIndex": 0,
+                  "format": {
+                    "italic": true
+                  }
+                }
+              ]
+            }
+          ],
+          [
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "CANCEL102"
+              },
+              "effectiveFormat": {
+                "textFormat": {
+                  "strikethrough": true
+                }
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "合成病人"
+              }
+            },
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "OD"
+              }
+            },
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "VT+MP"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": ""
+              }
+            },
+            {},
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "保留 +20.0"
+              }
+            },
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "synthetic-cancel-102"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "000000000000000000000000000027db"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "人工富文字"
+              },
+              "note": "完整保留註記",
+              "textFormatRuns": [
+                {
+                  "startIndex": 0,
+                  "format": {
+                    "italic": true
+                  }
+                }
+              ]
+            }
+          ]
+        ],
+        "column_widths": [
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          }
+        ],
+        "row_metadata": [
+          {
+            "pixelSize": 35
+          },
+          {},
+          {
+            "pixelSize": 57,
+            "hiddenByUser": true
+          }
+        ],
+        "merges": [
+          {
+            "sheetId": 102,
+            "startRowIndex": 2,
+            "endRowIndex": 3,
+            "startColumnIndex": 14,
+            "endColumnIndex": 16
+          }
+        ],
+        "conditionalFormats": [
+          {
+            "ranges": [
+              {
+                "sheetId": 102,
+                "startRowIndex": 1
+              }
+            ],
+            "booleanRule": {
+              "condition": {
+                "type": "CUSTOM_FORMULA",
+                "values": [
+                  {
+                    "userEnteredValue": "=FALSE"
+                  }
+                ]
+              },
+              "format": {
+                "textFormat": {
+                  "strikethrough": true
+                }
+              }
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "after_september": {
+    "properties": {
+      "timeZone": "Asia/Taipei"
+    },
+    "developerMetadata": [],
+    "sheets": [
+      {
+        "properties": {
+          "sheetId": 102,
+          "title": "202606",
+          "gridProperties": {
+            "rowCount": 100,
+            "columnCount": 25,
+            "frozenRowCount": 1
+          }
+        },
+        "rows": [
+          [
+            {
+              "userEnteredValue": {
+                "stringValue": "日期／報到時間"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "醫院"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "病歷號"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "姓名"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "TEL"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "GA"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "側別"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "診斷"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "Grade"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "術式"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "IOL"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "IOL Target"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "IOL Final"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "Axis"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "Plan"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "心得"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": ""
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "SN"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "CDE"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "Energy Time"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "Energy %"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "屈光數據"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "CalendarEventId"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "ScheduleSyncId"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "人工備註"
+              }
+            }
+          ],
+          [
+            {
+              "userEnteredValue": {
+                "stringValue": "2026-06-15"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "高榮"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "◆ 刀日"
+              }
+            },
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "000000000000000000000000000027d9"
+              }
+            },
+            {}
+          ],
+          [
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "TEST102"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "合成病人"
+              }
+            },
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "OD"
+              }
+            },
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "VT+MP"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": ""
+              }
+            },
+            {},
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "保留 +20.0"
+              }
+            },
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "synthetic-event-102"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "000000000000000000000000000027da"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "人工富文字"
+              },
+              "note": "完整保留註記",
+              "textFormatRuns": [
+                {
+                  "startIndex": 0,
+                  "format": {
+                    "italic": true
+                  }
+                }
+              ]
+            }
+          ],
+          [
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "CANCEL102"
+              },
+              "effectiveFormat": {
+                "textFormat": {
+                  "strikethrough": true
+                }
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "合成病人"
+              }
+            },
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "OD"
+              }
+            },
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "VT+MP"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": ""
+              }
+            },
+            {},
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "保留 +20.0"
+              }
+            },
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "synthetic-cancel-102"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "000000000000000000000000000027db"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "人工富文字"
+              },
+              "note": "完整保留註記",
+              "textFormatRuns": [
+                {
+                  "startIndex": 0,
+                  "format": {
+                    "italic": true
+                  }
+                }
+              ]
+            }
+          ]
+        ],
+        "column_widths": [
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          }
+        ],
+        "row_metadata": [
+          {
+            "pixelSize": 35
+          },
+          {},
+          {
+            "pixelSize": 57,
+            "hiddenByUser": true
+          }
+        ],
+        "merges": [
+          {
+            "sheetId": 102,
+            "startRowIndex": 2,
+            "endRowIndex": 3,
+            "startColumnIndex": 14,
+            "endColumnIndex": 16
+          }
+        ],
+        "conditionalFormats": [
+          {
+            "ranges": [
+              {
+                "sheetId": 102,
+                "startRowIndex": 1
+              }
+            ],
+            "booleanRule": {
+              "condition": {
+                "type": "CUSTOM_FORMULA",
+                "values": [
+                  {
+                    "userEnteredValue": "=FALSE"
+                  }
+                ]
+              },
+              "format": {
+                "textFormat": {
+                  "strikethrough": true
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "properties": {
+          "sheetId": 1073742,
+          "title": "刀表封存_2026",
+          "gridProperties": {
+            "rowCount": 1000,
+            "columnCount": 27,
+            "frozenRowCount": 6
+          }
+        },
+        "rows": [
+          [
+            {
+              "userEnteredValue": {
+                "stringValue": "刀表封存_2026"
+              },
+              "note": "SYSTEM_ANNUAL_SURGERY_ARCHIVE_V1"
+            }
+          ],
+          [],
+          [],
+          [],
+          [],
+          [
+            {
+              "userEnteredValue": {
+                "stringValue": "日期／報到時間"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "醫院"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "病歷號"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "姓名"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "TEL"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "GA"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "側別"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "診斷"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "Grade"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "術式"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "IOL"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "IOL Target"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "IOL Final"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "Axis"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "Plan"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "心得"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": ""
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "SN"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "CDE"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "Energy Time"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "Energy %"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "屈光數據"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "CalendarEventId"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "ScheduleSyncId"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "人工備註"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "ArchiveSourceMonth"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "ArchiveRowType"
+              }
+            }
+          ],
+          [
+            {
+              "userEnteredValue": {
+                "stringValue": "202609"
+              },
+              "note": "VGHKS_ARCHIVE_CONTRACT_V2"
+            },
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "202609"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "MONTH_HEADER"
+              }
+            }
+          ],
+          [
+            {
+              "userEnteredValue": {
+                "stringValue": "2026-09-15"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "高榮"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "◆ 刀日"
+              }
+            },
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "00000000000000000000000000002775"
+              }
+            },
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "202609"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "DATE_HEADER"
+              }
+            }
+          ],
+          [
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "TEST101"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "合成病人"
+              }
+            },
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "OU"
+              }
+            },
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "LenSx-Phaco-IOL"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "SN60WF"
+              }
+            },
+            {},
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "保留 +20.0"
+              }
+            },
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "synthetic-event-101"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "00000000000000000000000000002776"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "人工富文字"
+              },
+              "note": "完整保留註記",
+              "textFormatRuns": [
+                {
+                  "startIndex": 0,
+                  "format": {
+                    "italic": true
+                  }
+                }
+              ]
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "202609"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "PATIENT"
+              }
+            }
+          ],
+          [
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "CANCEL101"
+              },
+              "userEnteredFormat": {
+                "textFormat": {
+                  "strikethrough": true
+                }
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "合成病人"
+              }
+            },
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "OU"
+              }
+            },
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "LenSx-Phaco-IOL"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "SN60WF"
+              }
+            },
+            {},
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "保留 +20.0"
+              }
+            },
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "synthetic-cancel-101"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "00000000000000000000000000002777"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "人工富文字"
+              },
+              "note": "完整保留註記",
+              "textFormatRuns": [
+                {
+                  "startIndex": 0,
+                  "format": {
+                    "italic": true
+                  }
+                }
+              ]
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "202609"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "PATIENT"
+              }
+            }
+          ]
+        ],
+        "column_widths": [
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110,
+            "hiddenByUser": true
+          },
+          {
+            "pixelSize": 110,
+            "hiddenByUser": true
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "hiddenByUser": true
+          },
+          {
+            "hiddenByUser": true
+          }
+        ],
+        "row_metadata": [
+          {},
+          {},
+          {},
+          {},
+          {},
+          {
+            "pixelSize": 35
+          },
+          {
+            "pixelSize": 35
+          },
+          {},
+          {
+            "pixelSize": 57,
+            "hiddenByUser": true
+          }
+        ],
+        "merges": [
+          {
+            "sheetId": 1073742,
+            "startRowIndex": 8,
+            "endRowIndex": 9,
+            "startColumnIndex": 14,
+            "endColumnIndex": 16
+          }
+        ]
+      }
+    ]
+  },
+  "during_backfill": {
+    "properties": {
+      "timeZone": "Asia/Taipei"
+    },
+    "developerMetadata": [],
+    "sheets": [
+      {
+        "properties": {
+          "sheetId": 102,
+          "title": "202606",
+          "gridProperties": {
+            "rowCount": 100,
+            "columnCount": 25,
+            "frozenRowCount": 1
+          }
+        },
+        "rows": [
+          [
+            {
+              "userEnteredValue": {
+                "stringValue": "日期／報到時間"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "醫院"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "病歷號"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "姓名"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "TEL"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "GA"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "側別"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "診斷"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "Grade"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "術式"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "IOL"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "IOL Target"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "IOL Final"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "Axis"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "Plan"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "心得"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": ""
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "SN"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "CDE"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "Energy Time"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "Energy %"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "屈光數據"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "CalendarEventId"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "ScheduleSyncId"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "人工備註"
+              }
+            }
+          ],
+          [
+            {
+              "userEnteredValue": {
+                "stringValue": "2026-06-15"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "高榮"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "◆ 刀日"
+              }
+            },
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "000000000000000000000000000027d9"
+              }
+            },
+            {}
+          ],
+          [
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "TEST102"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "合成病人"
+              }
+            },
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "OD"
+              }
+            },
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "VT+MP"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": ""
+              }
+            },
+            {},
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "保留 +20.0"
+              }
+            },
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "synthetic-event-102"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "000000000000000000000000000027da"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "人工富文字"
+              },
+              "note": "完整保留註記",
+              "textFormatRuns": [
+                {
+                  "startIndex": 0,
+                  "format": {
+                    "italic": true
+                  }
+                }
+              ]
+            }
+          ],
+          [
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "CANCEL102"
+              },
+              "effectiveFormat": {
+                "textFormat": {
+                  "strikethrough": true
+                }
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "合成病人"
+              }
+            },
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "OD"
+              }
+            },
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "VT+MP"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": ""
+              }
+            },
+            {},
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "保留 +20.0"
+              }
+            },
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "synthetic-cancel-102"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "000000000000000000000000000027db"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "人工富文字"
+              },
+              "note": "完整保留註記",
+              "textFormatRuns": [
+                {
+                  "startIndex": 0,
+                  "format": {
+                    "italic": true
+                  }
+                }
+              ]
+            }
+          ]
+        ],
+        "column_widths": [
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          }
+        ],
+        "row_metadata": [
+          {
+            "pixelSize": 35
+          },
+          {},
+          {
+            "pixelSize": 57,
+            "hiddenByUser": true
+          }
+        ],
+        "merges": [
+          {
+            "sheetId": 102,
+            "startRowIndex": 2,
+            "endRowIndex": 3,
+            "startColumnIndex": 14,
+            "endColumnIndex": 16
+          }
+        ],
+        "conditionalFormats": [
+          {
+            "ranges": [
+              {
+                "sheetId": 102,
+                "startRowIndex": 1
+              }
+            ],
+            "booleanRule": {
+              "condition": {
+                "type": "CUSTOM_FORMULA",
+                "values": [
+                  {
+                    "userEnteredValue": "=FALSE"
+                  }
+                ]
+              },
+              "format": {
+                "textFormat": {
+                  "strikethrough": true
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "properties": {
+          "sheetId": 1073742,
+          "title": "刀表封存_2026",
+          "gridProperties": {
+            "rowCount": 1004,
+            "columnCount": 27,
+            "frozenRowCount": 6
+          }
+        },
+        "rows": [
+          [
+            {
+              "userEnteredValue": {
+                "stringValue": "刀表封存_2026"
+              },
+              "note": "SYSTEM_ANNUAL_SURGERY_ARCHIVE_V1"
+            }
+          ],
+          [],
+          [],
+          [],
+          [],
+          [
+            {
+              "userEnteredValue": {
+                "stringValue": "日期／報到時間"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "醫院"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "病歷號"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "姓名"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "TEL"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "GA"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "側別"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "診斷"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "Grade"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "術式"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "IOL"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "IOL Target"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "IOL Final"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "Axis"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "Plan"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "心得"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": ""
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "SN"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "CDE"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "Energy Time"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "Energy %"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "屈光數據"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "CalendarEventId"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "ScheduleSyncId"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "人工備註"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "ArchiveSourceMonth"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "ArchiveRowType"
+              }
+            }
+          ],
+          [
+            {
+              "userEnteredValue": {
+                "stringValue": "202606"
+              },
+              "note": "VGHKS_ARCHIVE_CONTRACT_V2"
+            },
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "202606"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "MONTH_HEADER"
+              }
+            }
+          ],
+          [
+            {
+              "userEnteredValue": {
+                "stringValue": "2026-06-15"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "高榮"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "◆ 刀日"
+              }
+            },
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "000000000000000000000000000027d9"
+              }
+            },
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "202606"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "DATE_HEADER"
+              }
+            }
+          ],
+          [
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "TEST102"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "合成病人"
+              }
+            },
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "OD"
+              }
+            },
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "VT+MP"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": ""
+              }
+            },
+            {},
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "保留 +20.0"
+              }
+            },
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "synthetic-event-102"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "000000000000000000000000000027da"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "人工富文字"
+              },
+              "note": "完整保留註記",
+              "textFormatRuns": [
+                {
+                  "startIndex": 0,
+                  "format": {
+                    "italic": true
+                  }
+                }
+              ]
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "202606"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "PATIENT"
+              }
+            }
+          ],
+          [
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "CANCEL102"
+              },
+              "userEnteredFormat": {
+                "textFormat": {
+                  "strikethrough": true
+                }
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "合成病人"
+              }
+            },
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "OD"
+              }
+            },
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "VT+MP"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": ""
+              }
+            },
+            {},
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "保留 +20.0"
+              }
+            },
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "synthetic-cancel-102"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "000000000000000000000000000027db"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "人工富文字"
+              },
+              "note": "完整保留註記",
+              "textFormatRuns": [
+                {
+                  "startIndex": 0,
+                  "format": {
+                    "italic": true
+                  }
+                }
+              ]
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "202606"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "PATIENT"
+              }
+            }
+          ],
+          [
+            {
+              "userEnteredValue": {
+                "stringValue": "202609"
+              },
+              "note": "VGHKS_ARCHIVE_CONTRACT_V2"
+            },
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "202609"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "MONTH_HEADER"
+              }
+            }
+          ],
+          [
+            {
+              "userEnteredValue": {
+                "stringValue": "2026-09-15"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "高榮"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "◆ 刀日"
+              }
+            },
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "00000000000000000000000000002775"
+              }
+            },
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "202609"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "DATE_HEADER"
+              }
+            }
+          ],
+          [
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "TEST101"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "合成病人"
+              }
+            },
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "OU"
+              }
+            },
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "LenSx-Phaco-IOL"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "SN60WF"
+              }
+            },
+            {},
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "保留 +20.0"
+              }
+            },
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "synthetic-event-101"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "00000000000000000000000000002776"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "人工富文字"
+              },
+              "note": "完整保留註記",
+              "textFormatRuns": [
+                {
+                  "startIndex": 0,
+                  "format": {
+                    "italic": true
+                  }
+                }
+              ]
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "202609"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "PATIENT"
+              }
+            }
+          ],
+          [
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "CANCEL101"
+              },
+              "userEnteredFormat": {
+                "textFormat": {
+                  "strikethrough": true
+                }
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "合成病人"
+              }
+            },
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "OU"
+              }
+            },
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "LenSx-Phaco-IOL"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "SN60WF"
+              }
+            },
+            {},
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "保留 +20.0"
+              }
+            },
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "synthetic-cancel-101"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "00000000000000000000000000002777"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "人工富文字"
+              },
+              "note": "完整保留註記",
+              "textFormatRuns": [
+                {
+                  "startIndex": 0,
+                  "format": {
+                    "italic": true
+                  }
+                }
+              ]
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "202609"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "PATIENT"
+              }
+            }
+          ]
+        ],
+        "column_widths": [
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110,
+            "hiddenByUser": true
+          },
+          {
+            "pixelSize": 110,
+            "hiddenByUser": true
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "hiddenByUser": true
+          },
+          {
+            "hiddenByUser": true
+          }
+        ],
+        "row_metadata": [
+          {},
+          {},
+          {},
+          {},
+          {},
+          {
+            "pixelSize": 35
+          },
+          {
+            "pixelSize": 35,
+            "hiddenByUser": false
+          },
+          {
+            "pixelSize": 21,
+            "hiddenByUser": false
+          },
+          {
+            "pixelSize": 57,
+            "hiddenByUser": true
+          },
+          {
+            "pixelSize": 21,
+            "hiddenByUser": false
+          },
+          {
+            "pixelSize": 35
+          },
+          {},
+          {
+            "pixelSize": 57,
+            "hiddenByUser": true
+          }
+        ],
+        "merges": [
+          {
+            "sheetId": 1073742,
+            "startRowIndex": 12,
+            "endRowIndex": 13,
+            "startColumnIndex": 14,
+            "endColumnIndex": 16
+          },
+          {
+            "sheetId": 1073742,
+            "startRowIndex": 8,
+            "endRowIndex": 9,
+            "startColumnIndex": 14,
+            "endColumnIndex": 16
+          }
+        ]
+      }
+    ]
+  },
+  "after_backfill": {
+    "properties": {
+      "timeZone": "Asia/Taipei"
+    },
+    "developerMetadata": [],
+    "sheets": [
+      {
+        "properties": {
+          "sheetId": 1073742,
+          "title": "刀表封存_2026",
+          "gridProperties": {
+            "rowCount": 1004,
+            "columnCount": 27,
+            "frozenRowCount": 6
+          }
+        },
+        "rows": [
+          [
+            {
+              "userEnteredValue": {
+                "stringValue": "刀表封存_2026"
+              },
+              "note": "SYSTEM_ANNUAL_SURGERY_ARCHIVE_V1"
+            }
+          ],
+          [],
+          [],
+          [],
+          [],
+          [
+            {
+              "userEnteredValue": {
+                "stringValue": "日期／報到時間"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "醫院"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "病歷號"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "姓名"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "TEL"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "GA"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "側別"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "診斷"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "Grade"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "術式"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "IOL"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "IOL Target"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "IOL Final"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "Axis"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "Plan"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "心得"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": ""
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "SN"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "CDE"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "Energy Time"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "Energy %"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "屈光數據"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "CalendarEventId"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "ScheduleSyncId"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "人工備註"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "ArchiveSourceMonth"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "ArchiveRowType"
+              }
+            }
+          ],
+          [
+            {
+              "userEnteredValue": {
+                "stringValue": "202606"
+              },
+              "note": "VGHKS_ARCHIVE_CONTRACT_V2"
+            },
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "202606"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "MONTH_HEADER"
+              }
+            }
+          ],
+          [
+            {
+              "userEnteredValue": {
+                "stringValue": "2026-06-15"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "高榮"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "◆ 刀日"
+              }
+            },
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "000000000000000000000000000027d9"
+              }
+            },
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "202606"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "DATE_HEADER"
+              }
+            }
+          ],
+          [
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "TEST102"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "合成病人"
+              }
+            },
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "OD"
+              }
+            },
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "VT+MP"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": ""
+              }
+            },
+            {},
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "保留 +20.0"
+              }
+            },
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "synthetic-event-102"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "000000000000000000000000000027da"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "人工富文字"
+              },
+              "note": "完整保留註記",
+              "textFormatRuns": [
+                {
+                  "startIndex": 0,
+                  "format": {
+                    "italic": true
+                  }
+                }
+              ]
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "202606"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "PATIENT"
+              }
+            }
+          ],
+          [
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "CANCEL102"
+              },
+              "userEnteredFormat": {
+                "textFormat": {
+                  "strikethrough": true
+                }
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "合成病人"
+              }
+            },
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "OD"
+              }
+            },
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "VT+MP"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": ""
+              }
+            },
+            {},
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "保留 +20.0"
+              }
+            },
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "synthetic-cancel-102"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "000000000000000000000000000027db"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "人工富文字"
+              },
+              "note": "完整保留註記",
+              "textFormatRuns": [
+                {
+                  "startIndex": 0,
+                  "format": {
+                    "italic": true
+                  }
+                }
+              ]
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "202606"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "PATIENT"
+              }
+            }
+          ],
+          [
+            {
+              "userEnteredValue": {
+                "stringValue": "202609"
+              },
+              "note": "VGHKS_ARCHIVE_CONTRACT_V2"
+            },
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "202609"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "MONTH_HEADER"
+              }
+            }
+          ],
+          [
+            {
+              "userEnteredValue": {
+                "stringValue": "2026-09-15"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "高榮"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "◆ 刀日"
+              }
+            },
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "00000000000000000000000000002775"
+              }
+            },
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "202609"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "DATE_HEADER"
+              }
+            }
+          ],
+          [
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "TEST101"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "合成病人"
+              }
+            },
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "OU"
+              }
+            },
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "LenSx-Phaco-IOL"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "SN60WF"
+              }
+            },
+            {},
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "保留 +20.0"
+              }
+            },
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "synthetic-event-101"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "00000000000000000000000000002776"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "人工富文字"
+              },
+              "note": "完整保留註記",
+              "textFormatRuns": [
+                {
+                  "startIndex": 0,
+                  "format": {
+                    "italic": true
+                  }
+                }
+              ]
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "202609"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "PATIENT"
+              }
+            }
+          ],
+          [
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "CANCEL101"
+              },
+              "userEnteredFormat": {
+                "textFormat": {
+                  "strikethrough": true
+                }
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "合成病人"
+              }
+            },
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "OU"
+              }
+            },
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "LenSx-Phaco-IOL"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "SN60WF"
+              }
+            },
+            {},
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "保留 +20.0"
+              }
+            },
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {
+              "userEnteredValue": {
+                "stringValue": "synthetic-cancel-101"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "00000000000000000000000000002777"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "人工富文字"
+              },
+              "note": "完整保留註記",
+              "textFormatRuns": [
+                {
+                  "startIndex": 0,
+                  "format": {
+                    "italic": true
+                  }
+                }
+              ]
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "202609"
+              }
+            },
+            {
+              "userEnteredValue": {
+                "stringValue": "PATIENT"
+              }
+            }
+          ]
+        ],
+        "column_widths": [
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "pixelSize": 110,
+            "hiddenByUser": true
+          },
+          {
+            "pixelSize": 110,
+            "hiddenByUser": true
+          },
+          {
+            "pixelSize": 110
+          },
+          {
+            "hiddenByUser": true
+          },
+          {
+            "hiddenByUser": true
+          }
+        ],
+        "row_metadata": [
+          {},
+          {},
+          {},
+          {},
+          {},
+          {
+            "pixelSize": 35
+          },
+          {
+            "pixelSize": 35,
+            "hiddenByUser": false
+          },
+          {
+            "pixelSize": 21,
+            "hiddenByUser": false
+          },
+          {
+            "pixelSize": 57,
+            "hiddenByUser": true
+          },
+          {
+            "pixelSize": 21,
+            "hiddenByUser": false
+          },
+          {
+            "pixelSize": 35
+          },
+          {},
+          {
+            "pixelSize": 57,
+            "hiddenByUser": true
+          }
+        ],
+        "merges": [
+          {
+            "sheetId": 1073742,
+            "startRowIndex": 12,
+            "endRowIndex": 13,
+            "startColumnIndex": 14,
+            "endColumnIndex": 16
+          },
+          {
+            "sheetId": 1073742,
+            "startRowIndex": 8,
+            "endRowIndex": 9,
+            "startColumnIndex": 14,
+            "endColumnIndex": 16
+          }
+        ]
+      }
+    ]
+  }
+}

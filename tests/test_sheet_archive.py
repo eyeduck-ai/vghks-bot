@@ -336,7 +336,7 @@ class ArchiveTests(unittest.TestCase):
         self.assertEqual(verify_archive(plan, client.read()), "verified")
         self.assertEqual(client.book["sheets"][1]["rows"][8][14]["dataValidation"], validation)
 
-    def test_existing_archive_conditional_rules_are_never_overwritten_or_applied_to_new_rows(self):
+    def test_existing_archive_conditional_rules_are_backed_up_and_frozen_in_preview(self):
         plan, client = self.stage(prepared("202608", 100), ["202608"])
         client.write(build_archive_delete(plan, client.read())["requests"])
         target = client.book["sheets"][0]
@@ -344,9 +344,32 @@ class ArchiveTests(unittest.TestCase):
             "booleanRule": {"condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": "=TRUE"}]}}}]
         client.book["sheets"].append(prepared()["sheets"][0])
         before = copy.deepcopy(client.read())
-        with self.assertRaisesRegex(ValueError, "既有封存含條件格式"):
-            build_archive(client.read(), ["202609"], TODAY)
+        migration = build_archive(client.read(), ["202609"], TODAY)
         self.assertEqual(client.read(), before)
+        self.assertEqual(migration["original_targets"]["刀表封存_2026"]["conditionalFormats"], before["sheets"][0]["conditionalFormats"])
+        self.assertTrue(migration["summary"]["months"][0]["migrated_existing_format"])
+        client.write(migration["requests"])
+        self.assertEqual(verify_archive(migration, client.read()), "verified")
+        self.assertFalse(client.book["sheets"][0].get("conditionalFormats"))
+
+    def test_backfill_preserves_annual_id_native_cells_row_dimensions_and_merges(self):
+        book = prepared()
+        book["sheets"][0]["row_metadata"] = [{}, {}, {"pixelSize": 57, "hiddenByUser": True}]
+        book["sheets"][0]["merges"] = [{"sheetId": 101, "startRowIndex": 2, "endRowIndex": 3,
+                                        "startColumnIndex": 14, "endColumnIndex": 16}]
+        book["sheets"][0]["rows"][2][15] = {}
+        plan, client = self.stage(book)
+        client.write(build_archive_delete(plan, client.read())["requests"])
+        old = copy.deepcopy(client.book["sheets"][0])
+        client.book["sheets"].append(prepared("202606", 99)["sheets"][0])
+        backfill = build_archive(client.read(), ["202606"], TODAY)
+        client.write(backfill["requests"])
+        self.assertEqual(verify_archive(backfill, client.read()), "verified")
+        result = client.book["sheets"][0]
+        self.assertEqual(result["properties"]["sheetId"], old["properties"]["sheetId"])
+        count = backfill["summary"]["months"][0]["copied_rows"]
+        self.assertEqual(result["rows"][6 + count:], old["rows"][6:])
+        self.assertEqual(result["row_metadata"][8 + count], {"pixelSize": 57, "hiddenByUser": True})
 
     def test_reserved_source_header_cannot_overwrite_existing_archive_metadata(self):
         for label in ("ArchiveRowType", "ArchiveSourceMonth"):

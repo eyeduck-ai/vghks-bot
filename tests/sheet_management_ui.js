@@ -87,8 +87,25 @@ async function unavailableAndIntentTypes(){
  mode="malformed";await s.q("sheetManagementRefresh").emit("click");assert.match(s.q("sheetManagementMonths").textContent,/排程數待核對/);assert.match(s.q("sheetManagementArchiveMonths").textContent,/排程數待核對/);assert.doesNotMatch(s.q("sheetManagementMonths").textContent,/0 筆排程/);
  await s.action("create_day");s.q("sheetManagementDay").value="2026-11-02";s.q("sheetManagementHospital").value="聯醫";await s.q("sheetManagementOperationForm").emit("submit");assert.deepEqual(s.calls.at(-1).values,{action:"create_day",params:{date:"2026-11-02",hospital:"聯醫"}});assert.equal(s.q("sheetManagementDay").value,"2026-11-02");assert.equal(s.planButton("apply"),undefined);await s.action("repair");await s.q("sheetManagementOperationForm").emit("submit");assert.deepEqual(s.calls.at(-1).values,{action:"repair",params:{}});
 }
+async function monthlyStatistics(){
+ const s=surface(),gate=deferred();let mode="live";
+ s.handle(async(path)=>{if(path.endsWith("/status"))return connection({stale:true});if(path.endsWith("/refresh"))return connection();if(path.endsWith("/report")){
+  if(mode==="delayed")await gate.promise;
+  if(mode==="offline")return {stale:true,cached_at:"",monthly:[],issues:[]};
+  return {stale:false,complete:false,cached_at:"2026-10-12T08:10:00",monthly:[{month:"202609",available:true,total:2,eye_count:3,lensx_eye_count:2,cata_eye_count:2,excluded_cancelled:1,excluded_unknown_side:0,
+   procedures:[{procedure:"CATA",count:1,eye_count:2},{procedure:"LenSx",count:1,eye_count:2}],models:[{model:"SN60WF",count:1,eye_count:2}],items:[{date:"2026-09-15",hospital:"高榮",mrn:"TEST001",name:"<img src=x>",side:"OU",procedure:"LenSx-Phaco-IOL",iol:"SN60WF",eye_count:2,position:"刀表封存_2026!9",review_codes:[]}]},{month:"202610",available:false}],issues:[{month:"202610",reason:"尚未取得此月份"}]};
+ }throw new Error(path);});
+ await s.ui.open();assert.equal(s.q("sheetManagementStatisticsStart").value,"2026-10");
+ s.q("sheetManagementStatisticsStart").value="2028-02";s.q("sheetManagementStatisticsEnd").value="2028-02";await s.q("sheetManagementStatisticsForm").emit("submit");
+ assert.deepEqual(s.calls.at(-1).values,{start:"2028-02-01",end:"2028-02-29",hospital:""});
+ assert.match(s.q("sheetManagementStatistics").textContent,/LenSx 眼數/);assert.match(s.q("sheetManagementStatistics").textContent,/未取得/);
+ assert.ok(s.q("sheetManagementStatistics").textContent.includes("<img src=x>"));assert.equal(s.q("sheetManagementStatistics").querySelectorAll("img").length,0);
+ s.q("sheetManagementStatisticsEnd").value="2028-01";const count=s.calls.length;await s.q("sheetManagementStatisticsForm").emit("submit");assert.equal(s.calls.length,count);
+ s.q("sheetManagementStatisticsEnd").value="2028-02";mode="offline";await s.q("sheetManagementStatisticsForm").emit("submit");assert.match(s.q("sheetManagementStatisticsMeta").textContent,/尚無可用快取/);assert.equal(s.q("sheetManagementStatistics").querySelectorAll("table").length,0);
+ mode="delayed";const waiting=s.q("sheetManagementStatisticsForm").emit("submit");await tick();s.context.account="ACCOUNT_B";s.ui.reset();gate.resolve();await waiting;await tick();assert.equal(s.q("sheetManagementStatistics").textContent,"");
+}
 function integration(){
  const bot=fs.readFileSync("vghks_bot/static/bot.js","utf8");assert.match(html,/data-page="sheetManagement"/);assert.match(html,/src="\/sheet-management.js" defer/);assert.match(html,/href="\/sheet-management.css"/);assert.match(bot,/name==="sheetManagement"\)await window\.SheetManagement\.open\(\)/);assert.equal((bot.match(/window\.SheetManagement\?\.reset\(\)/g)||[]).length,2);assert.match(bot,/SheetManagement\?\.visibility\(name\)/);assert.match(html,/id="sheetManagementMessage"[^>]*aria-live="polite"/);assert.doesNotMatch(script,/innerHTML|moduleFrame|cohort_id|calendar_id/);
 }
 module.exports={surface,deferred,tick,connection};
-if(require.main===module)(async()=>{integration();await previewAndOffline();await archiveFlow();await uncertainWrite();await reportsAndAccountReset();await settingsAndContextRace();await staleResponsesAndEdits();await unavailableAndIntentTypes();console.log("Sheet management UI checks passed");})().catch(error=>{console.error(error);process.exitCode=1;});
+if(require.main===module)(async()=>{integration();await previewAndOffline();await archiveFlow();await uncertainWrite();await reportsAndAccountReset();await settingsAndContextRace();await staleResponsesAndEdits();await unavailableAndIntentTypes();await monthlyStatistics();console.log("Sheet management UI checks passed");})().catch(error=>{console.error(error);process.exitCode=1;});

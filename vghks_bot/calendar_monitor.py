@@ -341,6 +341,9 @@ class CalendarMonitor:
             with self.clients() as (sheets, calendar), sheet_mutex(config["spreadsheet_id"]):
                 calendar.probe()
                 book = self._read_monitor(sheets)
+                from .sheet_archive_lock import assert_archive_available
+
+                assert_archive_available(book)
                 metadata, owner = metadata_owner(book)
                 if owner and not owner_matches(owner, config) and not takeover:
                     raise ValueError("刀表已登記其他監控主機。停止舊主機後，明確選擇接替主機再準備。")
