@@ -5,16 +5,53 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from vghks_sdk import ParseError
 from vghks_sdk import __version__ as sdk_version
 from vghks_sdk.core.errors import error_info
 
 from vghks_bot.bot import BotApplication
+from vghks_bot.bot_gateway import AccountGateway, NetworkGate
+from vghks_bot.scanner import create_sdk
 from vghks_bot.selftest_bot import wait_task
 from vghks_bot.selftest_session import MRN, PATIENT, SessionScenario
 from vghks_bot.settings import Settings
+
+
+class SDKIdentityBridgeTests(unittest.TestCase):
+    def gateway(self, returned_id):
+        sdk = create_sdk(Settings(username="SYNTHETIC", password="SYNTHETIC"))
+        self.addCleanup(sdk.close)
+        runtime = sdk._runtime
+        runtime.auth.ensure = Mock()
+        runtime.auth.hid_for = Mock(return_value="SYNTHETIC-HID")
+        runtime.request_text = Mock(side_effect=[
+            '<frameset><frame src="/Page/JSP/KS_Patient.jsp">'
+            '<frame src="/QueryCaseList.do"></frameset>',
+            f'<span id="pHistno">00012345</span><script>var url="&hidno={returned_id}&type=1";</script>',
+        ])
+        gateway = AccountGateway(lambda settings: sdk, NetworkGate())
+        gateway.connection, gateway.online = sdk, True
+        return gateway, runtime
+
+    def test_real_sdk_resolves_verified_header_without_requiring_encounters(self):
+        gateway, runtime = self.gateway("A123456789")
+        self.assertEqual(gateway.resolve_identity("a123456789"), "00012345")
+        self.assertEqual(gateway.context, "00012345")
+        calls = runtime.request_text.call_args_list
+        self.assertEqual([call.args[0].key for call in calls],
+                         ["prq.patient_context", "prq.patient_identity"])
+        self.assertEqual(calls[0].kwargs["data"],
+                         {"id": "A123456789", "queryID": "A123456789", "queryPtID": "", "type": "2"})
+
+    def test_real_sdk_rejects_header_id_mismatch_without_replaying_the_lookup(self):
+        gateway, runtime = self.gateway("B123456789")
+        with self.assertRaises(ParseError) as failed:
+            gateway.resolve_identity("A123456789")
+        self.assertEqual(failed.exception.info.code, "PRQ_PATIENT_ID_MISMATCH")
+        self.assertIsNone(gateway.context)
+        self.assertEqual(runtime.request_text.call_count, 2)
 
 
 class NativeSDKSessionTests(unittest.TestCase):

@@ -45,5 +45,20 @@ if ($vghksNeedsEnvironment) {
 }
 & $vghksPythonPath -m pip install -r requirements-build.lock.txt
 if ($LASTEXITCODE -ne 0) { throw 'Dependency installation failed.' }
+$vghksSdkCheck = @'
+from tools.verify_repository import check_sdk_installation
+try:
+    check_sdk_installation()
+except ValueError:
+    raise SystemExit(1)
+'@
+& $vghksPythonPath -c $vghksSdkCheck
+if ($LASTEXITCODE -ne 0) {
+    # SDK refactors can retain the same package version; replace an older commit.
+    $vghksSdkRequirement = Get-Content -LiteralPath 'requirements-build.lock.txt' |
+        Where-Object { $_.StartsWith('vghks-sdk @ ') }
+    & $vghksPythonPath -m pip install --no-deps --force-reinstall $vghksSdkRequirement
+    if ($LASTEXITCODE -ne 0) { throw 'Pinned SDK installation failed.' }
+}
 & $vghksPythonPath -X utf8 tools\run_checks.py --build
 if ($LASTEXITCODE -ne 0) { throw 'Validation or EXE build failed.' }
