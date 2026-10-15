@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import tempfile
+import threading
 import unittest
 from dataclasses import replace
 from datetime import date, timedelta
@@ -9,7 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from vghks_sdk import AuthenticationError, VisitCase
+from vghks_sdk import AuthenticationError, ParseError, VisitCase
 from vghks_sdk.models import (
     BinaryAsset,
     ClinicalOrder,
@@ -127,7 +128,7 @@ class HistorySDK(BotSyntheticSDK):
             raise AuthenticationError("expired synthetic session", code="AUTH_EXPIRED", retry_safe=True)
         return super().history(mrn, options)
 
-    def order_history(self, mrn, options):
+    def order_history(self, mrn, options, *, verified_cases=()):
         self.calls.append((self.card, "orders-history", mrn, options.category))
         if mrn != MRN:
             return []
@@ -347,6 +348,85 @@ class ReviewHistoryTests(unittest.TestCase):
 
     def fetch(self, resource, reference="", **options):
         return self.run_task(kind="history", **self.request(resource, reference), **options)
+
+    def test_real_order_parser_keeps_verified_alias_and_partial_rows_then_retries_only_partial_category(self):
+        from test_sdk_orders import order_page
+
+        from vghks_bot.sdk_orders import parse_order_index
+
+        current = order_page(photo=False).replace("caseNo=EYE1", "caseNo=ONE")
+        legacy = order_page(photo=False, other_mrn=ALIAS).replace("caseNo=EYE1", "caseNo=LEGACY")
+        foreign = order_page(photo=False, other_mrn="OTHER001")
+        invalid = order_page(photo=False).replace("var mydate = '2026-09-01'", "var mydate = getUnknownDate()")
+        calls, broken = [], True
+
+        def query(mrn, options, *, verified_cases=()):
+            calls.append(options.category)
+            self.assertTrue(any(case.mrn == ALIAS and case.patient_mrn == MRN for case in verified_cases))
+            if options.category == "OR":
+                return []
+            return parse_order_index(current + legacy + (foreign + invalid if broken else ""),
+                                     mrn=mrn, verified_cases=verified_cases, allow_partial=True)
+
+        with patch.object(self.work.gateway.connection.orders, "get_order_history", side_effect=query):
+            task = self.fetch("orders")
+            self.assertEqual(task["status"], "partial", task)
+            saved = self.history.read(self.request("orders"))
+            self.assertEqual(len(saved["data"]), 2)
+            self.assertEqual(len(saved["issues"]), 2)
+            self.assertFalse(saved["complete"])
+            self.assertEqual({order["mrn"] for order in self.work.analysis.store.step(MRN, "orders-history:*")["payload"]}, {MRN, ALIAS})
+            broken = False
+            self.assertEqual(self.fetch("orders")["status"], "completed")
+        self.assertEqual(calls, ["*", "OR", "*"])
+        self.assertTrue(self.history.read(self.request("orders"))["complete"])
+        self.assertEqual(self.history.read(self.request("orders"))["issues"], [])
+        with self.assertRaises(ValueError):
+            self.history.read(self.request("order_report", "unverified"))
+
+    def test_failed_category_keeps_successful_data_and_force_refresh_retains_previous_rows(self):
+        original = self.work.gateway.connection.orders.get_order_history
+        calls = []
+
+        def query(mrn, options, **kwargs):
+            calls.append(options.category)
+            if options.category == "OR":
+                raise ParseError("synthetic changed format", code="PRQ_ORDER_HISTORY_STRUCTURE_MISSING")
+            return original(mrn, options, **kwargs)
+
+        with patch.object(self.work.gateway.connection.orders, "get_order_history", side_effect=query):
+            self.assertEqual(self.fetch("orders")["status"], "partial")
+        before = self.history.read(self.request("orders"))
+        self.assertEqual(len(before["data"]), 1)
+        self.assertFalse(before["complete"])
+        with patch.object(self.work.gateway.connection.orders, "get_order_history", side_effect=ParseError("synthetic", code="TEST_PARSE")):
+            self.assertEqual(self.fetch("orders", force=True)["status"], "partial")
+        self.assertEqual(self.history.read(self.request("orders"))["data"], before["data"])
+        self.assertEqual(calls, ["*", "OR"])
+        self.assertEqual(self.fetch("orders")["status"], "completed")
+        self.assertTrue(self.history.read(self.request("orders"))["complete"])
+
+    def test_first_order_category_can_be_read_while_second_is_waiting(self):
+        original = self.work.gateway.connection.orders.get_order_history
+        waiting, release = threading.Event(), threading.Event()
+
+        def query(mrn, options, **kwargs):
+            if options.category == "OR":
+                waiting.set()
+                if not release.wait(5):
+                    raise AssertionError("test did not release query")
+            return original(mrn, options, **kwargs)
+
+        with patch.object(self.work.gateway.connection.orders, "get_order_history", side_effect=query):
+            task = self.work.review.start({"kind": "history", **self.request("orders")})
+            try:
+                self.assertTrue(waiting.wait(5))
+                saved = self.history.read(self.request("orders"))
+                self.assertEqual(len(saved["data"]), 1)
+                self.assertFalse(saved["complete"])
+            finally:
+                release.set()
+            self.assertEqual(wait_task(self.work, task["task_id"])["status"], "completed")
 
     def test_visits_and_soap_preserve_current_review_and_cache_offline(self):
         original = self.work.review.results({"id": self.review["id"]})["patients"]

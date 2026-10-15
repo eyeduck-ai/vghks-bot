@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from time import monotonic
 from types import SimpleNamespace
 
-from vghks_sdk import AuthenticationError, NotAuthenticatedError, assess_data
+from vghks_sdk import AuthenticationError, NotAuthenticatedError
 from vghks_sdk.core.errors import SDKError, error_info
 from vghks_sdk.core.operations import operation_spec
 from vghks_sdk.identifiers import normalize_national_id
@@ -164,8 +164,10 @@ class AccountGateway:
             self.auth_generation = generation
 
     def record_result(self, service, method, value):
+        from .sdk_orders import assess_order_index
+
         self.observe_auth(value if service == "auth" and method == "check" else None)
-        data = assess_data(value)
+        data = assess_order_index(value)
         status = "partial" if data.complete is False else "empty" if data.availability == "EMPTY" else "ok"
         self.local.assessment = to_jsonable(data)
         self.record_event(service, method, status, assessment=self.local.assessment)

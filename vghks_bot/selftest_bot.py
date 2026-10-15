@@ -49,7 +49,7 @@ class BotSyntheticSDK:
             get_registration_history=self.registrations, resolve_identity=self.resolve)
         self.records = SimpleNamespace(get_visit_cases=self.visits, get_soap=self.soap,
             get_numeric_report=self.numeric, get_numeric_history=self.history)
-        self.orders = SimpleNamespace(get_order_history=lambda *_: [], get_case_orders=lambda *_: [])
+        self.orders = SimpleNamespace(get_order_history=lambda *_, **__: [], get_case_orders=lambda *_: [])
         self.surgery = SimpleNamespace(get_patient_info=lambda mrn: {"mrn": mrn}, get_schedule=self.surgery_schedule)
         self.reviews = SimpleNamespace(get_cases=self.review_cases, get_case=self.review_case,
             get_options=self.review_options, get_doctors=self.review_doctors,

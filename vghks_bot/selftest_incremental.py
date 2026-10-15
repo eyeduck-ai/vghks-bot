@@ -5,12 +5,19 @@ from dataclasses import replace
 from types import SimpleNamespace
 from urllib.parse import urlencode
 
-from vghks_sdk.models import OrderReportRef, PacsImageRef, PacsStudyRef, to_jsonable
+from vghks_sdk.models import (
+    OrderHistoryFilter,
+    OrderReportRef,
+    PacsImageRef,
+    PacsStudyRef,
+    VisitCase,
+    to_jsonable,
+)
 from vghks_sdk.parsing.clinical import parse_order_report, parse_pacs_study
 
 from .analysis_fetch import model
 from .bot import BotApplication
-from .sdk_orders import CompatibleOrderAdapter
+from .sdk_orders import CompatibleOrderAdapter, CompatibleOrdersService, assess_order_index
 from .settings import Settings, today
 
 
@@ -84,3 +91,14 @@ def check_sdk_report_contract():
     report = parse_order_report('<table><tr><th>報告內容</th><td><pre><script>' + script + '</script></pre></td></tr></table>',
                                 reference=OrderReportRef("TEST001", "SYNTHETIC", "O", "1"))
     assert report.report_text == "First\nSecond" and not report.text_extraction_notes
+    def order_row(mrn, case_no):
+        name = '<a href="/PRQWeb/QueryOrderDetail.do?hhisnum=' + mrn + '&caseType=O&caseNo=' + case_no + '&seqNo=1">Synthetic order</a>'
+        return '<script>new KSCase("",' + json.dumps(name) + ',"2026-10-01","","","","");</script>'
+    page = order_row("TEST001", "CURRENT") + order_row("OLD001", "LEGACY") + order_row("OTHER001", "FOREIGN")
+    runtime.request_text = lambda *args, **kwargs: page
+    adapter._history_context_raw = lambda _: None
+    verified = VisitCase("OLD001", today(), "O", "LEGACY", "70", "眼科", lookup_mrn="TEST001")
+    orders = CompatibleOrdersService(adapter).get_order_history("TEST001", OrderHistoryFilter(), verified_cases=[verified])
+    assert {order.mrn for order in orders} == {"TEST001", "OLD001"}
+    assert all(order.mrn == order.detail_ref.mrn for order in orders)
+    assert len(orders.issues) == 1 and assess_order_index(orders).complete is False

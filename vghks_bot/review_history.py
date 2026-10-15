@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 from vghks_sdk import AuthenticationError, SoapRecord, VisitCase
+from vghks_sdk.core.errors import error_info
 from vghks_sdk.models import (
     NumericHistoryFilter,
     OrderDetailRef,
@@ -12,13 +13,15 @@ from vghks_sdk.models import (
     PacsImageRef,
     PacsStudyRef,
     PdfAttachmentRef,
+    to_jsonable,
 )
 
 from .analysis_fetch import clean, model, order_identity, unique_refs, validate_patient
 from .analysis_store import digest
 from .connection_state import should_pause
 from .report_cache import branch_complete, result_complete
-from .scanner import safe_failure
+from .scanner import Cancelled, safe_failure
+from .sdk_orders import assess_order_index, order_index_complete
 from .settings import today
 from .soap_data import snapshot as soap_snapshot
 from .storage import StorageError
@@ -148,6 +151,47 @@ class ReviewHistory:
             groups.setdefault(self._order_key(order), []).append(order)
         return groups
 
+    def _save_order_index(self, mrn, key, orders, *, issues=()):
+        assessment = to_jsonable(assess_order_index(orders))
+        assessment["issues"].extend(issues)
+        allowed = self._allowed_mrns(mrn)
+        payload = []
+        for order in clean(orders):
+            try:
+                if not isinstance(order, dict) or order.get("mrn") not in allowed:
+                    raise ValueError("unverified patient")
+                validate_patient(order, order["mrn"])
+            except (TypeError, ValueError):
+                assessment["issues"].append({"code": "ORDER_REF_MRN_MISMATCH", "category": "PARSE"})
+            else:
+                payload.append(order)
+        if assessment["issues"]:
+            assessment["complete"] = False
+            previous = self.store.step(mrn, key)
+            # An incomplete refresh must not erase previously confirmed rows.
+            retained = {}
+            for order in previous["payload"] if previous else []:
+                try:
+                    if not isinstance(order, dict) or order.get("mrn") not in allowed:
+                        raise ValueError("unverified patient")
+                    validate_patient(order, order["mrn"])
+                except (TypeError, ValueError):
+                    continue
+                retained[self._order_key(order)] = order
+            retained.update({self._order_key(order): order for order in payload})
+            payload = list(retained.values())
+        assessment["item_count"] = len(payload)
+        assessment["availability"] = "AVAILABLE" if payload else "EMPTY"
+        self.store.save_step(mrn, key, "order_index", payload, self.app.username, assessment=assessment)
+        return assessment["issues"]
+
+    def _index_steps(self, mrn, resource, reference=""):
+        if resource == "orders":
+            return [self.store.step(mrn, "orders-history:" + category) for category in ("*", "OR")]
+        if resource == "case_orders":
+            return [self.store.step(mrn, "orders-case:" + digest(self.case(mrn, reference).identity))]
+        return []
+
     @staticmethod
     def _public_orders(groups):
         rows = []
@@ -235,15 +279,20 @@ class ReviewHistory:
         return (record, record["updated_at"]) if record and record["mrn"] == mrn else (None, "")
 
     def read(self, values):
+        with self.app.store.library.read_snapshot():
+            return self._read(values)
+
+    def _read(self, values):
         _, mrn, resource, reference = self.scope(values)
         data, updated = self._stored(mrn, resource, reference, cataract=bool(values.get("cohort_id")))
-        complete = (all(self.store.step(mrn, "orders-history:" + category) is not None
-                        for category in ("*", "OR")) if resource == "orders" else
+        index_steps = self._index_steps(mrn, resource, reference)
+        issues = [issue for step in index_steps if step for issue in step.get("assessment", {}).get("issues", [])]
+        complete = (all(order_index_complete(step) for step in index_steps) if index_steps else
                     data["history_loaded"] if resource == "scans" else
                     bool(data is not None and result_complete(data, self.store)) if resource == "order_report" else
                     data is not None)
         return {"data": data, "updated_at": updated, "resource": resource,
-                "complete": complete,
+                "complete": complete, "issues": issues,
                 "coverage": {"numeric_start": (today() - timedelta(days=3650)).isoformat(),
                              "orders_start": (today() - timedelta(days=4000)).isoformat()}}
 
@@ -272,8 +321,8 @@ class ReviewHistory:
             return {**self.app.scans.download(mrn, reference), "resource": resource, "reference": reference}
         if not task.get("force"):
             data, _ = self._stored(mrn, resource, reference, cataract=bool(task.get("cohort_id")))
-            complete = resource != "orders" or all(
-                self.store.step(mrn, "orders-history:" + category) is not None for category in ("*", "OR"))
+            complete = resource not in {"orders", "case_orders"} or all(
+                order_index_complete(step) for step in self._index_steps(mrn, resource, reference))
             if resource == "order_report":
                 complete = data is not None and result_complete(data, self.store)
             if data is not None and complete:
@@ -290,15 +339,34 @@ class ReviewHistory:
         elif resource == "orders":
             if not self._visits(mrn)[0]:
                 self.review.cases(mrn)
+            visits, _ = self._visits(mrn)
+            verified_cases = [model(VisitCase, raw) for raw in visits or []]
+            failures = []
             with self.app.sdk_factory(self.app.settings) as sdk:
                 for category in ("*", "OR"):
+                    if state:
+                        state.check_cancel()
                     key = "orders-history:" + category
-                    if self.store.step(mrn, key) and not task.get("force"):
+                    if order_index_complete(self.store.step(mrn, key)) and not task.get("force"):
                         continue
-                    orders = sdk.orders.get_order_history(mrn, OrderHistoryFilter(category=category))
-                    payload = clean(orders)
-                    self._groups(mrn, payload)
-                    self.store.save_step(mrn, key, "order_index", payload, self.app.username)
+                    try:
+                        orders = sdk.orders.get_order_history(mrn, OrderHistoryFilter(category=category),
+                                                             verified_cases=verified_cases)
+                    except (Cancelled, StorageError):
+                        raise
+                    except Exception as exc:
+                        if should_pause(exc):
+                            raise
+                        issues = self._save_order_index(mrn, key, [], issues=[to_jsonable(error_info(exc))])
+                    else:
+                        issues = self._save_order_index(mrn, key, orders)
+                    failures.extend(issues)
+                    # Publish each saved category, so the browser can display it
+                    # while the remaining category is still being fetched.
+                    if state:
+                        self.review.report(state, task, stage="已保存歷年醫囑 · " + ("全部類別" if category == "*" else "OR"))
+            return {"status": "partial" if failures else "ready", "cached": False,
+                    "resource": resource, "reference": reference, "issues": failures}
         elif resource in CASE_RESOURCES:
             case = self.case(mrn, reference)
             with self.app.sdk_factory(self.app.settings) as sdk:
@@ -309,9 +377,9 @@ class ReviewHistory:
                     self.store.save_step(mrn, "numeric-case:" + digest(case.identity), "numeric", clean(report), self.app.username)
                 elif resource == "case_orders":
                     orders = sdk.orders.get_case_orders(case)
-                    payload = clean(orders)
-                    self._groups(mrn, payload)
-                    self.store.save_step(mrn, "orders-case:" + digest(case.identity), "order_index", payload, self.app.username)
+                    issues = self._save_order_index(mrn, "orders-case:" + digest(case.identity), orders)
+                    return {"status": "partial" if issues else "ready", "cached": False,
+                            "resource": resource, "reference": reference, "issues": issues}
                 else:
                     if self.review.db.deleted_since(reference, "") and not task.get("force"):
                         raise ValueError("這份病歷已刪除；如需重新取得，請明確按更新資料。")

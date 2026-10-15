@@ -109,7 +109,7 @@ class ExamSDK:
         self.calls.append(("case_numeric", case.mrn, str(case.visit_date)))
         return NumericReport(case, (NumericTable("Va", ("OD", "OS"), (("0.1", "0.2"),)),))
 
-    def orders_history(self, mrn, history_filter):
+    def orders_history(self, mrn, history_filter, *, verified_cases=()):
         self.calls.append(("orders", mrn, history_filter.category))
         return self.recent_orders(mrn)
 

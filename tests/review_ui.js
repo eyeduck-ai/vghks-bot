@@ -129,11 +129,11 @@ async function historyLoadingTests(){
  c.reviewPatientIdentity=()=>({name:"合成病人"});c.extensionTask="";
  c.JobProgress={pending(){},publish(){}};c.work.online=true;
  c.appendNumericTables=(content,tables)=>content.append(c.node("p",tables[0]?.title||"numeric result"));
- let readGate=null,startGate=null,readFailure=null,startFailure=null,status="running",complete=false,data=null,starts=0;
+ let readGate=null,startGate=null,detailGate=null,readFailure=null,startFailure=null,status="running",complete=false,data=null,starts=0,details=0,revision=0,updated="saved-first",issues=[];
  c.api=async path=>{
-  if(path==="/reviews/history/read"){if(readGate)await readGate.promise;if(readFailure)throw readFailure;return {data,complete};}
+  if(path==="/reviews/history/read"){if(readGate)await readGate.promise;if(readFailure)throw readFailure;return {data,complete,updated_at:updated,issues};}
   if(path==="/tasks/start"){starts++;if(startGate)await startGate.promise;if(startFailure)throw startFailure;return {task_id:"H1"};}
-  if(path.startsWith("/tasks/detail"))return {status,updated_at:status,message:"合成查詢結果"};
+  if(path.startsWith("/tasks/detail")){details++;if(detailGate)await detailGate.promise;return {status,updated_at:status+revision,message:"合成查詢結果"};}
   throw new Error(path);
  };
  s.run("vghks_bot/static/review-history.js");const ui=c.window.ReviewHistoryUI;
@@ -143,6 +143,17 @@ async function historyLoadingTests(){
  assert.equal(spinner().querySelector(".clinical-loading-icon")["aria-hidden"],"true");
  assert.match(spinner().querySelector(".clinical-loading-label").textContent,/讀取/);
  readGate.resolve();await reading;readGate=null;assert.ok(spinner(),"running query lost loading");
+ const waiting=spinner();revision++;await ui.poll();assert.equal(spinner(),waiting,"progress-only update restarted spinner");
+ assert.match(waiting.querySelector(".clinical-loading-elapsed").textContent,/已等待 \d+ 秒/);
+ detailGate=deferred();revision++;const beforeDetails=details,firstPoll=ui.poll(),secondPoll=ui.poll();
+ detailGate.resolve();await Promise.all([firstPoll,secondPoll]);detailGate=null;
+ assert.equal(details-beforeDetails,1,"overlapping polling duplicated history requests");
+ data={tables:[{title:"先顯示已取得資料"}]};updated="saved-second";issues=[{code:"TEST_PARSE"}];revision++;await ui.poll();
+ assert.ok($("#dataContent").children.some(child=>child.textContent==="先顯示已取得資料"),"partial result was hidden while fetching");
+ assert.ok(spinner(),"remaining query did not show waiting state");
+ assert.match($("#dataContent").querySelector(".history-index-issues").textContent,/1 項未能確認/);
+ const partialSpinner=spinner();revision++;await ui.poll();assert.equal(spinner(),partialSpinner,"unchanged partial result was rebuilt");
+ issues=[];
  status="completed";complete=true;data={tables:[{title:"合成數值結果"}]};await ui.poll();
  assert.equal(spinner(),null,"completed report kept loading");assert.ok($("#dataContent").children.some(child=>child.textContent==="合成數值結果"));
  status="running";complete=false;data=null;await ui.open("numeric","P1");

@@ -56,7 +56,7 @@ class DiagnosticTests(unittest.TestCase):
         self.assertTrue(self.work.idle.wait(8))
         return self.work.snapshot(key)
 
-    def unsupported_orders(self, mrn, _filters):
+    def unsupported_orders(self, mrn, _filters, *, verified_cases=()):
         return parse_clinical_orders(UNSUPPORTED_ORDERS_HTML, mrn=mrn)
 
     def test_cataract_index_failure_identifies_single_query_and_preserves_completed_data_on_resume(self):

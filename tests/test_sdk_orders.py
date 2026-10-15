@@ -2,9 +2,10 @@
 import html
 import json
 import unittest
+from dataclasses import replace as replace_case
 from datetime import date
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 from urllib.parse import quote, urlencode
 
 from vghks_sdk import ConfigurationError, ParseError, VisitCase, assess_data
@@ -22,7 +23,9 @@ from vghks_bot.analysis_fetch import model
 from vghks_bot.scanner import create_sdk
 from vghks_bot.sdk_orders import (
     CompatibleOrderAdapter,
+    OrderIndex,
     PhototherapyPdfRef,
+    assess_order_index,
     parse_order_index,
     pdf_reference,
 )
@@ -46,6 +49,72 @@ new KSCase('', orderStr, mydate, rcpDt, '合成醫師'+orspDept, '已執行', qr
 
 
 class OrderCompatibilityTests(unittest.TestCase):
+    def test_history_accepts_only_verified_old_patient_encounters(self):
+        legacy = order_page(photo=False, other_mrn="OLD001")
+        verified = VisitCase("OLD001", date(2025, 1, 1), "O", "EYE1", "70", "眼科", lookup_mrn=MRN)
+        result = parse_order_index(order_page() + legacy, mrn=MRN, verified_cases=[verified], allow_partial=True)
+        self.assertEqual({order.mrn for order in result}, {MRN, "OLD001"})
+        self.assertTrue(assess_order_index(result).complete)
+        old = next(order for order in result if order.mrn == "OLD001")
+        self.assertEqual(old.detail_ref.mrn, "OLD001")
+        for cases in ([], [replace_case(verified, lookup_mrn="OTHER001")], [replace_case(verified, case_no="OTHER")]):
+            with self.subTest(cases=cases):
+                rejected = parse_order_index(order_page() + legacy, mrn=MRN, verified_cases=cases, allow_partial=True)
+                self.assertEqual([order.mrn for order in rejected], [MRN])
+                self.assertFalse(assess_order_index(rejected).complete)
+                self.assertEqual(len(rejected.issues), 1)
+
+    def test_partial_rows_survive_bad_expressions_and_unsafe_attachments(self):
+        before = order_page(photo=False)
+        after = before.replace("caseNo=EYE1", "caseNo=EYE2")
+        broken = order_page().replace(json.dumps(LIGHT_PDF), "getFilePath()")
+        unsafe = order_page(path=LIGHT_PDF.replace(MRN, "OTHER001"))
+        foreign = order_page(photo=False, other_mrn="OTHER001")
+        result = parse_order_index(before + broken + unsafe + foreign + after, mrn=MRN, allow_partial=True)
+        self.assertEqual({order.case_no for order in result}, {"EYE1", "EYE2"})
+        self.assertEqual(len(result.issues), 3)
+        self.assertFalse(assess_order_index(result).complete)
+        self.assertTrue(all(order.detail_ref.mrn == MRN for order in result))
+        failed = parse_order_index(broken + foreign, mrn=MRN, allow_partial=True)
+        self.assertEqual(failed, [])
+        self.assertFalse(assess_order_index(failed).complete)
+
+    def test_multiple_constructors_keep_their_own_references_and_partial_rows(self):
+        first = order_page(photo=False).removeprefix("<script>").removesuffix("</script>")
+        second = first.replace("caseNo=EYE1", "caseNo=EYE2").replace("seqNo=1", "seqNo=2")
+        broken = "new KSCase('', readUnknownName(), '2026-09-01', '', '', '', '');"
+        result = parse_order_index("<script>" + first + broken + second + "</script>", mrn=MRN, allow_partial=True)
+        self.assertEqual({order.case_no for order in result}, {"EYE1", "EYE2"})
+        self.assertEqual({order.detail_ref.sequence_no for order in result}, {"1", "2"})
+        self.assertEqual(len(result.issues), 1)
+
+    def test_single_case_does_not_accept_other_encounters(self):
+        case = VisitCase(MRN, date(2026, 9, 1), "O", "EYE1", "70", "眼科")
+        page = order_page(photo=False)
+        result = parse_order_index(page + page.replace("caseNo=EYE1", "caseNo=OTHER"),
+                                   mrn=MRN, case=case, allow_partial=True)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result.issues[0].code, "ORDER_REF_CASE_MISMATCH")
+
+    def test_date_filter_keeps_partial_metadata_and_attachment_parsers_are_lazy(self):
+        runtime = SimpleNamespace(settings=SimpleNamespace(prq_base_url="https://hospital.test/PRQWeb"),
+            auth=SimpleNamespace(hid_for=lambda _: "synthetic"), request_text=Mock(return_value=
+                order_page(photo=False) + order_page(other_mrn="OTHER001")),
+            execute=lambda spec, operation, **kwargs: operation())
+        adapter = CompatibleOrderAdapter(runtime)
+        adapter._history_context_raw = Mock()
+        result = adapter.get_order_history(MRN, OrderHistoryFilter(order_date=date(2025, 1, 1)))
+        self.assertIsInstance(result, OrderIndex)
+        self.assertEqual(result, [])
+        self.assertFalse(assess_order_index(result).complete)
+        with patch("vghks_bot.sdk_orders._pdf_candidates") as pdfs, patch("vghks_bot.sdk_orders._pacs_refs_from_source") as pacs:
+            parse_order_index(order_page(photo=False), mrn=MRN)
+        pdfs.assert_not_called()
+        pacs.assert_not_called()
+        escaped_pdf = order_page().replace(".pdf", r"\x2epdf")
+        self.assertEqual(parse_order_index(escaped_pdf, mrn=MRN)[0].pdf_refs[0].file_path, LIGHT_PDF)
+        with self.assertRaises(ParseError):
+            parse_order_index(escaped_pdf.replace("lightrep\\\\TEST001", "lightrep\\\\OTHER001"), mrn=MRN)
     def test_union_and_legacy_images_round_trip_through_the_compatible_adapter(self):
         image_url = "http://192.168.20.137:800/xwado/PushWADO?" + urlencode({
             "requestType": "WADO", "contentType": "image/jpeg", "rows": "512", "objectUID": "1.2.3"})

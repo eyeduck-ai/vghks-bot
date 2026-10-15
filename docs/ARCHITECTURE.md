@@ -1,6 +1,6 @@
 # 系統架構
 
-本文對齊 6.11.1，沿用本機 HTTP、每帳號 SQLite 與 SDK 閘道。SDK 固定為 0.23.5／`67755b32404a118c8507f1d6b6f5c4ca2219f77d`，完整 commit 同步列於專案及建置鎖定檔。
+本文對齊 6.11.2，沿用本機 HTTP、每帳號 SQLite 與 SDK 閘道。SDK 固定為 0.23.5／`67755b32404a118c8507f1d6b6f5c4ca2219f77d`，完整 commit 同步列於專案及建置鎖定檔。
 
 SDK 的 PRQ 與登入已拆為多個模組。平台的醫囑、就診與病人身分相容處理透過 `core.operations.operation_spec` 取得請求契約，仍沿用 `PrqAdapter`、共用 Runtime、操作鎖與 SDK 恢復流程。建置依安裝來源核對 commit，並將 commit 寫入 EXE 授權聲明與封裝報告；不只比較版本號。
 
@@ -39,6 +39,10 @@ SDK 的 PRQ 與登入已拆為多個模組。平台的醫囑、就診與病人�
 啟動或切換中最多等待約 15 秒並重試；若原程式釋放鎖，等待中的程式可正常啟動。正常結束先清除紀錄再釋放管理目錄鎖；異常中止殘留紀錄不阻止下次啟動，持鎖的新服務會覆寫。不同管理目錄保留獨立執行能力，`--no-browser` 在首次與重複啟動皆有效。
 
 ## 醫囑附件與快取完整性
+
+`CompatibleOrdersService` 的歷年索引接收已核對的 `VisitCase`；僅在 `patient_mrn` 為目前查詢病人且原始病歷號／案例類型／案例號皆符合時接受舊號碼。`OrderIndex` 保留有效醫囑與解析問題，`assess_order_index` 將部分結果傳遞至閘道、分析及檢閱快取，沒有將未知病歷號改寫為目前病人。個別失敗不影響其他資料區塊；多筆 constructor 的參照分別取自其內容。
+
+醫囑索引的 assessment 與有效資料在同一筆 `analysis_steps` 保存。部分更新合併既有有效資料，成功更新才替換完整清單；歷史檢閱分別保存各類別並發布進度，續跑只重查未完整類別。`read` 使用 WAL 快照，前端以保存時間、完整性及問題清單判斷是否重畫，合併重疊輪詢，保留等待動畫與已開啟附件節點。
 
 DBR 等醫囑附件經 `AccountGateway`、`CompatibleOrderAdapter` 與 `ClinicalTransport` 使用 SDK 的二進位下載。SDK 0.23.3 依 PDF／JPEG 檔頭略過 HTML 解碼與密碼狀態解析；HTTP 401／403、登入目的頁及真正 HTML 的登入／強制改密碼檢查仍保留，附件再由 SDK 驗證格式及完整性。
 

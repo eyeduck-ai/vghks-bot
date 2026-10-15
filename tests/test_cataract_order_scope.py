@@ -63,7 +63,7 @@ class MixedOrdersSDK(BotSyntheticSDK):
         self.calls.append((self.card, "pdf", ref.mrn))
         return BinaryAsset(b"%PDF-1.4\n% synthetic offline test\n%%EOF\n", "application/pdf")
 
-    def order_history(self, mrn, filters):
+    def order_history(self, mrn, filters, *, verified_cases=()):
         self.calls.append((self.card, "orders-history", mrn, filters.category))
         if type(self).fail_history:
             raise ParseError("synthetic phototherapy expression", code="JS_EXPRESSION_UNSUPPORTED")

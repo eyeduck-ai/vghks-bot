@@ -17,7 +17,7 @@ window.JobProgress = (() => {
     if(!embedded||event.origin!==location.origin||event.source!==parent||event.data?.account!==scopedAccount||event.data.type!=="bot:workspace-visibility")return;
     workspaceVisible=!!event.data.visible;resumeVisible();
   });
-  let owner=scopedAccount||"local",card=null,minimized=false,expanded=false,serial=0,readOnly=false;
+  let owner=scopedAccount||"local",card=null,cardSignature="",minimized=false,expanded=false,serial=0,readOnly=false;
   const dialogStack=[];
   const taskNames={list:"門診清單",review:"病歷檢閱",resolve:"病人基本資料",history:"歷史資料",analysis:"進階工具",surgery_schedule:"手術排程",approval_sync:"審查同步",approval_case:"審查明細",earnings_capture:"薪資業績",earnings_options:"薪資期別"};
   function publish(run,account=owner){
@@ -62,8 +62,11 @@ window.JobProgress = (() => {
     card.style.top=Math.max(8,box&&box.height&&box.bottom<140?box.bottom+5:8)+"px";
   }
   function renderCard(){
-    prune();if(embedded)return;mountCard();if(!card)return;
+    prune();if(embedded)return;
     const rows=[...tasks.values()].filter(run=>run._owner===owner&&live(run)).sort((a,b)=>Number(activeStatuses.has(b.status))-Number(activeStatuses.has(a.status)));
+    const signature=JSON.stringify([owner,minimized,expanded,readOnly,rows.map(run=>[run.id,run.name,run.kind,run.status,run._pending,run.read_only,run.progress,run.counts,run.message])]);
+    if(card&&cardSignature===signature)return;
+    mountCard();if(!card)return;cardSignature=signature;
     card.hidden=!rows.length;if(!rows.length)return;
     const focused=card.ownerDocument.activeElement;
     const focus=card.contains(focused)?focused.dataset.action:null;
@@ -157,6 +160,7 @@ window.JobProgress = (() => {
       if(embedded)parent.postMessage({type:"bot:progress-dialog",account:owner},location.origin);else mountCard();
     });
     observer.observe(document.body,{attributes:true,subtree:true,attributeFilter:["open"]});setInterval(renderCard,1000);
+    window.addEventListener("resize",mountCard);
   });
   return {create,show,visible,pending,context,publish,receive,prune,ready,wait,size:()=>tasks.size};
 })();

@@ -3,10 +3,10 @@ from __future__ import annotations
 
 from collections import defaultdict
 from contextlib import ExitStack
-from dataclasses import fields
+from dataclasses import fields, replace
 from datetime import date, timedelta
 
-from vghks_sdk import AuthenticationError, SoapRecord, assess_data
+from vghks_sdk import AuthenticationError, SoapRecord
 from vghks_sdk.models import (
     NumericHistoryFilter,
     OrderDetailRef,
@@ -33,6 +33,7 @@ from .ophthalmic_orders import (
 )
 from .report_cache import branch_complete, result_complete
 from .scanner import Cancelled, safe_failure
+from .sdk_orders import assess_order_index, order_index_complete
 from .settings import today
 from .soap_data import snapshot as soap_snapshot
 from .storage import StorageError
@@ -181,12 +182,15 @@ class PatientCollector:
         if key in self.seen:
             return self.seen[key]
         cached = self.store.step(self.mrn, key)
+        previous_index = cached if kind == "order_index" else None
         if cached and kind == "asset":
             try:
                 self.store.asset(cached["payload"]["digest"])
             except (KeyError, ValueError):
                 cached = None
         if cached and kind == "report" and not branch_complete(cached["payload"], cached.get("assessment")):
+            cached = None
+        if cached and kind == "order_index" and not order_index_complete(cached):
             cached = None
         if cached and not (refresh or self.options["force"]):
             if not binary:
@@ -202,13 +206,24 @@ class PatientCollector:
         try:
             self.state.update(stage="analysis", message=f"{self.member.get('name') or self.mrn} · {kind}")
             value = operation()
-            assessment = assess_data(value)
+            assessment = assess_order_index(value)
             # Persist completed requests even when cancellation arrives during I/O.
             if binary:
                 value = self.store.save_asset(self.mrn, key, value, self.settings.username)
             else:
                 value = clean(value)
                 (validator or validate_patient)(value, expected_mrn or self.mrn)
+                if kind == "order_index" and assessment.complete is False and previous_index:
+                    retained = {}
+                    for order in previous_index["payload"]:
+                        try:
+                            (validator or validate_patient)([order], expected_mrn or self.mrn)
+                        except (TypeError, ValueError):
+                            continue
+                        retained[order_identity(order)] = order
+                    retained.update({order_identity(order): order for order in value})
+                    value = list(retained.values())
+                    assessment = replace(assessment, item_count=len(value), availability="AVAILABLE" if value else "EMPTY")
                 self.store.save_step(self.mrn, key, kind, value, self.settings.username,
                                      assessment=to_jsonable(assessment))
             self.state.count(analysis_fetched=1)
@@ -329,12 +344,13 @@ class PatientCollector:
             stale = bool(eye_only and saved and visit_step and saved["saved_at"] < visit_step["saved_at"])
             result = self.query("orders-history:" + category, "order_index",
                                 lambda category=category: self.sdk().orders.get_order_history(
-                                    self.mrn, OrderHistoryFilter(category=category)), refresh=refresh or stale,
+                                    self.mrn, OrderHistoryFilter(category=category), verified_cases=cases), refresh=refresh or stale,
                                 validator=lambda value, _: validate_order_index(value, self.allowed_mrns))
             if result is not None:
                 sources[category] = result
         history_incomplete = len(sources) < len(categories)
-        order_indices_complete = visits is not None
+        history_parsed = all(order_index_complete(self.store.step(self.mrn, "orders-history:" + category)) for category in sources)
+        order_indices_complete = visits is not None and history_parsed
         order_cases = set()
         for raw in eligible:
             self.state.check_cancel()
@@ -367,7 +383,7 @@ class PatientCollector:
         if eye_only:
             self.store.save_step(self.mrn, SCOPE_KEY, "order_scope", {
                 "scope": "ophthalmology", "visit_signature": eye_visit_signature(visits, self.mrn),
-                "history_complete": "*" in sources, "case_keys": sorted(order_cases),
+                "history_complete": "*" in sources and history_parsed, "case_keys": sorted(order_cases),
                 "complete": order_indices_complete and not (self.options.get("start") or self.options.get("end")),
             }, self.settings.username)
         groups = defaultdict(list)

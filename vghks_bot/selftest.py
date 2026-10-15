@@ -30,7 +30,7 @@ class SyntheticSDK:
         self.records = SimpleNamespace(get_visit_cases=self.visits, get_soap=self.soap)
         self.records.get_numeric_history = lambda mrn, _: NumericHistoryReport(
             mrn, (NumericTable("Va", ("日期", "OD", "OS"), (("2025-01-01", "0.4", "HM"),)),))
-        self.orders = SimpleNamespace(get_order_history=lambda *_: [])
+        self.orders = SimpleNamespace(get_order_history=lambda *_, **__: [])
         self.closed = False
 
     def __enter__(self):
