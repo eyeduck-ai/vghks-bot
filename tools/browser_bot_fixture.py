@@ -35,6 +35,15 @@ class LocalBoardHandler(BotHandler):
             super().do_GET()
 
 
+class SyntheticSheetHandler(BotHandler):
+    def local_request(self):
+        # Only the anonymous static entry page permits automation-origin navigation.
+        # Authenticated data routes and every mutation retain the production checks.
+        if self.command == "GET" and self.path == "/" and self.headers.get("Host") == self.server.origin.removeprefix("http://"):
+            return True
+        return super().local_request()
+
+
 class FollowUpSDK(BotSyntheticSDK):
     def _review_rows(self):
         return [replace(row, application_status="Y", processing_status="F",
@@ -161,6 +170,7 @@ def main():
     parser.add_argument("--demographics", action="store_true", help="Synthetic ROC birthdays and a numeric manual MRN")
     parser.add_argument("--lookup-failures", action="store_true", help="Synthetic expired, missing, forbidden and rejected patient queries")
     parser.add_argument("--registrations", action="store_true", help="Complete registration fields, explicit and unknown attendance")
+    parser.add_argument("--sheet-management", action="store_true", help="Synthetic online sheet statistics; no Google calls")
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="vghks-bot-synthetic-") as directory:
         sdk = SessionSDK if args.lookup_failures else RegistrationsSDK if args.registrations else DemographicsSDK if args.demographics else FollowUpSDK if args.followup else BotSyntheticSDK
@@ -169,6 +179,18 @@ def main():
         try:
             for user, label in (("SECOND", "合成帳號乙"), ("TEST", "合成帳號甲")):
                 key = app.login({"username": user, "password": "synthetic", "label": label})["account"]["id"]
+                if args.sheet_management:
+                    sys.path.insert(0, str(ROOT / "tests"))
+                    from analysis_fixtures import MemorySheets
+
+                    workspace = app.workspace(key)
+                    book = json.loads((ROOT / "tests/fixtures/gas_archives.json").read_text(encoding="utf-8"))["before"]
+                    client = MemorySheets(book)
+                    client.read_all = client.read
+                    client.read_for_archive = client.read
+                    client.read_metadata = lambda client=client: {"developerMetadata": client.read().get("developerMetadata", [])}
+                    workspace.sheets.client_factory = lambda client=client: client
+                    workspace.sheets.google.public = lambda client=client: {"spreadsheet_id": client.key, "configured": True}
                 if args.library:
                     workspace = app.workspace(key)
                     for index, text in enumerate((
@@ -193,6 +215,8 @@ def main():
                     if args.demographics:
                         seed_ophthalmic(app.workspace(key), "00012345")
             with BotServer(0, app, manager) as server:
+                if args.sheet_management:
+                    server.RequestHandlerClass = SyntheticSheetHandler
                 if args.local_board:
                     server.RequestHandlerClass = LocalBoardHandler
                 print(f"{server.origin}/#{app.launch_token}", flush=True)

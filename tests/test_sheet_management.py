@@ -363,7 +363,7 @@ class SheetManagementTests(unittest.TestCase):
         self.assertFalse(report["stale"])
         self.assertEqual(report["total"], 2)
         self.assertEqual(report["excluded_cancelled"], 1)
-        self.assertEqual(report["models"], [{"model": "SN60WF", "count": 2}])
+        self.assertEqual(report["models"], [{"model": "SN60WF", "count": 2, "eye_count": 3}])
         item = next(item for item in report["items"] if item["hospital"] == "聯醫")
         self.assertEqual((item["iol"], item["iol_target"], item["iol_final"]), ("SN60WF", "-0.50", "+20.5"))
         self.assertIn("OU", report["count_basis"])
@@ -552,12 +552,14 @@ class SheetManagementTests(unittest.TestCase):
     def test_archive_finalizes_with_local_receipt_after_cloud_marker_reclamation(self):
         preview = self.prepare_archive()
         self.assertEqual(self.manager.apply({"id": preview["id"]})["status"], "copied")
-        self.assertEqual(self.client.book["developerMetadata"], [])
+        from vghks_bot.sheet_archive_lock import archive_lock
+        self.assertEqual(archive_lock(self.client.book), preview["id"])
         self.assertEqual(self.client.marker_writes, 1)
         self.assertEqual(self.manager.apply({"id": preview["id"]})["status"], "applied")
         self.assertEqual(self.client.writes, 2)
         self.assertEqual(self.client.marker_writes, 2)
         self.assertEqual(len(self.client.book["sheets"]), 1)
+        self.assertEqual(self.client.book["developerMetadata"], [])
 
     def test_read_only_reconciliation_preserves_unretired_cloud_marker(self):
         preview = self.preview("create_month", month="202610")

@@ -2,7 +2,13 @@
 import json
 import unittest
 
-from tools.verify_sheet_contract import FIXTURES, check_contract, fixture_sheet, literal
+from tools.verify_sheet_contract import (
+    FIXTURES,
+    check_archives,
+    check_contract,
+    fixture_sheet,
+    literal,
+)
 from vghks_bot.calendar_monitor import normalize_hospital_requests
 from vghks_bot.sheet_plan import Planner, native_cell
 
@@ -15,6 +21,10 @@ class ThreeProgramContractTests(unittest.TestCase):
 
     def test_actual_gas_exported_cases_match_both_exes(self):
         self.assertGreaterEqual(check_contract(self.parsing, self.formatting), 50)
+
+    def test_gas_native_archives_keep_eye_totals_and_calendar_ids_in_both_exes(self):
+        contract = json.loads((FIXTURES / "gas_archives.json").read_text(encoding="utf-8"))
+        self.assertEqual(check_archives(contract), 8)
 
     def test_month_creation_keeps_complete_gas_header_cells_and_dimension_formats(self):
         # Header formulas, custom columns, notes, validation and hidden IDs are

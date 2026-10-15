@@ -31,6 +31,23 @@ def cell_text(cell):
     return str(cell.get("formattedValue", ""))
 
 
+def cancelled_cell(cell):
+    """Use displayed strike-through, including rich-text overrides on the MRN."""
+    entered = cell.get("userEnteredFormat", {}).get("textFormat", {}).get("strikethrough", False)
+    base = bool(cell.get("effectiveFormat", {}).get("textFormat", {}).get("strikethrough", entered))
+    runs = cell.get("textFormatRuns", [])
+    if not runs:
+        return base
+    length = len(cell_text(cell).encode("utf-16-le")) // 2
+    position, struck = 0, base
+    for run in sorted(runs, key=lambda value: value.get("startIndex", 0)):
+        start = min(length, max(0, run.get("startIndex", 0)))
+        if start > position and struck:
+            return True
+        position, struck = start, bool(run.get("format", {}).get("strikethrough", base))
+    return struck and position < length
+
+
 def canonical_header(cell_or_text):
     """Resolve only documented aliases and the known GAS diagnosis summary."""
     cell = cell_or_text if isinstance(cell_or_text, dict) else {}

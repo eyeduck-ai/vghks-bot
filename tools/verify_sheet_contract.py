@@ -10,13 +10,17 @@ import json
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from vghks_bot.calendar_sync import arrival, full_day, headers, scan  # noqa: E402
+from vghks_bot.sheet_archive import build_archive  # noqa: E402
+from vghks_bot.sheet_archive_lock import LOCK_ID, LOCK_KEY  # noqa: E402
 from vghks_bot.sheet_identity import header_columns  # noqa: E402
+from vghks_bot.sheet_management import _report_rows  # noqa: E402
 from vghks_bot.sheet_plan import columns, entries, typed_day  # noqa: E402
 from vghks_bot.sheet_schema import (  # noqa: E402
     DAY_MARKER,
@@ -26,6 +30,7 @@ from vghks_bot.sheet_schema import (  # noqa: E402
     full_date,
     monthly_row,
 )
+from vghks_bot.sheet_statistics import statistics  # noqa: E402
 
 FIXTURES = ROOT / "tests" / "fixtures"
 
@@ -125,6 +130,41 @@ def check_workflows(contract):
     return 2
 
 
+def check_archives(contract, gas_repo=None):
+    """Read real GAS request outputs in both EXEs and continue in either tool."""
+    if contract.get("schema") != 2 or contract["lock"] != {"id": LOCK_ID, "key": LOCK_KEY}:
+        raise ValueError("GAS and Windows archive ownership contract differs")
+    baseline = None
+    identities = None
+    for name in ("before", "after_september", "during_backfill", "after_backfill"):
+        book = contract[name]
+        rows, issues = _report_rows(book)
+        if any(issue["code"] == "conflicting_report_sync_id" for issue in issues):
+            raise ValueError("GAS archive changed a source identity's contents")
+        result = statistics(rows, book)
+        counts = (result["total"], result["eye_count"], result["models"], result["procedures"], result["excluded_cancelled"])
+        monitored = scan(book)
+        if monitored["issues"] and name != "during_backfill":
+            raise ValueError("GAS archive causes monitor diagnostics")
+        if baseline is None:
+            baseline, identities = counts, monitored["identities"]
+        elif counts != baseline or set(monitored["identities"]) != set(identities):
+            raise ValueError("GAS archive changed counts or removed Calendar-protective IDs")
+    from datetime import date
+
+    plan = build_archive(contract["after_september"], ["202606"], date(2026, 10, 15))
+    if not plan["summary"]["months"][0]["backfill"]:
+        raise ValueError("Windows could not continue a GAS annual archive")
+    if gas_repo:
+        with tempfile.TemporaryDirectory(prefix="archive-contract-") as directory:
+            path = Path(directory) / "windows-requests.json"
+            path.write_text(json.dumps({"book": contract["after_september"], "requests": plan["requests"],
+                                       "source_ids": [source["properties"]["sheetId"] for source in plan["sources"].values()]}), encoding="utf-8")
+            subprocess.run(["node", "tests/archive_contract.js", "--verify-input", str(path)], cwd=gas_repo, check=True,
+                           capture_output=True, text=True)
+    return 8
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--gas-repo", type=Path)
@@ -133,6 +173,7 @@ def main():
     parsing = json.loads((FIXTURES / "schema_parsing.json").read_text(encoding="utf-8"))
     formatting = json.loads((FIXTURES / "sheet_contract.json").read_text(encoding="utf-8"))
     workflows = json.loads((FIXTURES / "gas_workflows.json").read_text(encoding="utf-8"))
+    archives = json.loads((FIXTURES / "gas_archives.json").read_text(encoding="utf-8"))
     if args.gas_repo:
         actual_revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=args.gas_repo,
                                          check=True, capture_output=True, text=True).stdout.strip()
@@ -141,9 +182,10 @@ def main():
         actual_parsing = exported_contract(args.gas_repo, "parser_contract.js", "parserContract")
         actual_formatting = exported_contract(args.gas_repo, "sheet_contract.js", "sheetContract")
         actual_workflows = exported_contract(args.gas_repo, "workflow_contract.js", "workflowContract")
-        if parsing != actual_parsing or formatting != actual_formatting or workflows != actual_workflows:
+        actual_archives = exported_contract(args.gas_repo, "archive_contract.js", "archiveContract")
+        if parsing != actual_parsing or formatting != actual_formatting or workflows != actual_workflows or archives != actual_archives:
             raise ValueError("Saved fixtures differ from the supplied GAS source; review and regenerate them")
-    count = check_contract(parsing, formatting) + check_workflows(workflows)
+    count = check_contract(parsing, formatting) + check_workflows(workflows) + check_archives(archives, args.gas_repo)
     print(f"Shared Sheets contract passed: {count} synthetic cases (main, monitor, GAS {revision[:7]})")
 
 

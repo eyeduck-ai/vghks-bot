@@ -58,7 +58,7 @@ Python 虛擬環境的啟動腳本與部分命令列程式含建立時的絕對�
 
 掛號紀錄可使用 `tools/browser_bot_fixture.py --registrations --local-board`，提供完整掛號欄位、明確未到診、未知圖示、取消及日期不明的合成案例。`tests/test_registration_history.py` 另經真實 SDK 與合成 HTTP 驗證快取升級及身分拒收；不需讀取院內 ZIP 或 HAR。
 
-刀表合成資料由 `tests/fixtures/` 與相關整合測試維護。`tools/verify_sheet_contract.py` 離線核對主程式、監控程式及 GAS 匯出的 72 組格式契約；指定 `--gas-repo <GAS checkout>` 時，另從該 checkout 執行 GAS 匯出器核對。需要線上只讀檢查時，使用 `tools/check_sheet_contract.py`，依 `--help` 指定外部服務帳戶檔、刀表、日曆與報告路徑；憑證及線上報告不加入 Git。
+刀表合成資料由 `tests/fixtures/` 與相關整合測試維護。`tools/verify_sheet_contract.py` 離線核對主程式、監控程式及 GAS 匯出的 82 組格式契約；指定 `--gas-repo <GAS checkout>` 時，另從該 checkout 執行 GAS 匯出器，並實際執行主程式封存請求後交由 GAS 續封，驗證雙向相容。`tests/fixtures/gas_contract.json` 固定 GAS commit，`gas_archives.json` 保存原生封存匯出。需要線上只讀檢查時，使用 `tools/check_sheet_contract.py`，依 `--help` 指定外部服務帳戶檔、刀表、日曆與報告路徑；憑證及線上報告不加入 Git。
 
 來源邊界檢查同時涵蓋 Git 已追蹤檔案與尚未提交、未被忽略的新檔案，不需要先 stage 才能檢查。提交前仍以 `git add <明確路徑>` 或明確的來源目錄選取變更；不要加入真實資料庫或病歷 fixture。失敗重現請建立合成資料。
 
