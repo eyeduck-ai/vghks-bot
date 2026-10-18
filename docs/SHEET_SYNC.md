@@ -148,3 +148,9 @@ GAS 的 FU 重送快取只保存永久 ScheduleSyncId，移除事件 ID、月份
 2026-10-12 的 6.8.0 管理功能已對正式刀表完成只讀預演：8 個月份、結構問題 0；新增尚未存在月份的指定日期＋聯醫刀日，以及過去月份封存，皆能產生可套用預覽。驗收禁止所有 Sheets 寫入，因此未新增月份／刀日、未封存或移除正式分頁。兩階段封存、斷線／重啟、顯示格式、IOL 數量及明確拒絕後復原另以合成資料驗證。
 
 正式使用需在 EXE 匯入服務帳戶 JSON、設定 Calendar ID 並授予對應編輯權限。憑證不放進程式碼或發布包；本機資料目錄含可攜式憑證，請由使用者保管。
+
+## 獨立 Linux 監控與共用契約（6.12.2）
+
+這台固定 Ubuntu 主機的監控由獨立 `vghks-sheet2cal` 專案部署，包含 FU、每 60 分鐘同步一次。原 Windows 監控保留為相容入口；同一刀表僅啟用一個指定監控。
+
+`sheet_schema`、`sheet_identity`、`sheet_sync_state`、`calendar_sync` 為相容匯入路徑，實際執行 `op_spreadsheet/packages/python` 的 `vghks-sheet-core`。正式規格與合成案例在 GAS repo 的 `contracts/`；版本與更新流程見其 `docs/SHEET_CONTRACT.md`。兩個 Python 消費端固定同一完整 commit。

@@ -22,7 +22,7 @@ def notices() -> Path:
     directory.mkdir(parents=True, exist_ok=True)
     parts = ["Third-party notices for VGHKS-bot\n", f"vghks-sdk commit {sdk_commit}\n"]
     for name in ("vghks-sdk", "requests", "beautifulsoup4", "soupsieve", "truststore", "urllib3", "certifi", "charset-normalizer", "idna", "typing-extensions", "pyinstaller",
-                 "google-auth", "cryptography", "cffi", "pycparser", "pyasn1", "pyasn1-modules"):
+                 "vghks-sheet-core", "google-auth", "cryptography", "cffi", "pycparser", "pyasn1", "pyasn1-modules"):
         package = importlib.metadata.distribution(name)
         parts.append(f"\n{'=' * 70}\n{name} {package.version}\n{'=' * 70}\n")
         for entry in package.files or []:
@@ -62,7 +62,7 @@ def main():
                 "--workpath", str(ROOT / ".build" / "pyinstaller"), "--specpath", str(ROOT / ".build"),
                 "--paths", str(ROOT), "--add-data", f"{ROOT / 'vghks_bot' / 'static'};vghks_bot/static",
                 "--add-data", f"{defaults};vghks_bot", "--add-data", f"{license_directory};vghks_bot/licenses",
-                "--hidden-import", "truststore", "--exclude-module", "tkinter", "--exclude-module", "pytest",
+                "--collect-data", "vghks_sheet_core", "--hidden-import", "truststore", "--exclude-module", "tkinter", "--exclude-module", "pytest",
                 str(ROOT / entry)]
             subprocess.run(command, cwd=ROOT, env=environment, check=True)
             executable = ROOT / "dist" / (name + ".exe")
