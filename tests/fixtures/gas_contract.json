@@ -1,6 +1,6 @@
 {
   "schema": 1,
   "repository": "eyeduck-ai/op_spreadsheet",
-  "revision": "3fc44ad3685f382c2930f91d696eb965bf5db4dd",
-  "contract_version": "1.1.0"
+  "revision": "36f6026120fc06f5d80de9b5e31ee35d578e09e0",
+  "contract_version": "1.2.0"
 }
