@@ -24,4 +24,4 @@ cffi==2.1.1
 pycparser==3.0
 pyasn1==0.6.4
 pyasn1-modules==0.4.2
-vghks-sheet-core @ git+https://github.com/eyeduck-ai/op_spreadsheet.git@6ca8498544e54d17a93d84c6bcaff1f4609ee621#subdirectory=packages/python
+vghks-sheet-core @ git+https://github.com/eyeduck-ai/op_spreadsheet.git@8eeecef64ef3d48ad72d3207afcf35ee849ef6f7#subdirectory=packages/python
