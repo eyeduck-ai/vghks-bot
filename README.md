@@ -2,7 +2,7 @@
 
 [![Windows build](https://github.com/eyeduck-ai/vghks-bot/actions/workflows/windows.yml/badge.svg)](https://github.com/eyeduck-ai/vghks-bot/actions/workflows/windows.yml)
 
-VGHKS 院內系統的本機工作台：Windows 單檔 EXE、瀏覽器介面與 SQLite，透過 [vghks-sdk](https://github.com/eyeduck-ai/vghks-sdk) 存取院內功能。版本 **6.12.4**，共用刀表契約 **1.2.1**。
+VGHKS 院內系統的本機工作台：Windows 單檔 EXE、瀏覽器介面與 SQLite，透過 [vghks-sdk](https://github.com/eyeduck-ai/vghks-sdk) 存取院內功能。版本 **6.12.5**，共用刀表契約 **1.2.2**。
 
 ## 下載與更新
 

@@ -112,12 +112,12 @@ Google 明確拒絕寫入（例如編輯權限不足）時，修正原因後可�
 
 ## 獨立日曆監控
 
-日曆由 [vghks-sheet2cal](https://github.com/eyeduck-ai/vghks-sheet2cal) 的指定常駐主機負責，主程式只更新刀表。監控預設每 60 分鐘處理台北時間今天起的月份排程與 FU／All；以刀表目前日期判斷，仍在過去的排程不查詢或變更日曆。刀表仍完整核對 ID，刀日與無日期 FU 不建事件，年度封存只保護既有事件。過去排程改到今天或未來後，恢復同步並更新原本綁定的日曆事件，保留 ScheduleSyncId 與 CalendarEventId，不需新增列；缺列且已過去的事件仍保留。每份刀表僅登記一台主機，其他電腦或複製的資料庫不得同步。
+日曆由 [vghks-sheet2cal](https://github.com/eyeduck-ai/vghks-sheet2cal) 的指定常駐主機負責，主程式只更新刀表。監控預設每 60 分鐘處理台北時間今天起的月份排程與 FU／All；以刀表目前日期與待核對改期狀態判斷，已確認完成且仍在過去的排程不查詢或變更日曆。刀表仍完整核對 ID，刀日與無日期 FU 不建事件，年度封存只保護既有事件。過去排程改到今天或未來後，恢復同步並更新原本綁定的日曆事件，保留 ScheduleSyncId 與 CalendarEventId，不需新增列。今天／未來改到過去時，更新原事件一次，回讀核對並保存完成狀態後略過；失敗或重啟續接原事件，不補建過去事件。缺列且已過去的事件仍保留。每份刀表僅登記一台主機，其他電腦或複製的資料庫不得同步。
 
 整列改期保留同一事件；一般指定報到時間的手術為 30 分鐘，GA、未定時間及 FU 為全天，取消保留灰色事件。兩次完整成功掃描確認缺列才移除已確認擁有權的事件；錯誤、識別衝突、整頁消失及封存保留事件待核對。設定、備份、重啟與移機見獨立 repo。
 
 ## 共用規格與驗收
 
-契約 1.2.1 的正式 JSON、合成案例及更新流程位於 [GAS repo](https://github.com/eyeduck-ai/op_spreadsheet/blob/master/docs/SHEET_CONTRACT.md)。主程式的 schema、identity、state 相容入口直接使用共用核心，與監控固定同一完整 Git commit；執行中不下載新規格。
+契約 1.2.2 的正式 JSON、合成案例及更新流程位於 [GAS repo](https://github.com/eyeduck-ai/op_spreadsheet/blob/master/docs/SHEET_CONTRACT.md)。主程式的 schema、identity、state 相容入口直接使用共用核心，與監控固定同一完整 Git commit；執行中不下載新規格。
 
 測試涵蓋院區可留白、手填及公式保留、人工位置優先、跨月搬移、FU、離線來源、逾時核對、永久識別與原生封存。完整命令為 `python tools/run_checks.py --build`；日曆及主機服務回歸由獨立 repo 執行。
