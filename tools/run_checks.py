@@ -35,7 +35,7 @@ def main():
     phase = parser.add_mutually_exclusive_group()
     phase.add_argument("--checks-only", action="store_true", help="Run fast source/lint/contract checks")
     phase.add_argument("--tests-only", action="store_true", help="Run synthetic tests and source EXE self-tests")
-    phase.add_argument("--source-only", action="store_true", help="Run both source EXE self-tests without rediscovering tests")
+    phase.add_argument("--source-only", action="store_true", help="Run the main-program source self-test")
     phase.add_argument("--build-only", action="store_true", help="Build after separately required CI checks and tests")
     parser.add_argument("--gas-repo", type=Path, help="Verify the pinned GAS source, not just saved fixtures")
     args = parser.parse_args()
@@ -45,7 +45,7 @@ def main():
     if args.build_only:
         run([python, "tools/verify_repository.py"])
         run([python, "-m", "pip", "check"])
-        for filename in ("source-selftest.json", "monitor-source-selftest.json"):
+        for filename in ("source-selftest.json",):
             path = REPORTS / filename
             if not path.is_file():
                 raise RuntimeError("Run --tests-only or download this run's test artifact before --build-only: " + filename)
@@ -66,19 +66,12 @@ def main():
         source = REPORTS / "source-selftest.json"
         run([python, "run.py", "--self-test-report", str(source)])
         report_ok(source)
-        monitor_source = REPORTS / "monitor-source-selftest.json"
-        run([python, "run_calendar_monitor.py", "--self-test-report", str(monitor_source)])
-        report_ok(monitor_source)
     if args.build or args.build_only:
         run([python, "tools/build_exe.py"], "build.log")
         frozen = REPORTS / "exe-selftest.json"
         run([str(ROOT / "dist/VGHKS-bot.exe"), "--self-test-report", str(frozen)])
         report_ok(frozen)
         run([python, "tools/verify_bundle.py", "--report", str(REPORTS / "bundle-verification.json")])
-        monitor_frozen = REPORTS / "monitor-exe-selftest.json"
-        run([str(ROOT / "dist/VGHKS-calendar-monitor.exe"), "--self-test-report", str(monitor_frozen)])
-        report_ok(monitor_frozen)
-        run([python, "tools/verify_bundle.py", "--executable", "VGHKS-calendar-monitor", "--report", str(REPORTS / "monitor-bundle-verification.json")])
         run([python, "tools/package_release.py"])
     print("All requested checks passed.")
 

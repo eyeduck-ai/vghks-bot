@@ -9,7 +9,7 @@ description = "Portable VGHKS outpatient, surgery, approval and earnings workspa
 requires-python = ">=3.11"
 dependencies = [
   "vghks-sdk @ git+https://github.com/eyeduck-ai/vghks-sdk.git@67755b32404a118c8507f1d6b6f5c4ca2219f77d",
-  "vghks-sheet-core @ git+https://github.com/eyeduck-ai/op_spreadsheet.git@bd018db1364f0634120a4f0e58e37ba6f35687d0#subdirectory=packages/python",
+  "vghks-sheet-core @ git+https://github.com/eyeduck-ai/op_spreadsheet.git@bceb002c40f40235ce20ed2575ea7bbe4f54837e#subdirectory=packages/python",
   "google-auth==2.58.0",
   "cryptography==50.0.1",
 ]
@@ -19,7 +19,6 @@ build = ["PyInstaller==6.14.2", "ruff==0.14.14"]
 
 [project.scripts]
 vghks-bot = "vghks_bot.app:main"
-vghks-calendar-monitor = "vghks_bot.calendar_monitor:main"
 
 [project.urls]
 Repository = "https://github.com/eyeduck-ai/vghks-bot"

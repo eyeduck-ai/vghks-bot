@@ -485,21 +485,6 @@ class Planner:
                 "fields": "userEnteredValue"}})
             changes.append({"field": field, "label": FIELD_NAMES[field], "before": before, "after": value, "column": col})
         current = next(e for e in entries(sheet) if e["row"] is row and e["kind"] == "patient")
-        if uid or action in {"insert", "move"}:
-            # Hospital is block-owned. After confirming UID+MRN, normalize a
-            # stale/blank copied patient hospital to the containing block.
-            col, value = cols["hospital"], current["fields"]["hospital"]
-            while len(row) <= col:
-                row.append({})
-            before = cell_text(row[col])
-            if before != value:
-                if row[col].get("userEnteredValue", {}).get("formulaValue"):
-                    raise ValueError("病人醫院欄為公式，請先在刀表整理。")
-                row[col]["userEnteredValue"] = {"stringValue": value}
-                row[col].pop("formattedValue", None)
-                self.requests.append({"updateCells": {"range": range_(sheet, row_location(sheet, row), col, col + 1),
-                                      "rows": [{"values": [{"userEnteredValue": {"stringValue": value}}]}], "fields": "userEnteredValue"}})
-                changes.append({"field": "hospital", "label": "醫院", "before": before, "after": value, "column": col})
         item = {"id": proposal["id"], "fields": fields, "status": "ready", "action": action, "changes": changes,
                 "sync_id": current["sync_id"], "route": current["route"],
                 "previous_route": previous_route, "previous_position": previous_position}

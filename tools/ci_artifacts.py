@@ -25,7 +25,6 @@ from tools.test_suite import shard_for  # noqa: E402
 WORKFLOW = ".github/workflows/windows.yml"
 REPORT_NAMES = (
     "source-selftest.json", "exe-selftest.json", "bundle-verification.json",
-    "monitor-source-selftest.json", "monitor-exe-selftest.json", "monitor-bundle-verification.json",
 )
 
 
@@ -73,18 +72,18 @@ def collect_tests(directory, count):
         seconds.append(report["duration_seconds"])
     if completed != set(expected):
         raise ValueError("Test shards do not cover the complete suite")
-    for name in ("source-selftest.json", "monitor-source-selftest.json"):
+    for name in ("source-selftest.json",):
         if read_json(directory / name).get("ok") is not True:
             raise ValueError("Failed source self-test: " + name)
     summary = {"ok": True, "tests": len(completed), "shards": count, "shard_seconds": seconds,
                "test_ids_sha256": hashlib.sha256("\n".join(expected).encode()).hexdigest()}
     write_json(directory / "test-summary.json", summary)
-    print(f"Complete suite verified: {len(completed)} tests across {count} disjoint shards; both source self-tests passed")
+    print(f"Complete suite verified: {len(completed)} tests across {count} disjoint shards; source self-test passed")
     return summary
 
 
 def release_files(version):
-    return {"VGHKS-bot.exe", "VGHKS-calendar-monitor.exe",
+    return {"VGHKS-bot.exe",
             f"VGHKS-bot-v{version}-windows-x64.zip", "SHA256SUMS.txt", "RELEASE_NOTES.md"}
 
 
@@ -101,7 +100,9 @@ def verify_files(directory, version):
     with zipfile.ZipFile(directory / f"VGHKS-bot-v{version}-windows-x64.zip") as bundle:
         if len(bundle.namelist()) != len(set(bundle.namelist())):
             raise ValueError("Duplicate ZIP entries")
-        for exe in ("VGHKS-bot.exe", "VGHKS-calendar-monitor.exe"):
+        if any("VGHKS-calendar-monitor.exe" in name or name.startswith("validation/monitor-") for name in bundle.namelist()):
+            raise ValueError("Monitor artifacts belong in the independent repository")
+        for exe in ("VGHKS-bot.exe",):
             if hashlib.sha256(bundle.read(exe)).hexdigest() != sums[exe]:
                 raise ValueError("ZIP executable differs from the verified release executable")
         for name in REPORT_NAMES:
@@ -109,7 +110,7 @@ def verify_files(directory, version):
             if report.get("ok") is not True:
                 raise ValueError("Failed packaged validation: " + name)
             if "bundle-verification" in name:
-                exe = "VGHKS-calendar-monitor.exe" if name.startswith("monitor-") else "VGHKS-bot.exe"
+                exe = "VGHKS-bot.exe"
                 if report.get("credentials_blank") is not True or report.get("sha256") != sums[exe]:
                     raise ValueError("Packaged executable validation differs: " + name)
     return {name: digest(directory / name) for name in sorted(release_files(version))}
@@ -206,7 +207,7 @@ def download_release(directory, tag, wait_seconds=0):
     files = verify_files(directory, version)
     info = read_json(directory / "BUILD_INFO.json")
     validate_build_info(info, run, repository, commit, tree, version, files)
-    print(f"Verified {tag}: exact main commit {commit}, run {run['id']}, {info['test_summary']['tests']} tests and both frozen EXEs")
+    print(f"Verified {tag}: exact main commit {commit}, run {run['id']}, {info['test_summary']['tests']} tests and frozen main EXE")
 
 
 def main():

@@ -1,6 +1,5 @@
 """Identity migration never weakens or partially bypasses Sheets protections."""
 import copy
-import tempfile
 import unittest
 
 from analysis_fixtures import book_fixture, literal
@@ -8,7 +7,6 @@ from analysis_fixtures import book_fixture, literal
 from vghks_bot.sheet_identity import (
     EVENT_ID_HEADER,
     SYNC_ID_HEADER,
-    header_columns,
     plan_identity_setup,
 )
 
@@ -123,23 +121,6 @@ class IdentityProtectionTests(unittest.TestCase):
         setup = plan_identity_setup(book, include_archives=False)
         self.assertTrue(setup["can_apply"])
         self.assertEqual(setup["book"]["sheets"][1], archive)
-
-    def test_monitor_preparation_hides_ids_without_automatically_protecting_columns(self):
-        from vghks_bot.selftest_calendar import monthly, prepared, workbook
-
-        with tempfile.TemporaryDirectory() as directory:
-            monitor, sheets, calendar = prepared(directory, workbook(monthly(ids=False)))
-            try:
-                self.assertFalse(any("addProtectedRange" in request for request in sheets.writes))
-                self.assertEqual(calendar.inserts, 0)
-                for sheet in sheets.book["sheets"]:
-                    self.assertEqual(sheet.get("protectedRanges", []), [])
-                    cols = header_columns(sheet)
-                    self.assertTrue(all(sheet["column_widths"][cols[label]]["hiddenByUser"]
-                                        for label in (EVENT_ID_HEADER, SYNC_ID_HEADER)))
-            finally:
-                monitor.close()
-
 
 if __name__ == "__main__":
     unittest.main()

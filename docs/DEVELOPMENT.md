@@ -71,17 +71,16 @@ Python 虛擬環境的啟動腳本與部分命令列程式含建立時的絕對�
 .venv/Scripts/python.exe tools/run_checks.py --build
 ```
 
-流程包括：來源範圍與版本核對 → pip／Ruff／JS 語法 → 共用刀表契約 → Python 測試 → 兩個程式的原始碼自測 → PyInstaller → 雙 EXE 自測 → 靜態檔及預設值核對 → ZIP 與 SHA-256。
+流程包括：來源範圍與版本核對 → pip／Ruff／JS 語法 → 共用刀表契約 → Python 測試 → 主程式原始碼自測 → PyInstaller → 主程式 EXE 自測 → 靜態檔及預設值核對 → ZIP 與 SHA-256。
 
 - `dist/VGHKS-bot.exe`：Windows x64 主程式。
-- `dist/VGHKS-calendar-monitor.exe`：獨立日曆監控程式。
-- `dist/VGHKS-bot-v<版本>-windows-x64.zip`：雙 EXE、文件、第三方聲明及驗證報告。
-- `dist/SHA256SUMS.txt`：兩個 EXE 與 ZIP 校驗值。
-- `.build/ci/`：測試、建置日誌及兩個程式的原始碼／EXE 自測與封裝核對 JSON。
+- `dist/VGHKS-bot-v<版本>-windows-x64.zip`：主程式 EXE、文件、第三方聲明及驗證報告。
+- `dist/SHA256SUMS.txt`：主程式 EXE 與 ZIP 校驗值。
+- `.build/ci/`：測試、建置日誌及主程式原始碼／EXE 自測與封裝核對 JSON。
 
 只打包、不跑完整檢查的開發命令是 `python tools/build_exe.py`；它不是 Release 流程。CI 一律使用公開預設值，帳密留白。
 
-6.10.1 的 CI 將完整測試拆成四組並行，彙總核對覆蓋名單；PR 不重複打包，main 才建置雙 EXE，標籤沿用同一成功 main commit 的已驗證產物。本機完整流程不變，來源自測可單獨用 `--source-only` 執行。[CI 與發布細節](RELEASING.md)
+6.10.1 的 CI 將完整測試拆成四組並行，彙總核對覆蓋名單；PR 不重複打包，main 才建置主程式 EXE，標籤沿用同一成功 main commit 的已驗證產物。本機完整流程不變，來源自測可單獨用 `--source-only` 執行。[CI 與發布細節](RELEASING.md)
 
 ## 清理與本機檔案
 
@@ -117,4 +116,4 @@ $vghksSdkRequirement = Get-Content requirements-build.lock.txt | Where-Object { 
 .venv/Scripts/python.exe -m pip install --no-deps --force-reinstall $vghksSdkRequirement
 ```
 
-執行完整檢查、雙 EXE 自測與封裝核對，並在院內確認真實回應。不要只改其中一處，也不要在 CI 自動追蹤 SDK 的 `main`。PRQ 相容處理使用 `core.operations.operation_spec`，不從已拆分的 Adapter 匯入私有操作常數；光照治療、病人身分及不可重送的恢復規則均需回歸。
+執行完整檢查、主程式 EXE 自測與封裝核對，並在院內確認真實回應。不要只改其中一處，也不要在 CI 自動追蹤 SDK 的 `main`。PRQ 相容處理使用 `core.operations.operation_spec`，不從已拆分的 Adapter 匯入私有操作常數；光照治療、病人身分及不可重送的恢復規則均需回歸。

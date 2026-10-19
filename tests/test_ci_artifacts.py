@@ -25,7 +25,7 @@ class ArtifactTests(unittest.TestCase):
             ci.write_json(self.directory / f"shard-{index}/test-timings.json",
                           {"ok": True, "shard_index": index, "shard_count": 4, "all_test_ids": ids,
                            "completed_test_ids": selected, "tests": len(selected), "duration_seconds": 1})
-        for name in ("source-selftest.json", "monitor-source-selftest.json"):
+        for name in ("source-selftest.json",):
             ci.write_json(self.directory / name, {"ok": True})
         return ids
 
@@ -62,7 +62,7 @@ class ArtifactTests(unittest.TestCase):
             with self.subTest(mutation=mutation), self.assertRaises(ValueError):
                 ci.collect_tests(self.directory, 4)
         self.reports()
-        ci.write_json(self.directory / "monitor-source-selftest.json", {"ok": False})
+        ci.write_json(self.directory / "source-selftest.json", {"ok": False})
         with self.assertRaisesRegex(ValueError, "source self-test"):
             ci.collect_tests(self.directory, 4)
 
@@ -83,13 +83,13 @@ class ArtifactTests(unittest.TestCase):
                 self.assertIsNone(ci.successful_main_run([changed], "owner/repo", "a" * 40, 42))
 
     def public_files(self):
-        for name in ("VGHKS-bot.exe", "VGHKS-calendar-monitor.exe"):
+        for name in ("VGHKS-bot.exe",):
             (self.directory / name).write_bytes(name.encode())
         with zipfile.ZipFile(self.directory / "VGHKS-bot-v1.2.3-windows-x64.zip", "w") as bundle:
-            for exe in ("VGHKS-bot.exe", "VGHKS-calendar-monitor.exe"):
+            for exe in ("VGHKS-bot.exe",):
                 bundle.write(self.directory / exe, exe)
             for name in ci.REPORT_NAMES:
-                exe = "VGHKS-calendar-monitor.exe" if name.startswith("monitor-") else "VGHKS-bot.exe"
+                exe = "VGHKS-bot.exe"
                 bundle.writestr("validation/" + name, json.dumps(
                     {"ok": True, "credentials_blank": True, "sha256": ci.digest(self.directory / exe)}))
         names = ci.release_files("1.2.3") - {"SHA256SUMS.txt", "RELEASE_NOTES.md"}
@@ -103,6 +103,17 @@ class ArtifactTests(unittest.TestCase):
         self.assertEqual(set(files), ci.release_files("1.2.3"))
         (self.directory / "VGHKS-bot.exe").write_bytes(b"different binary")
         with self.assertRaisesRegex(ValueError, "checksums"):
+            ci.verify_files(self.directory, "1.2.3")
+
+    def test_main_release_rejects_a_bundled_monitor_even_with_matching_checksums(self):
+        self.public_files()
+        archive = self.directory / "VGHKS-bot-v1.2.3-windows-x64.zip"
+        with zipfile.ZipFile(archive, "a") as bundle:
+            bundle.writestr("VGHKS-calendar-monitor.exe", b"obsolete synthetic monitor")
+        names = ci.release_files("1.2.3") - {"SHA256SUMS.txt", "RELEASE_NOTES.md"}
+        (self.directory / "SHA256SUMS.txt").write_text(
+            "".join(f"{ci.digest(self.directory / name)}  {name}\n" for name in sorted(names)), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "Monitor artifacts"):
             ci.verify_files(self.directory, "1.2.3")
 
     def test_release_manifest_binds_run_attempt_tree_version_and_file_hashes(self):

@@ -16,7 +16,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from vghks_bot.calendar_sync import arrival, full_day, headers, scan  # noqa: E402
+from vghks_sheet_core.calendar import arrival, full_day, headers, scan  # noqa: E402
+
 from vghks_bot.sheet_archive import build_archive  # noqa: E402
 from vghks_bot.sheet_archive_lock import LOCK_ID, LOCK_KEY  # noqa: E402
 from vghks_bot.sheet_identity import header_columns  # noqa: E402
@@ -125,7 +126,8 @@ def check_workflows(contract):
                 or (planned[0]["fields"]["date"], planned[0]["fields"]["hospital"]) != expected
                 or found[0]["event_id"] != contract["patient_event_id"]
                 or arrival(found[0]) != ("08:30", "")
-                or found[0]["fields"]["人工備註"] != "人工欄位保留"):
+                or found[0]["fields"]["人工備註"] != "人工欄位保留"
+                or found[0]["fields"].get("醫院", "") != contract["patient_hospital_cells"][phase]):
             raise ValueError(f"GAS {phase} field or permanent identity contract differs")
     return 2
 
