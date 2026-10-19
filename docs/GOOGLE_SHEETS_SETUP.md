@@ -16,8 +16,6 @@ Google 暫時無法連線時，刀表管理顯示快取時間並保存操作草�
 
 寫入回應逾時或送達結果不明時，在管理操作或「刀表更新紀錄」按「核對更新結果」，沿用原批次核對。管理操作未確認前只可核對，不另建相同操作或盲目重送。Google 明確拒絕寫入時，修正權限或輸入後重新預覽；預覽後若刀表或 SOAP 有變動，也需重新確認。
 
-手術開始時間供核對，主程式不以它覆寫報到時間。`ScheduleSyncId` 與 `CalendarEventId` 隨整列搬移保留；主程式只更新刀表，獨立 `VGHKS-calendar-monitor.exe` 負責日曆。
+手術開始時間供核對，主程式不以它覆寫報到時間。`ScheduleSyncId` 與 `CalendarEventId` 隨整列搬移保留；主程式只更新刀表，獨立 [vghks-sheet2cal](https://github.com/eyeduck-ai/vghks-sheet2cal) 負責日曆。
 
-日曆監控另需啟用 **Google Calendar API**，並把指定日曆分享給服務帳戶，授予變更活動權限。在監控 EXE 的連線與排程頁匯入 JSON、刀表網址與 Calendar ID，按「檢查並準備刀表」後，再啟用每小時同步。主程式與監控分別保存憑證，監控不需要院內登入。完整設定及搬移規則見[刀表與日曆監控](SHEET_SYNC.md)。
-
-現有 EXE 已包含官方 Google 授權與刀表寫入程式，完成以上設定即可使用，不必重新編譯、不必把 JSON 金鑰放入 EXE，也不需讓操作者在瀏覽器登入 Google。使用的院內電腦仍須能連線 Google OAuth／Sheets API；瀏覽器能打開刀表不代表服務帳戶已獲得分享權限。
+日曆監控的 Calendar API、分享權限、金鑰匯入、排程及移機，由獨立 [vghks-sheet2cal](https://github.com/eyeduck-ai/vghks-sheet2cal) 設定。主程式只需要刀表連線，不包含監控入口。

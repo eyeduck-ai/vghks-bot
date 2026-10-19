@@ -1,4 +1,4 @@
-"""Synthetic fixtures exported from the GAS code and shared by both EXEs."""
+"""Main-program parsing against fixtures exported from the actual GAS code."""
 import json
 import unittest
 
@@ -7,9 +7,7 @@ from tools.verify_sheet_contract import (
     check_archives,
     check_contract,
     fixture_sheet,
-    literal,
 )
-from vghks_bot.calendar_monitor import normalize_hospital_requests
 from vghks_bot.sheet_plan import Planner, native_cell
 
 
@@ -45,20 +43,6 @@ class ThreeProgramContractTests(unittest.TestCase):
         self.assertEqual(written, [native_cell(cell) for cell in sheet["rows"][0]])
         self.assertTrue(all("formattedValue" not in cell and "effectiveValue" not in cell for cell in written))
         self.assertEqual(created["column_widths"], sheet["column_widths"])
-
-    def test_normalization_uses_same_marker_and_stops_at_invalid_header(self):
-        labels = self.formatting["monthly_headers"]
-        sheet = fixture_sheet(labels)
-        def row(day, marker, hospital):
-            values = {"日期／報到時間": day, "病歷號": marker, "醫院": hospital}
-            return [literal(values.get(label, "")) for label in labels]
-        sheet["rows"] += [row("2026-10-11", "◆　刀日", "聯醫"), row("08:30", "TEST001", "高榮"),
-                          row("2026-10-12", "◆ 刀日", ""), row("09:00", "TEST002", "高榮")]
-        requests = normalize_hospital_requests({"sheets": [sheet]})
-        self.assertEqual(len(requests), 1)
-        self.assertEqual(requests[0]["updateCells"]["range"]["startRowIndex"], 2)
-        self.assertEqual(requests[0]["updateCells"]["rows"][0]["values"][0], literal("聯醫"))
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -21,8 +21,8 @@ if str(ROOT) not in sys.path:
 from google.auth.exceptions import GoogleAuthError  # noqa: E402
 from google.auth.transport.requests import AuthorizedSession  # noqa: E402
 from google.oauth2 import service_account  # noqa: E402
+from vghks_sheet_core.calendar import scan  # noqa: E402
 
-from vghks_bot.calendar_sync import scan  # noqa: E402
 from vghks_bot.google_sheets import SheetsClient, column_name, spreadsheet_id  # noqa: E402
 from vghks_bot.sheet_identity import (  # noqa: E402
     ARCHIVE_PATTERN,

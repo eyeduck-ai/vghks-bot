@@ -27,10 +27,39 @@ def check_metadata(root=ROOT, tag=""):
         raise ValueError("Pin vghks-sdk to a full commit")
     if sdk not in (root / "requirements-build.lock.txt").read_text(encoding="utf-8").splitlines():
         raise ValueError("Build lock and project SDK commits differ")
+    core, _, revision = core_requirement(root)
+    if core not in (root / "requirements-build.lock.txt").read_text(encoding="utf-8").splitlines():
+        raise ValueError("Build lock and project sheet-core commits differ")
+    if json.loads((root / "tests/fixtures/gas_contract.json").read_text(encoding="utf-8"))["revision"] != revision:
+        raise ValueError("GAS contract and sheet-core commits differ")
     defaults = json.loads((root / "vghks_bot/defaults.json").read_text(encoding="utf-8"))
     if defaults.get("username") or defaults.get("password"):
         raise ValueError("Public builds must have blank login defaults")
     return project["version"]
+
+
+def core_requirement(root=ROOT):
+    project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    requirement = next(v for v in project["dependencies"] if v.startswith("vghks-sheet-core @ "))
+    match = re.fullmatch(r"vghks-sheet-core @ git\+(https://github\.com/eyeduck-ai/op_spreadsheet\.git)@([a-f0-9]{40})#subdirectory=packages/python", requirement)
+    if not match:
+        raise ValueError("Pin vghks-sheet-core to a full canonical Git commit")
+    return requirement, match[1], match[2]
+
+
+def check_core_installation(root=ROOT):
+    requirement, url, revision = core_requirement(root)
+    try:
+        provenance = json.loads(importlib.metadata.distribution("vghks-sheet-core").read_text("direct_url.json") or "{}")
+    except (importlib.metadata.PackageNotFoundError, ValueError) as exc:
+        raise ValueError("Cannot verify installed vghks-sheet-core; reinstall the pinned core") from exc
+    vcs = provenance.get("vcs_info", {}) if isinstance(provenance, dict) else {}
+    if (not isinstance(provenance, dict) or not isinstance(vcs, dict) or provenance.get("url") != url
+            or vcs.get("vcs") != "git" or vcs.get("commit_id") != revision
+            or provenance.get("subdirectory") != "packages/python"):
+        raise ValueError("Installed vghks-sheet-core differs from the pinned commit; run "
+                         f'python -m pip install --no-deps --force-reinstall "{requirement}"')
+    return revision
 
 
 def check_sdk_installation(root=ROOT):
@@ -89,9 +118,10 @@ def check_contents(root, paths):
 def main():
     version = check_metadata(tag=os.environ.get("RELEASE_TAG", ""))
     sdk_commit = check_sdk_installation()
+    core_commit = check_core_installation()
     paths = source_paths()
     check_contents(ROOT, paths)
-    print(f"Source boundary OK: {len(paths)} files, version {version}, SDK commit {sdk_commit}")
+    print(f"Source boundary OK: {len(paths)} files, version {version}, SDK {sdk_commit}, sheet core {core_commit}")
 
 
 if __name__ == "__main__":

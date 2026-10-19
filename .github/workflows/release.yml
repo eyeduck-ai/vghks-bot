@@ -39,4 +39,4 @@ jobs:
           sha256sum --check SHA256SUMS.txt
           gh release create "$RELEASE_TAG" --verify-tag \
             --title "VGHKS-bot $RELEASE_TAG" --notes-file RELEASE_NOTES.md \
-            VGHKS-bot.exe VGHKS-calendar-monitor.exe VGHKS-bot-*-windows-x64.zip SHA256SUMS.txt
+            VGHKS-bot.exe VGHKS-bot-*-windows-x64.zip SHA256SUMS.txt

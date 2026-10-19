@@ -7,6 +7,7 @@ from unittest.mock import Mock, patch
 
 from tools.verify_repository import (
     check_contents,
+    check_core_installation,
     check_metadata,
     check_paths,
     check_sdk_installation,
@@ -15,6 +16,16 @@ from tools.verify_repository import (
 
 
 class ReleaseBoundaryTests(unittest.TestCase):
+    def test_installed_sheet_core_has_the_exact_pinned_provenance(self):
+        revision = check_core_installation()
+        self.assertEqual(len(revision), 40)
+        invalid = Mock()
+        invalid.read_text.return_value = json.dumps({"url": "https://github.com/eyeduck-ai/op_spreadsheet.git",
+            "subdirectory": "packages/python", "vcs_info": {"vcs": "git", "commit_id": "0" * 40}})
+        with patch("tools.verify_repository.importlib.metadata.distribution", return_value=invalid):
+            with self.assertRaisesRegex(ValueError, "sheet-core.*pinned commit"):
+                check_core_installation()
+
     def test_runtime_files_cannot_be_committed_under_different_directories(self):
         for name in ("archive/accounts.sqlite3", "archive/clinical.sqlite3-wal", "copy/VGHKS-bot-data/database.json",
                      ".local/legacy-docs/report.md", "dist/VGHKS-bot.exe", ".env.production", "keys/service-account-real.json",

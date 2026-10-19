@@ -8,9 +8,10 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
+from sheet_fixtures import FU_HEADERS, cell, monthly, row, workbook
+
 from tools import check_sheet_contract as check
 from vghks_bot.google_sheets import SheetsClient
-from vghks_bot.selftest_calendar import FU_HEADERS, cell, monthly, row, workbook
 
 SHEET_ID = "a" * 32
 SECRET = "PRIVATE_PATIENT_CREDENTIAL_EVENT_SECRET123456"

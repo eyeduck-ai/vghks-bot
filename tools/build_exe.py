@@ -1,4 +1,4 @@
-"""Build the two independent Windows executables with embedded assets."""
+"""Build the Windows main executable with embedded assets."""
 from __future__ import annotations
 
 import argparse
@@ -12,17 +12,19 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from tools.verify_repository import check_sdk_installation  # noqa: E402
+from tools.verify_repository import check_core_installation, check_sdk_installation  # noqa: E402
 from vghks_bot.settings import Settings  # noqa: E402
 
 
 def notices() -> Path:
     sdk_commit = check_sdk_installation()
+    core_commit = check_core_installation()
     directory = ROOT / ".build" / "licenses"
     directory.mkdir(parents=True, exist_ok=True)
-    parts = ["Third-party notices for VGHKS-bot\n", f"vghks-sdk commit {sdk_commit}\n"]
+    parts = ["Third-party notices for VGHKS-bot\n", f"vghks-sdk commit {sdk_commit}\n",
+             f"vghks-sheet-core commit {core_commit}\n"]
     for name in ("vghks-sdk", "requests", "beautifulsoup4", "soupsieve", "truststore", "urllib3", "certifi", "charset-normalizer", "idna", "typing-extensions", "pyinstaller",
-                 "google-auth", "cryptography", "cffi", "pycparser", "pyasn1", "pyasn1-modules"):
+                 "vghks-sheet-core", "google-auth", "cryptography", "cffi", "pycparser", "pyasn1", "pyasn1-modules"):
         package = importlib.metadata.distribution(name)
         parts.append(f"\n{'=' * 70}\n{name} {package.version}\n{'=' * 70}\n")
         for entry in package.files or []:
@@ -56,17 +58,17 @@ def main():
         environment = os.environ.copy()
         environment["PYINSTALLER_CONFIG_DIR"] = str(ROOT / ".build" / "pyinstaller-cache")
         license_directory = notices()
-        for name, entry in (("VGHKS-bot", "run.py"), ("VGHKS-calendar-monitor", "run_calendar_monitor.py")):
-            command = [sys.executable, "-m", "PyInstaller", "--noconfirm", "--noupx", "--onefile", "--windowed",
-                "--name", name, "--distpath", str(ROOT / "dist"),
-                "--workpath", str(ROOT / ".build" / "pyinstaller"), "--specpath", str(ROOT / ".build"),
-                "--paths", str(ROOT), "--add-data", f"{ROOT / 'vghks_bot' / 'static'};vghks_bot/static",
-                "--add-data", f"{defaults};vghks_bot", "--add-data", f"{license_directory};vghks_bot/licenses",
-                "--hidden-import", "truststore", "--exclude-module", "tkinter", "--exclude-module", "pytest",
-                str(ROOT / entry)]
-            subprocess.run(command, cwd=ROOT, env=environment, check=True)
-            executable = ROOT / "dist" / (name + ".exe")
-            print(f"Built {executable.name}: {executable.stat().st_size / (1024 * 1024):.1f} MiB")
+        name, entry = "VGHKS-bot", "run.py"
+        command = [sys.executable, "-m", "PyInstaller", "--noconfirm", "--noupx", "--onefile", "--windowed",
+            "--name", name, "--distpath", str(ROOT / "dist"),
+            "--workpath", str(ROOT / ".build" / "pyinstaller"), "--specpath", str(ROOT / ".build"),
+            "--paths", str(ROOT), "--add-data", f"{ROOT / 'vghks_bot' / 'static'};vghks_bot/static",
+            "--add-data", f"{defaults};vghks_bot", "--add-data", f"{license_directory};vghks_bot/licenses",
+            "--collect-data", "vghks_sheet_core", "--hidden-import", "truststore", "--exclude-module", "tkinter", "--exclude-module", "pytest",
+            str(ROOT / entry)]
+        subprocess.run(command, cwd=ROOT, env=environment, check=True)
+        executable = ROOT / "dist" / (name + ".exe")
+        print(f"Built {executable.name}: {executable.stat().st_size / (1024 * 1024):.1f} MiB")
     finally:
         defaults.unlink(missing_ok=True)
 

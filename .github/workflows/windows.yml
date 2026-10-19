@@ -59,7 +59,6 @@ jobs:
           overwrite: true
           path: |
             .build/ci/source-selftest.json
-            .build/ci/monitor-source-selftest.json
           include-hidden-files: true
           retention-days: 14
           if-no-files-found: error
@@ -102,7 +101,7 @@ jobs:
           retention-days: 14
 
   verified:
-    name: Complete suite and both source self-tests
+    name: Complete suite and source self-test
     needs: [checks, tests]
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -165,7 +164,7 @@ jobs:
         with:
           name: tests-${{ github.sha }}
           path: .build/ci/
-      - name: Build, verify and package both executables
+      - name: Build, verify and package the main executable
         run: python tools/run_checks.py --build-only
       - name: Bind release files to this verified main run
         run: python tools/ci_artifacts.py record-build
@@ -186,7 +185,6 @@ jobs:
           overwrite: true
           path: |
             dist/VGHKS-bot.exe
-            dist/VGHKS-calendar-monitor.exe
             dist/VGHKS-bot-*-windows-x64.zip
             dist/SHA256SUMS.txt
             dist/RELEASE_NOTES.md

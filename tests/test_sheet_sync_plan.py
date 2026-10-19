@@ -108,7 +108,7 @@ class StablePlannerTests(unittest.TestCase):
         preview = self.execute(client, [p])
         entry = next(e for e in entries(client.book["sheets"][0]) if e.get("sync_id") == uid)
         self.assertEqual(entry["fields"]["hospital"], "聯醫")
-        self.assertEqual(cell_text(entry["row"][1]), "聯醫")
+        self.assertEqual(cell_text(entry["row"][1]), "")
         self.assertEqual(cell_text(entry["row"][0]), "08:15")
         self.assertEqual(preview["items"][0]["action"], "update")
 

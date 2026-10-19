@@ -56,6 +56,8 @@ class SyncCoreTests(unittest.TestCase):
         result = self.run_sync()
         self.assertEqual(result["updated"], 1, result)
         entry = self.row()
+        self.assertEqual(cell_text(entry["row"][1]), "")
+        entry["row"][1] = literal("高榮")
         uid = entry["sync_id"]
         day = self.client.book["sheets"][0]["rows"][entry["day_index"]]
         day[0] = literal("2026/10/12 Mon")
@@ -68,6 +70,7 @@ class SyncCoreTests(unittest.TestCase):
         self.assertEqual(self.row()["fields"]["iol"], "DIB00", result)
         self.assertEqual(self.row()["route"]["date"], "2026-10-12")
         self.assertEqual(self.row()["route"]["hospital"], "聯醫")
+        self.assertEqual(cell_text(self.row()["row"][1]), "高榮")
         self.assertEqual(self.row()["sync_id"], uid)
         self.assertEqual(cell_text(self.row()["row"][0]), "09:30")
         self.assertEqual(cell_text(self.row()["row"][22]), "stable-calendar-id")
@@ -76,6 +79,19 @@ class SyncCoreTests(unittest.TestCase):
         result = self.run_sync()
         self.assertEqual(self.row()["route"]["date"], "2026-10-12", result)
         self.assertTrue(any("人工位置" in p["reason"] for p in result["pending"]), result)
+
+    def test_monthly_patient_hospital_formula_is_preserved_during_soap_updates(self):
+        self.run_sync()
+        entry = self.row()
+        self.assertEqual(cell_text(entry["row"][1]), "")
+        formula = {"userEnteredValue": {"formulaValue": '="聯醫"'}, "formattedValue": "聯醫"}
+        entry["row"][1] = copy.deepcopy(formula)
+        self.record["soap"] = self.record["soap"].replace("SN60WF", "DIB00")
+        self.record["soap_structure"]["assessment_plan"] = self.record["soap"]
+        result = self.run_sync()
+        self.assertEqual(result["updated"], 1, result)
+        self.assertEqual(self.row()["fields"]["iol"], "DIB00")
+        self.assertEqual(self.row()["row"][1], formula)
 
     def test_manual_field_is_preserved_and_deleted_binding_does_not_recreate(self):
         self.run_sync()

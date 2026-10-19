@@ -212,25 +212,16 @@ class SheetsClient:
         """Read every schedule and shared-state tab before reconciliation decisions."""
         return self._read(managed=True)
 
-    def read_for_monitor(self):
-        """Full identity coverage, with only Calendar-relevant cell presentation."""
-        return self._read(managed=True, monitor=True)
-
     def read_for_archive(self):
         """Include other tabs to reject formulas that would break on source removal."""
         return self._read(managed=True, all_tabs=True)
 
-    def _read(self, *, managed, all_tabs=False, monitor=False):
+    def _read(self, *, managed, all_tabs=False):
         meta = self.request("GET", params={"fields": "spreadsheetId,properties,sheets(properties,protectedRanges,charts,conditionalFormats),developerMetadata,namedRanges"})
         sheets = [s for s in meta.get("sheets", []) if all_tabs or
                   re.fullmatch(r"\d{6}", s["properties"]["title"]) or managed and
                   (s["properties"]["title"] in {"FU", "All", "__VGHKS_SYNC_STATE"}
                    or re.fullmatch(r"刀表封存_\d{4}", s["properties"]["title"]))]
-        if monitor:
-            self._monitor_grid(sheets)
-            return {"properties": meta.get("properties", {}), "sheets": sheets,
-                    "all_sheet_properties": [s["properties"] for s in meta.get("sheets", [])],
-                    "developerMetadata": meta.get("developerMetadata", []), "namedRanges": meta.get("namedRanges", [])}
         for sheet in sheets:
             p = sheet["properties"]
             if "gridProperties" not in p:
@@ -282,60 +273,6 @@ class SheetsClient:
                 "all_sheet_properties": [s["properties"] for s in meta.get("sheets", [])],
                 "developerMetadata": meta.get("developerMetadata", []),
                 "namedRanges": meta.get("namedRanges", [])}
-
-    def _monitor_grid(self, sheets):
-        """Batch bounded ranges across tabs; retain notes/runs for safe ID setup.
-
-        Native write/archive readers remain separate. Technical setup only
-        writes narrow values or uses native column moves, preserving other styles.
-        """
-        pending, indexed = [], {sheet["properties"]["sheetId"]: sheet for sheet in sheets}
-        blocks = {sid: [] for sid in indexed}
-        for sheet in sheets:
-            p = sheet["properties"]
-            sheet.update(rows=[], merges=[], column_widths=[], row_metadata=[])
-            grid = p.get("gridProperties", {})
-            columns = grid.get("columnCount", 0)
-            if columns > 1000:
-                raise SheetError("刀表分頁超過 1,000 欄，請確認選擇的是手術刀表。")
-            if not columns:
-                continue
-            title, last = p["title"].replace("'", "''"), column_name(columns - 1)
-            for start in range(1, grid["rowCount"] + 1, 400):
-                end = min(start + 399, grid["rowCount"])
-                pending.append((f"'{title}'!A{start}:{last}{end}", (end - start + 1) * columns))
-        # A strikethrough may come from user format, rich text or a rule.
-        values = "userEnteredValue,effectiveValue,formattedValue,note,textFormatRuns,userEnteredFormat(textFormat(strikethrough)),effectiveFormat(textFormat(strikethrough))"
-        fields = f"sheets(properties(sheetId),merges,data(startRow,startColumn,columnMetadata(pixelSize,hiddenByUser),rowMetadata(pixelSize,hiddenByUser),rowData(values({values}))))"
-        while pending:
-            ranges, cells = [], 0
-            while pending and len(ranges) < 4:
-                if ranges and cells + pending[0][1] > 40000:
-                    break
-                selected, count = pending.pop(0)
-                ranges.append(("ranges", selected))
-                cells += count
-            result = self.request("GET", params=[*ranges, ("fields", fields)])
-            for part in result.get("sheets", []):
-                sid = part.get("properties", {}).get("sheetId", 0)
-                if sid not in indexed:
-                    raise SheetError("Google 回傳未預期的分頁，停止本輪核對。")
-                blocks[sid].extend(part.get("data", []))
-                indexed[sid]["merges"] = part.get("merges", [])
-        for sid, data in blocks.items():
-            sheet = indexed[sid]
-            for block in data:
-                start = block.get("startRow", 0)
-                for index, row in enumerate(block.get("rowData", []), start):
-                    while len(sheet["rows"]) <= index:
-                        sheet["rows"].append([])
-                    sheet["rows"][index] = row.get("values", [])
-                if block.get("columnMetadata"):
-                    sheet["column_widths"] = block["columnMetadata"]
-                dimensions = block.get("rowMetadata", [])
-                while len(sheet["row_metadata"]) < start + len(dimensions):
-                    sheet["row_metadata"].append({})
-                sheet["row_metadata"][start:start + len(dimensions)] = dimensions
 
     def write(self, requests_):
         from .sheet_archive_lock import assert_archive_available

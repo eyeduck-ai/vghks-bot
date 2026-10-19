@@ -4,8 +4,8 @@ import unittest
 from datetime import date
 
 from analysis_fixtures import book_fixture, literal, proposal
+from vghks_sheet_core.calendar import full_day, headers, resource, scan
 
-from vghks_bot.calendar_sync import full_day, headers, resource, scan
 from vghks_bot.sheet_identity import EVENT_ID_HEADER, header_columns, plan_identity_setup
 from vghks_bot.sheet_plan import FUPlanner, Planner, columns, entries, native_cell, typed_day
 from vghks_bot.sheet_schema import (
