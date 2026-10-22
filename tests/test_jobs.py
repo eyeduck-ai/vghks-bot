@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from vghks_bot import storage
 from vghks_bot.jobs import Application, BusyError
 from vghks_bot.scanner import ScanState
 from vghks_bot.selftest import SyntheticSDK
@@ -147,23 +148,83 @@ class JobTests(unittest.TestCase):
         self.assertEqual(self.instances,[])
 
     def test_history_polling_during_checkpoint_does_not_break_windows_replace(self):
-        key = self.account("DOC1","2026-09-01","2026-09-18")
-        stop = threading.Event()
+        start, end = parse_range({"start":"2026-09-18"})
+        state = ScanState(start, end, id=uuid.uuid4().hex)
+        journal = self.app.store.create(state.snapshot(detail=False))
+        metadata_path = journal.directory / "run.json"
+        updated = {**state.snapshot(detail=False), "status":"completed", "revision":1}
+        reader_open, reader_closed, release_read = (threading.Event() for _ in range(3))
+        writer_attempted, writer_blocked = threading.Event(), threading.Event()
+        results, errors, replacements = {}, [], []
+        io_lock, read_text, replace = storage._IO_LOCK, Path.read_text, storage.os.replace
 
-        def read_history():
-            while not stop.is_set():
-                self.app.history()
-                stop.wait(.001)
+        class ObservedLock:
+            def __enter__(self):
+                if threading.current_thread() is writer:
+                    acquired = io_lock.acquire(blocking=False)
+                    if not acquired:
+                        writer_blocked.set()
+                    writer_attempted.set()
+                    if not acquired:
+                        io_lock.acquire()
+                else:
+                    io_lock.acquire()
+                return self
 
-        reader = threading.Thread(target=read_history,daemon=True)
-        reader.start()
-        try:
-            result = self.start([key])[0]
-            self.assertEqual(result["status"],"completed")
-            self.assertEqual(result["counts"]["soap_read"],54)
-        finally:
-            stop.set()
-            reader.join(2)
+            def __exit__(self, *_):
+                io_lock.release()
+
+        def held_read(path, *args, **kwargs):
+            if path != metadata_path or threading.current_thread() is not reader:
+                return read_text(path, *args, **kwargs)
+            try:
+                with path.open("r", encoding="utf-8") as handle:
+                    reader_open.set()
+                    if not release_read.wait(10):
+                        raise AssertionError("metadata reader was not released")
+                    return handle.read()
+            finally:
+                reader_closed.set()
+
+        def windows_replace(source, destination):
+            if destination == metadata_path:
+                # Reproduce Windows sharing rules even on non-Windows hosts.
+                if reader_open.is_set() and not reader_closed.is_set():
+                    raise PermissionError("metadata is still open for reading")
+                replacements.append(destination)
+            return replace(source, destination)
+
+        def run(name, operation):
+            try:
+                results[name] = operation()
+            except Exception as exc:
+                errors.append(exc)
+
+        reader = threading.Thread(target=run, args=("history", self.app.history), daemon=True)
+        writer = threading.Thread(target=run, args=("checkpoint", lambda: journal.checkpoint(updated)), daemon=True)
+        with patch.object(storage, "_IO_LOCK", ObservedLock()), \
+                patch.object(Path, "read_text", held_read), \
+                patch.object(storage.os, "replace", windows_replace):
+            reader.start()
+            try:
+                self.assertTrue(reader_open.wait(10), "history did not open the metadata file")
+                writer.start()
+                self.assertTrue(writer_attempted.wait(10), "checkpoint did not acquire the metadata lock")
+                # The read handle must force actual contention, without sleeps
+                # or a long scan whose many fsync calls depend on runner speed.
+                self.assertTrue(writer_blocked.is_set(), "checkpoint overlapped an open metadata reader")
+            finally:
+                release_read.set()
+                reader.join(10)
+                if writer.ident is not None:
+                    writer.join(10)
+        self.assertFalse(reader.is_alive())
+        self.assertFalse(writer.is_alive())
+        self.assertEqual(errors, [])
+        self.assertEqual(results["history"]["runs"][0]["status"], "running")
+        self.assertEqual(replacements, [metadata_path])
+        saved = self.app.store.metadata(state.data["id"])
+        self.assertEqual((saved["status"], saved["revision"]), ("completed", 1))
 
     def test_deleting_profile_keeps_history(self):
         key = self.account("DOC1")
