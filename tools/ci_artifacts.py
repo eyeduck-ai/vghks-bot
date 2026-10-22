@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 import subprocess
@@ -15,12 +16,13 @@ import sys
 import time
 import tomllib
 import zipfile
+from collections import Counter
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from tools.test_suite import shard_for  # noqa: E402
+from tools.test_suite import plan_shards  # noqa: E402
 
 WORKFLOW = ".github/workflows/windows.yml"
 REPORT_NAMES = (
@@ -53,7 +55,7 @@ def collect_tests(directory, count):
     """Fail closed on a missing, duplicated, failed or partial shard."""
     if count < 1:
         raise ValueError("Invalid shard count")
-    expected, completed, seconds = None, set(), []
+    expected, completed, seconds, timings = None, set(), [], {}
     for index in range(count):
         report = read_json(directory / f"shard-{index}" / "test-timings.json")
         all_ids, actual = report["all_test_ids"], report["completed_test_ids"]
@@ -63,21 +65,43 @@ def collect_tests(directory, count):
             raise ValueError(f"Invalid or failed shard {index}")
         if expected is None:
             expected = all_ids
+            plan = plan_shards(expected, count)
         if all_ids != expected:
             raise ValueError("Shards discovered different test suites")
-        selected = [name for name in expected if shard_for(name, count) == index]
-        if actual != selected or report.get("tests") != len(selected) or completed.intersection(actual):
+        duration = report.get("duration_seconds")
+        if (isinstance(duration, bool) or not isinstance(duration, (int, float))
+                or not math.isfinite(duration) or duration < 0):
+            raise ValueError(f"Invalid duration in shard {index}")
+        selected = [name for name in expected if plan["class_shards"][name.rpartition(".")[0]] == index]
+        if (actual != selected or report.get("tests") != len(selected) or completed.intersection(actual)
+                or report.get("plan_sha256") != plan["sha256"]):
             raise ValueError(f"Incomplete or duplicated coverage in shard {index}")
         completed.update(actual)
-        seconds.append(report["duration_seconds"])
+        seconds.append(duration)
+        measured = report.get("class_timings")
+        class_counts = Counter(name.rpartition(".")[0] for name in selected)
+        if not isinstance(measured, dict) or set(measured) != set(class_counts):
+            raise ValueError(f"Incomplete class timings in shard {index}")
+        for name, tests in class_counts.items():
+            row = measured[name]
+            if (not isinstance(row, dict) or type(row.get("tests")) is not int or row["tests"] != tests
+                    or type(row.get("milliseconds")) is not int or row["milliseconds"] < 0):
+                raise ValueError(f"Invalid class timing for {name} in shard {index}")
+        timings.update(measured)
     if completed != set(expected):
         raise ValueError("Test shards do not cover the complete suite")
     for name in ("source-selftest.json",):
         if read_json(directory / name).get("ok") is not True:
             raise ValueError("Failed source self-test: " + name)
     summary = {"ok": True, "tests": len(completed), "shards": count, "shard_seconds": seconds,
-               "test_ids_sha256": hashlib.sha256("\n".join(expected).encode()).hexdigest()}
+               "test_ids_sha256": hashlib.sha256("\n".join(expected).encode()).hexdigest(),
+               "plan_sha256": plan["sha256"]}
     write_json(directory / "test-summary.json", summary)
+    # Review these measurements before replacing the checked-in baseline.
+    write_json(directory / "test-class-timings.json", {"schema": 1, "source": {
+        "repository": os.environ.get("GITHUB_REPOSITORY", ""),
+        "commit": os.environ.get("GITHUB_SHA", ""), "run_id": os.environ.get("GITHUB_RUN_ID", ""),
+    }, "classes": dict(sorted(timings.items()))})
     print(f"Complete suite verified: {len(completed)} tests across {count} disjoint shards; source self-test passed")
     return summary
 

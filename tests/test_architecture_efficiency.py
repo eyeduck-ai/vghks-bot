@@ -59,9 +59,10 @@ class EfficiencyTests(unittest.TestCase):
         self.assertEqual(self.work.library_search({"task_id": "review"})["page_total"], 0)
 
     def test_warm_page_decodes_only_selected_soap_and_rules_rebuild(self):
-        for number in range(85):
-            self.record(number)
         library = self.work.store.library
+        with library.batch():
+            for number in range(85):
+                self.record(number)
         ensure(library, self.work.settings)
         decoded = []
         original = json.loads
@@ -98,7 +99,8 @@ class EfficiencyTests(unittest.TestCase):
             self.assertEqual(db.execute("SELECT payload FROM bot_documents WHERE kind='task' AND id='review'").fetchone()[0], original)
 
     def test_cataract_65_by_10_uses_under_100_sql_and_checks_file_loss(self):
-        cohort = seed_patients(self.work, count=65, order_count=10)
+        with self.work.store.library.batch():
+            cohort = seed_patients(self.work, count=65, order_count=10)
         statements, original = [], sqlite3.connect
 
         def connect(*args, **kwargs):
@@ -123,9 +125,10 @@ class EfficiencyTests(unittest.TestCase):
         self.assertEqual(first["queue"], second["queue"])
 
     def test_inventory_paginates_without_decoding_any_soap_or_numeric_body(self):
-        for i in range(45):
-            self.record(i)
-            self.work.analysis.store.save_step(f"TEST{i:03}", "numeric-history", "numeric", {"body": "x" * 10000}, self.work.username)
+        with self.work.store.library.batch():
+            for i in range(45):
+                self.record(i)
+                self.work.analysis.store.save_step(f"TEST{i:03}", "numeric-history", "numeric", {"body": "x" * 10000}, self.work.username)
         ensure(self.work.store.library, self.work.settings)
         with patch("json.loads", side_effect=AssertionError("inventory decoded a document")):
             page = self.work.library_data.read({"limit": 40})

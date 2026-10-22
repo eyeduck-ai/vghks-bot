@@ -13,6 +13,12 @@
 
 四組測試的完整探索名單須相同，且每項恰好完成一次；缺漏、重複或失敗均停止建置。來源及 EXE 自測都必須成功。
 
+四組依 `tools/test-timings-baseline.json` 的實測測試類別耗時分配：先放入耗時最長的類別，每次選擇預估負載最小的一組，同一類別始終留在同組，保留 class setup／teardown 生命週期。基準固定在版本控制中，runner 與彙總器使用相同輸入與排序，因此分組可重現；新增測試仍會完整納入，沒有基準的類別使用預設估計值。
+
+每組報告會保存完整探索及完成名單、分組指紋與類別耗時。彙總器依 repo 的基準及完整名單獨立重算分組，拒收分錯組或指紋不符的報告。更新耗時基準時，應採用同一成功執行的完整四組報告，並保留來源 commit 與 run 資訊供核對。
+
+大量合成資料的測試準備可使用既有 `Library.batch()`，在同一交易中建立 fixture；批次須在被測操作、背景工作或等待開始前結束。正式程式的同步寫入設定、持久化測試及所有斷言維持完整。
+
 `tests/fixtures/gas_contract.json`、pyproject 與建置鎖固定相同共用核心 commit。CI checkout 該 GAS source，執行真實解析、寫入與封存匯出器；建置核對實際安裝的 SDK 與核心 Git 來源，EXE 再核對內嵌規格、案例、靜態檔、空白憑證與授權聲明。
 
 `BUILD_INFO.json` 綁定 repository、main commit、Git tree、GAS／核心 revision、run ID／attempt、版本及雜湊。發布只接受同倉庫同 commit 的成功 main run，核對 EXE／ZIP 的 SHA-256、ZIP 內主程式與三份驗證報告。舊監控 EXE 或報告混入主程式 ZIP 時拒收。

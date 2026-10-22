@@ -58,8 +58,9 @@ class AnalysisTests(unittest.TestCase):
             {"accounts": [{"id": self.key, "username": "TEST", "password": "private-test"}]}
         )
         self.record = soap_record()
-        self.app.store.library.save_record(self.record, "TEST", "synthetic")
-        self.app.store.library.save_record(soap_record(day="2026-09-17"), "TEST", "synthetic")
+        with self.app.store.library.batch():
+            self.app.store.library.save_record(self.record, "TEST", "synthetic")
+            self.app.store.library.save_record(soap_record(day="2026-09-17"), "TEST", "synthetic")
         self.cohort = self.app.analysis.save_cohort(
             {"source": "library", "all": True, "name": "synthetic", "filters": {"tag": "surgery"}}
         )
@@ -112,8 +113,9 @@ class AnalysisTests(unittest.TestCase):
     def test_cohort_deduplicates_mrns_retains_sources_and_cross_page_all(self):
         self.assertEqual(len(self.cohort["members"]), 1)
         self.assertEqual(len(self.cohort["members"][0]["source_records"]), 2)
-        for i in range(1, 205):
-            self.app.store.library.save_record(soap_record(str(i).zfill(7)), "TEST", "synthetic")
+        with self.app.store.library.batch():
+            for i in range(1, 205):
+                self.app.store.library.save_record(soap_record(str(i).zfill(7)), "TEST", "synthetic")
         cohort = self.app.analysis.save_cohort(
             {"source": "library", "all": True, "name": "all", "filters": {"limit": 1}}
         )

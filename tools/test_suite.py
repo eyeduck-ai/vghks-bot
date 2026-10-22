@@ -8,10 +8,12 @@ import sys
 import time
 import unittest
 import xml.etree.ElementTree as ET
+from collections import Counter
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+TIMING_BASELINE = ROOT / "tools/test-timings-baseline.json"
 
 
 def flatten(suite):
@@ -22,21 +24,71 @@ def flatten(suite):
             yield item
 
 
-def shard_for(test_id, count):
-    # Keep each TestCase together so class setup/teardown runs exactly once.
-    class_id = test_id.rpartition(".")[0]
-    return int(hashlib.sha256(class_id.encode()).hexdigest()[:8], 16) % count
+def load_baseline():
+    value = json.loads(TIMING_BASELINE.read_text(encoding="utf-8"))
+    if value.get("schema") != 1 or not isinstance(value.get("classes"), dict):
+        raise ValueError("Invalid class timing baseline")
+    return value["classes"]
+
+
+def plan_shards(all_ids, count, baseline=None):
+    """Reproduce one LPT plan from discovery and checked-in class timings.
+
+    Integer milliseconds and explicit ties keep Windows runners and the Linux
+    collector in agreement. Unknown classes use one second per test; known
+    classes scale with their current test count. Obsolete baseline classes do
+    not participate, and each TestCase stays together for class fixtures.
+    """
+    if type(count) is not int or count < 1:
+        raise ValueError("Invalid shard count")
+    ids = sorted(all_ids)
+    if len(ids) != len(set(ids)) or any(not name.rpartition(".")[0] for name in ids):
+        raise ValueError("Invalid or duplicate test IDs in discovery")
+    baseline = load_baseline() if baseline is None else baseline
+    if not isinstance(baseline, dict):
+        raise ValueError("Invalid class timing baseline")
+    classes = Counter(name.rpartition(".")[0] for name in ids)
+    estimates = {}
+    for name, tests in classes.items():
+        saved = baseline.get(name)
+        if saved is None:
+            estimates[name] = tests * 1000
+        else:
+            if not isinstance(saved, dict):
+                raise ValueError("Invalid timing baseline for " + name)
+            saved_tests, milliseconds = saved.get("tests"), saved.get("milliseconds")
+            if (type(saved_tests) is not int or saved_tests < 1
+                    or type(milliseconds) is not int or milliseconds < 0):
+                raise ValueError("Invalid timing baseline for " + name)
+            estimates[name] = (milliseconds * tests + saved_tests // 2) // saved_tests
+    loads, assignments = [0] * count, {}
+    for name in sorted(classes, key=lambda name: (-estimates[name], name)):
+        index = min(range(count), key=lambda index: (loads[index], index))
+        assignments[name] = index
+        loads[index] += estimates[name]
+    identity = {"algorithm": "class-lpt-v1", "shard_count": count, "all_test_ids": ids,
+                "class_shards": assignments, "class_milliseconds": estimates}
+    fingerprint = hashlib.sha256(json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    return {"class_shards": assignments, "estimated_shard_milliseconds": loads, "sha256": fingerprint}
 
 
 def select_shard(suite, index, count):
-    if count < 1 or not 0 <= index < count:
+    if type(index) is not int or type(count) is not int or count < 1 or not 0 <= index < count:
         raise ValueError("Shard index must be between zero and shard count minus one")
     tests = sorted(flatten(suite), key=lambda test: test.id())
     all_ids = [test.id() for test in tests]
-    if len(all_ids) != len(set(all_ids)):
-        raise ValueError("Duplicate test IDs in discovery")
-    selected = [test for test in tests if shard_for(test.id(), count) == index]
+    plan = plan_shards(all_ids, count)
+    selected = [test for test in tests if plan["class_shards"][test.id().rpartition(".")[0]] == index]
     return unittest.TestSuite(selected), all_ids
+
+
+def class_timings(timings):
+    result = {}
+    for name, seconds in timings.items():
+        row = result.setdefault(name.rpartition(".")[0], {"tests": 0, "milliseconds": 0})
+        row["tests"] += 1
+        row["milliseconds"] += round(seconds * 1000)
+    return dict(sorted(result.items()))
 
 
 class Result(unittest.TextTestResult):
@@ -63,6 +115,8 @@ def reports(result, directory, all_ids, index=0, count=1):
     timing = {"ok": result.wasSuccessful(), "tests": result.testsRun, "duration_seconds": duration,
               "slowest": sorted(result.timings.items(), key=lambda item: item[1], reverse=True)[:30],
               "shard_index": index, "shard_count": count,
+              "plan_sha256": plan_shards(all_ids, count)["sha256"],
+              "class_timings": class_timings(result.timings),
               "all_test_ids": all_ids, "completed_test_ids": sorted(result.timings)}
     (directory / "test-timings.json").write_text(json.dumps(timing, indent=2), encoding="utf-8")
     suite = ET.Element("testsuite", name="synthetic", tests=str(result.testsRun), time=str(duration),

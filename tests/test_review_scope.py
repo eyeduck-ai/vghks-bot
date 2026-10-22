@@ -115,12 +115,13 @@ class ReviewScopeTests(unittest.TestCase):
 
     def test_approval_view_includes_every_case_and_filters_locally(self):
         base = clean(self.work.gateway.connection._review_rows()[0])
-        for index in range(245):
-            case = copy.deepcopy(base)
-            case["reference"]["apply_seq"] = str(5000+index)
-            case["fields"]["ApplySeq"] = str(5000+index)
-            case["mrn"] = "TEST001" if index % 2 else "TEST002"
-            self.work.approvals.tracker.observe(case)
+        with self.work.store.library.batch():
+            for index in range(245):
+                case = copy.deepcopy(base)
+                case["reference"]["apply_seq"] = str(5000+index)
+                case["fields"]["ApplySeq"] = str(5000+index)
+                case["mrn"] = "TEST001" if index % 2 else "TEST002"
+                self.work.approvals.tracker.observe(case)
         before = list(BotSyntheticSDK.calls)
         all_cases = self.work.approvals.cases()
         self.assertEqual(len(all_cases["rows"]), 245)

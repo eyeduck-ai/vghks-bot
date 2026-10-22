@@ -7,7 +7,7 @@ import zipfile
 from pathlib import Path
 
 from tools import ci_artifacts as ci
-from tools.test_suite import select_shard, shard_for
+from tools.test_suite import class_timings, plan_shards, select_shard
 
 
 class ArtifactTests(unittest.TestCase):
@@ -18,12 +18,16 @@ class ArtifactTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def reports(self):
-        ids = sorted(f"synthetic.Case{index}.test_{method}" for index in range(15) for method in range(3))
+    def reports(self, ids=None):
+        if ids is None:
+            ids = sorted(f"synthetic.Case{index}.test_{method}" for index in range(15) for method in range(3))
+        plan = plan_shards(ids, 4)
         for index in range(4):
-            selected = [name for name in ids if shard_for(name, 4) == index]
+            selected = [name for name in ids if plan["class_shards"][name.rpartition(".")[0]] == index]
             ci.write_json(self.directory / f"shard-{index}/test-timings.json",
                           {"ok": True, "shard_index": index, "shard_count": 4, "all_test_ids": ids,
+                           "plan_sha256": plan["sha256"],
+                           "class_timings": class_timings(dict.fromkeys(selected, 1.0)),
                            "completed_test_ids": selected, "tests": len(selected), "duration_seconds": 1})
         for name in ("source-selftest.json",):
             ci.write_json(self.directory / name, {"ok": True})
@@ -41,12 +45,51 @@ class ArtifactTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             select_shard(suite, 4, 4)
 
+    def test_lpt_balances_measured_classes_with_deterministic_ties(self):
+        costs = {"A": 90000, "B": 60000, "C": 40000, "D": 10000}
+        baseline = {"synthetic." + name: {"tests": 1, "milliseconds": milliseconds}
+                    for name, milliseconds in costs.items()}
+        ids = ["synthetic." + name + ".test_one" for name in costs]
+        plan = plan_shards(ids, 2, baseline)
+        self.assertEqual(plan["estimated_shard_milliseconds"], [100000, 100000])
+        self.assertEqual(plan, plan_shards(reversed(ids), 2, dict(reversed(list(baseline.items())))))
+        tied = {name: {"tests": 1, "milliseconds": 1000} for name in baseline}
+        self.assertEqual(plan_shards(ids, 2, tied)["class_shards"],
+                         {"synthetic.A": 0, "synthetic.B": 1, "synthetic.C": 0, "synthetic.D": 1})
+
+    def test_plan_scales_new_methods_and_keeps_unknown_classes_together(self):
+        ids = [f"synthetic.Known.test_{index}" for index in range(4)]
+        ids += [f"synthetic.New.test_{index}" for index in range(2)]
+        baseline = {"synthetic.Known": {"tests": 2, "milliseconds": 8000}}
+        plan = plan_shards(ids, 2, baseline)
+        self.assertEqual(plan["estimated_shard_milliseconds"], [16000, 2000])
+        self.assertEqual(plan["class_shards"], {"synthetic.Known": 0, "synthetic.New": 1})
+        obsolete = {**baseline, "removed.Expensive": {"tests": 1, "milliseconds": 99999999}}
+        self.assertEqual(plan, plan_shards(ids, 2, obsolete))
+
+    def test_plan_rejects_duplicate_discovery_invalid_counts_and_invalid_measurements(self):
+        name = "synthetic.Case.test_one"
+        for count in (0, -1, True):
+            with self.subTest(count=count), self.assertRaises(ValueError):
+                plan_shards([name], count, {})
+        with self.assertRaisesRegex(ValueError, "duplicate"):
+            plan_shards([name, name], 2, {})
+        for row in ({"tests": 0, "milliseconds": 1000}, {"tests": 1, "milliseconds": -1},
+                    {"tests": True, "milliseconds": 1000}, {"tests": 1, "milliseconds": 1.5}):
+            with self.subTest(row=row), self.assertRaisesRegex(ValueError, "baseline"):
+                plan_shards([name], 2, {"synthetic.Case": row})
+
     def test_collect_requires_the_complete_disjoint_successful_suite(self):
         ids = self.reports()
         summary = ci.collect_tests(self.directory, 4)
         self.assertEqual(summary["tests"], len(ids))
+        self.assertEqual(summary["plan_sha256"], plan_shards(ids, 4)["sha256"])
+        classes = ci.read_json(self.directory / "test-class-timings.json")["classes"]
+        self.assertEqual(sum(row["tests"] for row in classes.values()), len(ids))
+        self.assertEqual(sum(row["milliseconds"] for row in classes.values()), 45000)
         self.assertTrue(ci.read_json(self.directory / "test-summary.json")["ok"])
-        for mutation in ("missing", "duplicate", "failed", "different_discovery"):
+        for mutation in ("missing", "duplicate", "failed", "different_discovery", "plan", "wrong_shard",
+                         "class_timings", "timing_count", "timing_duration", "foreign_class"):
             self.reports()
             path = self.directory / "shard-0/test-timings.json"
             value = ci.read_json(path)
@@ -56,8 +99,22 @@ class ArtifactTests(unittest.TestCase):
                 value["completed_test_ids"].append(value["completed_test_ids"][0])
             elif mutation == "failed":
                 value["ok"] = False
-            else:
+            elif mutation == "different_discovery":
                 value["all_test_ids"].pop()
+            elif mutation == "plan":
+                value["plan_sha256"] = "0" * 64
+            elif mutation == "wrong_shard":
+                foreign = next(name for name in ids if name not in value["completed_test_ids"])
+                value["completed_test_ids"] = sorted([*value["completed_test_ids"][1:], foreign])
+                value["class_shards"] = {name.rpartition(".")[0]: 0 for name in value["completed_test_ids"]}
+            elif mutation == "class_timings":
+                value.pop("class_timings")
+            elif mutation == "timing_count":
+                next(iter(value["class_timings"].values()))["tests"] += 1
+            elif mutation == "timing_duration":
+                next(iter(value["class_timings"].values()))["milliseconds"] = -1
+            elif mutation == "foreign_class":
+                value["class_timings"]["foreign.Class"] = {"tests": 1, "milliseconds": 0}
             ci.write_json(path, value)
             with self.subTest(mutation=mutation), self.assertRaises(ValueError):
                 ci.collect_tests(self.directory, 4)
@@ -65,6 +122,26 @@ class ArtifactTests(unittest.TestCase):
         ci.write_json(self.directory / "source-selftest.json", {"ok": False})
         with self.assertRaisesRegex(ValueError, "source self-test"):
             ci.collect_tests(self.directory, 4)
+
+    def test_collect_accepts_empty_shards_and_rejects_invalid_duration_and_boolean_timings(self):
+        ids = self.reports(["synthetic.Single.test_one", "synthetic.Single.test_two"])
+        self.assertEqual(ci.collect_tests(self.directory, 4)["tests"], len(ids))
+        for duration in (-1, float("nan"), float("inf"), True, "1"):
+            self.reports()
+            path = self.directory / "shard-0/test-timings.json"
+            value = ci.read_json(path)
+            value["duration_seconds"] = duration
+            ci.write_json(path, value)
+            with self.subTest(duration=duration), self.assertRaisesRegex(ValueError, "duration"):
+                ci.collect_tests(self.directory, 4)
+        for field in ("tests", "milliseconds"):
+            self.reports()
+            path = self.directory / "shard-0/test-timings.json"
+            value = ci.read_json(path)
+            next(iter(value["class_timings"].values()))[field] = True
+            ci.write_json(path, value)
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, "class timing"):
+                ci.collect_tests(self.directory, 4)
 
     def run_metadata(self):
         return {"id": 123, "run_attempt": 2, "event": "push", "head_branch": "main", "head_sha": "a" * 40,

@@ -1,0 +1,388 @@
+{
+  "schema": 1,
+  "source": {
+    "repository": "eyeduck-ai/vghks-bot",
+    "run_id": 39810766750,
+    "commit": "310d5bc0aafa9c22983a6e942bf9420f84ef7d29",
+    "artifact_id": 12440102450,
+    "artifact_sha256": "99c64c5724e811f4653c44704eef953f296a4db01f135cb100a491ca33d7d791"
+  },
+  "classes": {
+    "test_analysis.AnalysisTests": {
+      "tests": 23,
+      "milliseconds": 69750
+    },
+    "test_analysis.NumericTests": {
+      "tests": 4,
+      "milliseconds": 0
+    },
+    "test_analysis.SheetPlannerTests": {
+      "tests": 8,
+      "milliseconds": 63
+    },
+    "test_analysis_export.ExportTests": {
+      "tests": 6,
+      "milliseconds": 11734
+    },
+    "test_approval_activation.ApprovalActivationTests": {
+      "tests": 7,
+      "milliseconds": 10000
+    },
+    "test_approvals.ApprovalTests": {
+      "tests": 12,
+      "milliseconds": 30594
+    },
+    "test_architecture_efficiency.EfficiencyTests": {
+      "tests": 8,
+      "milliseconds": 74297
+    },
+    "test_architecture_efficiency.MigrationTests": {
+      "tests": 1,
+      "milliseconds": 250
+    },
+    "test_bot.BotTests": {
+      "tests": 23,
+      "milliseconds": 42844
+    },
+    "test_bot.GatewayTests": {
+      "tests": 6,
+      "milliseconds": 0
+    },
+    "test_cataract_order_scope.CataractOrderScopeTests": {
+      "tests": 7,
+      "milliseconds": 20922
+    },
+    "test_cataract_queue.CataractQueueTests": {
+      "tests": 11,
+      "milliseconds": 23703
+    },
+    "test_cataract_reads.CataractReadTests": {
+      "tests": 8,
+      "milliseconds": 31468
+    },
+    "test_ci_artifacts.ArtifactTests": {
+      "tests": 7,
+      "milliseconds": 47
+    },
+    "test_cleanup.CleanupTests": {
+      "tests": 2,
+      "milliseconds": 1265
+    },
+    "test_connection_state.ConnectionIntegrationTests": {
+      "tests": 12,
+      "milliseconds": 8797
+    },
+    "test_connection_state.FailureClassificationTests": {
+      "tests": 7,
+      "milliseconds": 0
+    },
+    "test_databases.DatabaseTests": {
+      "tests": 9,
+      "milliseconds": 10719
+    },
+    "test_debug_trace.DebugIntegrationTests": {
+      "tests": 2,
+      "milliseconds": 1453
+    },
+    "test_debug_trace.DebugTraceTests": {
+      "tests": 15,
+      "milliseconds": 469
+    },
+    "test_demographics.BirthdayTests": {
+      "tests": 4,
+      "milliseconds": 719
+    },
+    "test_demographics.DemographicFlowTests": {
+      "tests": 11,
+      "milliseconds": 17390
+    },
+    "test_diagnostics.DiagnosticTests": {
+      "tests": 12,
+      "milliseconds": 26625
+    },
+    "test_encoding.EncodingTests": {
+      "tests": 4,
+      "milliseconds": 63
+    },
+    "test_followup_earnings.EarningsArchiveTests": {
+      "tests": 18,
+      "milliseconds": 40828
+    },
+    "test_followup_earnings.FollowUpTests": {
+      "tests": 8,
+      "milliseconds": 19063
+    },
+    "test_followup_earnings.TimeTests": {
+      "tests": 1,
+      "milliseconds": 0
+    },
+    "test_google_http.GoogleHTTPTests": {
+      "tests": 6,
+      "milliseconds": 0
+    },
+    "test_google_sheets.GoogleTests": {
+      "tests": 8,
+      "milliseconds": 9062
+    },
+    "test_handoff_selection_ui.HandoffSelectionUITests": {
+      "tests": 1,
+      "milliseconds": 47
+    },
+    "test_jobs.JobTests": {
+      "tests": 9,
+      "milliseconds": 9625
+    },
+    "test_jobs.RecoveryTests": {
+      "tests": 2,
+      "milliseconds": 312
+    },
+    "test_keywords.KeywordTests": {
+      "tests": 7,
+      "milliseconds": 0
+    },
+    "test_keywords.SurgeryTests": {
+      "tests": 5,
+      "milliseconds": 0
+    },
+    "test_launcher.LauncherTests": {
+      "tests": 7,
+      "milliseconds": 922
+    },
+    "test_launcher.StartupTests": {
+      "tests": 6,
+      "milliseconds": 672
+    },
+    "test_library_data.LibraryDataTests": {
+      "tests": 9,
+      "milliseconds": 11485
+    },
+    "test_monitor_audit.MonitorAuditTests": {
+      "tests": 6,
+      "milliseconds": 12969
+    },
+    "test_numeric_structure.NumericStructureTests": {
+      "tests": 7,
+      "milliseconds": 3718
+    },
+    "test_pacing.PacingTests": {
+      "tests": 3,
+      "milliseconds": 47
+    },
+    "test_patient_lookup.PatientLookupTests": {
+      "tests": 17,
+      "milliseconds": 19328
+    },
+    "test_patient_lookup.ReadinessTests": {
+      "tests": 3,
+      "milliseconds": 31
+    },
+    "test_patient_tags.PatientTagTests": {
+      "tests": 8,
+      "milliseconds": 5766
+    },
+    "test_portable_credentials.PortableCredentialTests": {
+      "tests": 4,
+      "milliseconds": 1032
+    },
+    "test_registration_history.RegistrationHistoryTests": {
+      "tests": 7,
+      "milliseconds": 22000
+    },
+    "test_release_checks.ReleaseBoundaryTests": {
+      "tests": 6,
+      "milliseconds": 203
+    },
+    "test_review_activity.ReviewActivityTests": {
+      "tests": 7,
+      "milliseconds": 11625
+    },
+    "test_review_history.ReviewHistoryTests": {
+      "tests": 29,
+      "milliseconds": 106578
+    },
+    "test_review_incremental.IncrementalReviewTests": {
+      "tests": 14,
+      "milliseconds": 55578
+    },
+    "test_review_notes.ReviewNoteTests": {
+      "tests": 6,
+      "milliseconds": 6359
+    },
+    "test_review_scope.ReviewScopeTests": {
+      "tests": 7,
+      "milliseconds": 39750
+    },
+    "test_scanner.ScanTests": {
+      "tests": 13,
+      "milliseconds": 31
+    },
+    "test_sdk_binary.CataractBinaryCacheTests": {
+      "tests": 2,
+      "milliseconds": 2875
+    },
+    "test_sdk_binary.SDKBinaryTests": {
+      "tests": 6,
+      "milliseconds": 1078
+    },
+    "test_sdk_orders.OrderCompatibilityTests": {
+      "tests": 13,
+      "milliseconds": 62
+    },
+    "test_sdk_session.NativeSDKSessionTests": {
+      "tests": 8,
+      "milliseconds": 9344
+    },
+    "test_sdk_session.SDKIdentityBridgeTests": {
+      "tests": 2,
+      "milliseconds": 15
+    },
+    "test_server.ServerTests": {
+      "tests": 8,
+      "milliseconds": 5485
+    },
+    "test_settings.SettingsTests": {
+      "tests": 5,
+      "milliseconds": 0
+    },
+    "test_shared_core.SharedCoreTests": {
+      "tests": 1,
+      "milliseconds": 0
+    },
+    "test_sheet_accounts.SheetAccountTests": {
+      "tests": 12,
+      "milliseconds": 27422
+    },
+    "test_sheet_archive.ArchiveTests": {
+      "tests": 29,
+      "milliseconds": 1125
+    },
+    "test_sheet_archive_lock.ArchiveLockTests": {
+      "tests": 3,
+      "milliseconds": 0
+    },
+    "test_sheet_contract_check.SheetContractTests": {
+      "tests": 8,
+      "milliseconds": 16
+    },
+    "test_sheet_identity_protection.IdentityProtectionTests": {
+      "tests": 8,
+      "milliseconds": 31
+    },
+    "test_sheet_journal.SheetJournalTests": {
+      "tests": 7,
+      "milliseconds": 2829
+    },
+    "test_sheet_management.SheetManagementTests": {
+      "tests": 32,
+      "milliseconds": 1796
+    },
+    "test_sheet_management_ui.SheetManagementUITests": {
+      "tests": 2,
+      "milliseconds": 125
+    },
+    "test_sheet_schema.BlockContractTests": {
+      "tests": 14,
+      "milliseconds": 94
+    },
+    "test_sheet_schema.DateContractTests": {
+      "tests": 2,
+      "milliseconds": 0
+    },
+    "test_sheet_schema.HeaderContractTests": {
+      "tests": 4,
+      "milliseconds": 31
+    },
+    "test_sheet_schema_contract.ThreeProgramContractTests": {
+      "tests": 3,
+      "milliseconds": 16
+    },
+    "test_sheet_service.SheetServiceTests": {
+      "tests": 2,
+      "milliseconds": 94
+    },
+    "test_sheet_statistics.StatisticsTests": {
+      "tests": 7,
+      "milliseconds": 328
+    },
+    "test_sheet_sync_core.SchedulerTests": {
+      "tests": 7,
+      "milliseconds": 11344
+    },
+    "test_sheet_sync_core.SyncCoreTests": {
+      "tests": 11,
+      "milliseconds": 282
+    },
+    "test_sheet_sync_manual_fu.ManualFUTests": {
+      "tests": 14,
+      "milliseconds": 156
+    },
+    "test_sheet_sync_plan.FUDraftTests": {
+      "tests": 2,
+      "milliseconds": 16
+    },
+    "test_sheet_sync_plan.IdentityTests": {
+      "tests": 4,
+      "milliseconds": 0
+    },
+    "test_sheet_sync_plan.SharedStateTests": {
+      "tests": 7,
+      "milliseconds": 0
+    },
+    "test_sheet_sync_plan.StablePlannerTests": {
+      "tests": 8,
+      "milliseconds": 78
+    },
+    "test_sheet_sync_plan.StrictCandidateTests": {
+      "tests": 2,
+      "milliseconds": 0
+    },
+    "test_sheet_sync_protection.MainProtectionSurfaceTests": {
+      "tests": 2,
+      "milliseconds": 0
+    },
+    "test_soap_preview.SoapPreviewTests": {
+      "tests": 6,
+      "milliseconds": 172
+    },
+    "test_structured_soap.StructuredSoapTests": {
+      "tests": 12,
+      "milliseconds": 15
+    },
+    "test_structured_soap.StructuredSoapWorkflowTests": {
+      "tests": 2,
+      "milliseconds": 6172
+    },
+    "test_surgery_schedule.SurgeryScheduleTests": {
+      "tests": 11,
+      "milliseconds": 14468
+    },
+    "test_tool_experience.ToolExperienceTests": {
+      "tests": 10,
+      "milliseconds": 17547
+    },
+    "test_tool_handoff.ToolHandoffTests": {
+      "tests": 9,
+      "milliseconds": 19063
+    },
+    "test_v62_regressions.ContextTests": {
+      "tests": 13,
+      "milliseconds": 16
+    },
+    "test_v62_regressions.WorkspaceRegressions": {
+      "tests": 9,
+      "milliseconds": 14656
+    },
+    "test_workbench_optimization.GateWaitTests": {
+      "tests": 3,
+      "milliseconds": 265
+    },
+    "test_workbench_optimization.WorkbenchOptimizationTests": {
+      "tests": 11,
+      "milliseconds": 18485
+    },
+    "test_workflow.WorkflowTests": {
+      "tests": 23,
+      "milliseconds": 32312
+    }
+  }
+}
