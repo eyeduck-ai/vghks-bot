@@ -14,24 +14,28 @@ window.ClinicalUI = (() => {
     url.hash = options.toString();
     return url.href;
   }
-  function mrnBadge(mrn, announce = () => {}) {
+  function copyButton(value, {label = "資料", text = value, className = "patient-copy-badge", announce = () => {}} = {}) {
+    const content = String(value ?? "");
     const button = document.createElement("button");
-    button.type = "button"; button.className = "patient-mrn-copy review-mrn-copy";
-    button.textContent = mrn; button.title = "點擊複製病歷號";
-    button.setAttribute("aria-label", "複製病歷號 " + mrn);
+    button.type = "button"; button.className = className;
+    button.textContent = text; button.title = "點擊複製" + label;
+    button.setAttribute("aria-label", "複製" + label + " " + text);
     button.addEventListener("click", async () => {
       try {
-        await navigator.clipboard.writeText(mrn);
-        announce("已複製病歷號");
+        await navigator.clipboard.writeText(content);
+        announce("已複製" + label);
       } catch (_) {
         const input = document.createElement("input");
-        input.className = "patient-mrn-fallback"; input.readOnly = true; input.value = mrn;
-        input.setAttribute("aria-label", "病歷號，請手動複製");
+        input.className = "patient-mrn-fallback patient-copy-fallback"; input.readOnly = true; input.value = content;
+        input.setAttribute("aria-label", label + "，請手動複製");
         button.replaceWith(input); input.focus(); input.select();
-        announce("請複製已選取的病歷號（Ctrl+C）");
+        announce("請複製已選取的" + label + "（Ctrl+C）");
       }
     });
     return button;
+  }
+  function mrnBadge(mrn, announce = () => {}) {
+    return copyButton(mrn, {label:"病歷號", className:"patient-mrn-copy review-mrn-copy", announce});
   }
   function patientAge(patient, now = new Date()) {
     const records = (patient.records || []).filter(record => !record.mrn || record.mrn === patient.mrn);
@@ -52,9 +56,12 @@ window.ClinicalUI = (() => {
     const text = String(supplied ?? "").trim();
     return text ? (/^\d+$/.test(text) ? text + " 歲" : text) : "未提供";
   }
-  function ageBadge(patient) {
-    const badge = document.createElement("span");badge.className = "patient-age-badge";
-    badge.textContent = "年齡 " + patientAge(patient);
+  function ageBadge(patient, {highlightBelow} = {}) {
+    const age = patientAge(patient), years = age.match(/^(\d+)\s*歲?$/);
+    const badge = document.createElement("span");
+    badge.className = highlightBelow == null ? "patient-age-badge" : years && Number(years[1]) < highlightBelow
+      ? "patient-age-badge patient-age-young" : "patient-age-label";
+    badge.textContent = "年齡 " + age;
     return badge;
   }
   function fileName(name, mime) {
@@ -183,5 +190,5 @@ window.ClinicalUI = (() => {
     return date + (multiple ? ` · 檔案 ${index}` : "");
   }
   window.addEventListener("filecomparechange", syncComparison);
-  return {loading, pdfURL, mrnBadge, patientAge, ageBadge, fileName, downloadLink, saveBlob, reportText, textDownload, assetTools, comparisonChoice, comparisonName};
+  return {loading, pdfURL, copyButton, mrnBadge, patientAge, ageBadge, fileName, downloadLink, saveBlob, reportText, textDownload, assetTools, comparisonChoice, comparisonName};
 })();

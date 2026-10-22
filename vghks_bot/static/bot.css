@@ -264,6 +264,9 @@ button.panel-toggle.icon-button:hover{background:#dce8d7;border-color:#c4d4bd}
 .review-detail .detail-meta{display:flex;flex-direction:row;align-items:center;justify-content:flex-start;gap:6px 14px;flex-wrap:wrap}
 .review-detail .detail-meta h2{line-height:1.25;overflow-wrap:anywhere}
 .review-detail .detail-meta .review-demographics{display:flex;align-items:center;flex-wrap:wrap;gap:5px 10px;font-size:12px}
+.review-contact-info{display:flex;flex-wrap:wrap;gap:5px 8px;margin:5px 0;color:var(--muted);font-size:12px;overflow-wrap:anywhere}
+.review-detail button.review-name-copy{display:inline-block;min-height:28px;max-width:100%;padding:0;border:0;border-radius:2px;background:transparent;color:inherit;font:inherit;text-align:left;white-space:normal;overflow-wrap:anywhere;vertical-align:baseline}
+.review-detail button.review-name-copy:hover{text-decoration:underline;text-underline-offset:3px}
 .review-detail button.review-mrn-copy{display:inline-flex;align-items:center;width:auto;min-height:25px;padding:2px 8px;border:1px solid #c4d6bc;border-radius:4px;background:#eff6e9;color:#406334;font-size:12px;font-weight:650;text-decoration:none}
 .review-mrn-copy:hover{background:#deecd5;border-color:#83a876}
 @media(min-width:781px) and (max-width:1150px){.review-layout{--review-patient-width:190px}}

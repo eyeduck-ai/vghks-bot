@@ -17,6 +17,7 @@ from vghks_sdk.models import (
     NumericHistoryReport,
     NumericReport,
     NumericTable,
+    PatientBasicInfo,
     PatientDemographics,
     RegistrationRecord,
     SurgeryRecord,
@@ -46,6 +47,7 @@ class BotSyntheticSDK:
         self.auth = SimpleNamespace(check=lambda **_: SimpleNamespace(ok=settings.password != "invalid"))
         self.opd = SimpleNamespace(get_doctor_patients=self.listing)
         self.patients = SimpleNamespace(get_demographics=self.demographics,
+            get_basic_info=self.basic_info,
             get_registration_history=self.registrations, resolve_identity=self.resolve)
         self.records = SimpleNamespace(get_visit_cases=self.visits, get_soap=self.soap,
             get_numeric_report=self.numeric, get_numeric_history=self.history)
@@ -152,6 +154,12 @@ class BotSyntheticSDK:
         if mrn == "BAD":
             return PatientDemographics("MISMATCH", "不符")
         return PatientDemographics(mrn, "合成病人 " + mrn, "0900000000", birthday="1958-01-01", sex="女")
+
+    def basic_info(self, mrn):
+        self.calls.append((self.card, "basic-info", mrn))
+        return PatientBasicInfo(mrn, "合成病人 " + mrn,
+                                national_id="A123456789" if self.card == "TEST" else "B123456789",
+                                phone="07-1234567", contact="合成聯絡人")
 
     def resolve(self, identifier):
         self.calls.append((self.card, "identity", identifier))
@@ -263,10 +271,20 @@ def self_test(report_path: Path) -> int:
                 assert hits["matches"][0]["source_field"] == "assessment_plan" and not hits["tag_scope_issues"]
                 assert workspace.library_search({})["records"][0]["ap_preview"][0]["label"] == "A+P"
                 result["checks"].append("structured SOAP, printed orders/medications, chronic period, scoped tags and AP preview")
-                assert not any(c[1] in {"numeric", "registrations"} for c in BotSyntheticSDK.calls)
+                assert not any(c[1] in {"numeric", "registrations", "basic-info"} for c in BotSyntheticSDK.calls)
                 result["checks"].append("same-day SOAP, cross-doctor aliases, fallback, task scope, account isolation and lazy extensions")
                 numeric = workspace.review.start({"kind": "numeric", "mrn": "TEST001", "record_id": task["items"][0]["records"][0]["id"]})["task_id"]
                 assert wait_task(workspace, numeric)["items"][0]["payload"]["tables"][0]["rows"][0][1] == "HM"
+                request = {"kind": "profile", "mrn": "TEST001", "review_task_id": review}
+                profile = wait_task(workspace, workspace.review.start(request)["task_id"])["items"][0]
+                assert profile["national_id"] == "A123456789" and profile["phone"] == "07-1234567"
+                assert profile["mobile_phone"] == "0900000000" and profile["basic_info_at"]
+                before = list(BotSyntheticSDK.calls)
+                assert wait_task(workspace, workspace.review.start(request)["task_id"])["items"][0]["cached"]
+                assert BotSyntheticSDK.calls == before
+                assert workspace.review.read_profile(request)["national_id"] == "A123456789"
+                assert other.review.read_profile({"mrn": "TEST001"}) is None
+                result["checks"].append("on-demand QUY15 identity and contacts, existing CHECK_PAT phone, durable cache and account scope")
                 future = (today() + timedelta(days=1)).isoformat()
                 run = workspace.browse({"account_ids": [first], "ranges": {first: {"start": future}}})["run_ids"][0]
                 assert workspace.idle.wait(10) and workspace.snapshot(run)["status"] == "completed"

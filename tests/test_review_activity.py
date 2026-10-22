@@ -107,7 +107,7 @@ class ReviewActivityTests(unittest.TestCase):
         group = self.group()
         parent = wait_task(self.work, self.work.review.start({"set_id": group["id"]})["task_id"])
         record_id = parent["items"][0]["records"][0]["id"]
-        for kind in ("numeric", "registrations"):
+        for kind in ("numeric", "registrations", "profile"):
             values = {"kind": kind, "mrn": "TEST001", "record_id": record_id, "review_task_id": parent["id"]}
             child = wait_task(self.work, self.work.review.start(values)["task_id"])
             self.assertEqual(child["review_task_id"], parent["id"])

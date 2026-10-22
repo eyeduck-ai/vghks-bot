@@ -104,7 +104,7 @@ function setPatientDialogContext(id,mrn,name="",taskId=currentReview){
  context.textContent=(name||patient.name)+" · 病歷號 "+mrn;
  context.hidden=false;dialogElement.setAttribute("aria-describedby",context.id);
 }
-function dialog(id){Choices.sync();if(id==="dataDialog"){$("#dataDialog").dataset.view="general";setPatientDialogContext(id,"");}if(!$("#"+id).open)$("#"+id).showModal();}
+function dialog(id){Choices.sync();if(id==="dataDialog"){extensionTask="";extensionContext=null;$("#dataDialog").dataset.view="general";setPatientDialogContext(id,"");}if(!$("#"+id).open)$("#"+id).showModal();}
 function confirmDelete(text,{title="確認刪除",label="刪除"}={}){$("#confirmText").textContent=text;const d=$("#confirmDialog");d.querySelector("h2").textContent=title;d.querySelector('button[value="delete"]').textContent=label;d.returnValue="";d.showModal();return new Promise(resolve=>d.addEventListener("close",()=>resolve(d.returnValue==="delete"),{once:true}));}
 
 function renderAccounts(){
@@ -362,6 +362,16 @@ function renderReviewPatients(values){
 }
 function soapNode(record){return SOAPView.create(record);}
 async function selectReviewPatient(mrn){if(reviewPatient!==mrn&&!await window.ReviewNotesUI.flush(reviewPatient)){say("有備註尚未儲存，請重試後再切換病人。",true);return;}if(reviewPatient!==mrn)window.ScanBrowser?.reset();reviewPatient=mrn;renderReviewDetail();$("#reviewDetail").scrollTop=0;for(const n of $$(".patient-select"))n.classList.toggle("active",n.dataset.mrn===mrn);}
+function patientContactRows(patient){
+ const seen=new Set();
+ return [["手機",patient.mobile_phone],["住家電話",patient.home_phone],["電話",patient.phone]].flatMap(([label,raw])=>{
+  const value=String(raw||"").trim();if(!value||seen.has(value))return [];seen.add(value);return [[label,value]];
+ });
+}
+function patientClipboardRow(patient){
+ return [patient.mrn,patient.name,patient.mobile_phone]
+  .map(value=>String(value??"").replace(/[\t\r\n]+/g," ").trim()).join("\t");
+}
 function renderReviewDetail(){
  const panel=$("#reviewDetail"),icons=new Map();
  for(const image of panel.querySelectorAll(".review-controls .review-icon")){
@@ -385,9 +395,21 @@ function renderReviewDetail(){
  }
  const name=node("div",undefined,"detail-meta"),demographics=node("div",undefined,"review-demographics");
  const mrn=ClinicalUI.mrnBadge(p.mrn,message=>say(message));
- demographics.append(mrn,ClinicalUI.ageBadge(p),node("span","性別 "+(p.sex||"未提供"),"muted"));
+ demographics.append(mrn,ClinicalUI.ageBadge(p,{highlightBelow:55}),node("span","性別 "+(p.sex||"未提供"),"muted"));
  const noteControl=window.ReviewNotesUI.control(p);
- name.append(node("h2",p.name||"姓名未提供"),demographics);panel.append(name);
+ const copyName=ClinicalUI.copyButton(patientClipboardRow(p),{label:"刀表資料",text:p.name||"姓名未提供",className:"review-name-copy",announce:message=>say(message)});
+ copyName.title="點擊複製病歷號、姓名與手機（Tab 分隔）";
+ copyName.setAttribute("aria-label","複製刀表資料："+(p.name||p.mrn));
+ const heading=node("h2");heading.append(copyName);name.append(heading,demographics);panel.append(name);
+ const contactRows=[...(p.national_id?[["身分證",p.national_id]]:[]),...patientContactRows(p)];
+ if(contactRows.length){
+  const contacts=node("div",undefined,"review-contact-info");
+  for(const [label,value] of contactRows){
+   const badge=ClinicalUI.copyButton(value,{label,text:label+" "+value,announce:message=>say(message)});
+   badge.setAttribute("aria-label","複製"+label+" "+value);contacts.append(badge);
+  }
+  panel.append(contacts);
+ }
  if(p.checked_at)panel.append(node("p",[p.reused?p.reuse_label||"沿用已存結果":"最後查詢",time(p.checked_at)].join(" · "),"caption"));
  const controls=node("div",undefined,"review-controls"),shortcuts=node("div",undefined,"detail-shortcuts");
  shortcuts.append(btn("該次數值類報告",()=>window.ReviewHistoryUI.openCurrent("case_numeric",p.mrn,p.records)),
@@ -400,7 +422,9 @@ function renderReviewDetail(){
   btn("掛號紀錄",()=>extension("registrations",p.mrn)),btn("加入／移除 tag",()=>openPatientTags([p.mrn])),
   noteControl.button);
  const send=btn("送至進階工具",()=>window.ReviewHandoff.open(p));send.disabled=!!root.read_only;
- shortcuts.append(send);
+ const profile=btn("病人基本資料",()=>extension("profile",p.mrn));
+ profile.title="查看已保存的基本資料；尚未查詢時，連線取得身分證、電話與聯絡人。";
+ shortcuts.append(profile,send);
  const divider=node("span",undefined,"review-control-divider");divider.setAttribute("role","separator");divider.setAttribute("aria-orientation","vertical");
  const index=reviewData.patients.indexOf(p),nav=node("div",undefined,"detail-actions");
  for(const [label,d] of [["上一位",-1],["下一位",1]]){const next=reviewData.patients[index+d],button=btn(label,()=>selectReviewPatient(next.mrn));button.disabled=!next;nav.append(button);}
@@ -488,18 +512,53 @@ function diagnosticFailure(failure){
  technical.append(node("summary","技術細節"),table(["欄位","內容"],rows));card.append(technical);
  return card;
 }
-async function extension(kind,mrn,recordId="",force=false){window.ReviewHistoryUI?.dismiss();extensionContext={kind,mrn,record_id:recordId,...(page==="review"&&currentReview?{review_task_id:currentReview}:{})};$("#dataTitle").textContent=kind==="numeric"?"本次數值報告":"掛號紀錄";$("#dataContent").replaceChildren(node("p","正在讀取…","muted"));dialog("dataDialog");setPatientDialogContext("dataDialog",mrn);const {data}=await api("/extensions/read",extensionContext);if(data)renderExtension(data,kind);if(!work.online){if(!data)$("#dataContent").replaceChildren(empty("沒有已保存資料，請登入後再查詢。"));return;}const task=await api("/tasks/start",{...extensionContext,force});extensionTask=task.task_id;await showExtensionTask(extensionTask,kind,false);}
+async function extension(kind,mrn,recordId="",force=false){
+ window.ReviewHistoryUI?.dismiss();extensionTask="";
+ const context={kind,mrn,record_id:recordId,...(page==="review"&&currentReview?{review_task_id:currentReview}:{})};
+ const revision=epoch,current=()=>revision===epoch&&extensionContext===context&&$("#dataDialog").open;
+ $("#dataTitle").textContent={numeric:"本次數值報告",profile:"病人基本資料"}[kind]||"掛號紀錄";
+ $("#dataContent").replaceChildren(ClinicalUI.loading("正在讀取已保存資料…"));dialog("dataDialog");extensionContext=context;setPatientDialogContext("dataDialog",mrn);
+ const {data}=await api("/extensions/read",context);if(!current())return;
+ if(data)renderExtension(data,kind);
+ if(kind==="profile"&&data?.basic_info_at&&!force)return;
+ if(!work.online||root.read_only){
+  if(!data)$("#dataContent").replaceChildren(empty(root.read_only?"沒有已保存資料；唯讀資料庫無法查詢。":"沒有已保存資料，請登入後再查詢。"));
+  return;
+ }
+ if(kind==="profile"){
+  const content=$("#dataContent");if(!data)content.replaceChildren();
+  for(const button of content.querySelectorAll("button"))button.disabled=true;
+  content.append(ClinicalUI.loading("正在取得病人基本資料…"));
+ }
+ try{
+  const task=await api("/tasks/start",{...context,force});if(!current())return;
+  extensionTask=task.task_id;await showExtensionTask(extensionTask,kind,false);
+ }catch(error){
+  if(current()&&kind==="profile"){
+   if(data)renderExtension(data,kind);else $("#dataContent").replaceChildren(empty("未取得基本資料，可關閉後重新查詢。"));
+  }
+  throw error;
+ }
+}
 async function showExtensionTask(id,kind,open=true){
- let task=await api("/tasks/detail?summary=1&id="+encodeURIComponent(id));extensionTask=id;
+ if(open){
+  window.ReviewHistoryUI?.dismiss();
+  $("#dataTitle").textContent={numeric:"本次數值報告",profile:"病人基本資料"}[kind]||"掛號紀錄";
+  $("#dataContent").replaceChildren(ClinicalUI.loading("正在讀取已保存資料…"));dialog("dataDialog");extensionTask=id;extensionContext={kind};
+ }
+ const previous=extensionContext,revision=epoch;
+ const current=()=>revision===epoch&&extensionTask===id&&extensionContext===previous&&$("#dataDialog").open;
+ let task=await api("/tasks/detail?summary=1&id="+encodeURIComponent(id));if(!current())return;
  if(!inProgress.has(task.status))task=await api("/tasks/detail?id="+encodeURIComponent(id));
+ if(!current())return;extensionTask=id;
  extensionContext={kind:kind||task.kind,mrn:task.mrn,record_id:task.record_id||"",...(task.review_task_id?{review_task_id:task.review_task_id}:{})};
- if(open){$("#dataTitle").textContent=task.name;dialog("dataDialog");setPatientDialogContext("dataDialog",task.mrn);}
+ if(open){$("#dataTitle").textContent=task.name;setPatientDialogContext("dataDialog",task.mrn);}
  if(task.items?.length)renderExtension(task.items[0],kind||task.kind);
- else $("#dataContent").replaceChildren(node("p",task.message||labels[task.status],"muted"));
+ else $("#dataContent").replaceChildren(inProgress.has(task.status)?ClinicalUI.loading(task.message||"正在取得資料…"):node("p",task.message||labels[task.status],"muted"));
  JobProgress.publish(task);
  if(!inProgress.has(task.status)){
   extensionTask="";
-  if((kind||task.kind)==="registrations"&&page==="review"&&currentReview){await window.ReviewNotesUI.load(currentReview,{force:true});await loadReview();}
+  if(["registrations","profile"].includes(kind||task.kind)&&page==="review"&&currentReview){await window.ReviewNotesUI.load(currentReview,{force:true});await loadReview();}
  }
 }
 const eyeNumericPatterns=[/(?<![a-z0-9])va(?![a-z0-9])/i,/(?<![a-z0-9])vacc(?![a-z0-9])/i,/驗光\s*-\s*散瞳前/i,/(?<![a-z0-9])iop\s*-\s*pneumo(?![a-z0-9])/i,/(?<![a-z0-9])endothelial\s+no(?![a-z0-9])/i,/(?<![a-z0-9])km(?![a-z0-9])/i,/(?<![a-z0-9])iop\s*-\s*recheck(?![a-z0-9])/i,/驗光\s*-\s*散瞳後/i,/配鏡/,/(?<![a-z0-9])cct(?![a-z0-9])/i,/(?<![a-z0-9])acd(?![a-z0-9])/i,/(?<![a-z0-9])lt(?![a-z0-9])/i,/(?<![a-z0-9])axl(?![a-z0-9])/i,/(?<![a-z0-9])basic\s+schirmer(?![a-z0-9])/i,/(?<![a-z0-9])ishihara(?![a-z0-9])/i];
@@ -519,8 +578,15 @@ function appendNumericTables(c,tables){for(const {table:t} of tables.map((table,
   if(t.header_rows?.length)c.append(node("p","來源表頭："+t.header_rows.map(parts=>parts.join(" / ")).join("；"),"caption"));
   if(t.parsing_issues?.length)c.append(node("p","來源解析提示："+t.parsing_issues.join("、"),"caption"));
  }if(!tables.length)c.append(empty("沒有可顯示的數值表。"));}
-function renderExtension(data,kind){const c=$("#dataContent");c.replaceChildren(node("p",`${data.cached?"本機資料 · ":""}最後取得 ${time(data.updated_at)}`,"caption"));c.append(btn("更新資料",()=>extension(kind,extensionContext.mrn,extensionContext.record_id,true)));if(data.status==="deleted"){c.append(empty("資料已刪除。"));return;}
- if(kind==="numeric")appendNumericTables(c,data.payload?.tables||[]);
+function renderExtension(data,kind){const c=$("#dataContent");c.replaceChildren(node("p",`${data.cached?"本機資料 · ":""}最後取得 ${time(kind==="profile"?data.basic_info_at||data.updated_at:data.updated_at)}`,"caption"));const update=btn("更新資料",()=>extension(kind,extensionContext.mrn,extensionContext.record_id,true));update.disabled=!!root.read_only||!work?.online;c.append(update);if(data.status==="deleted"){c.append(empty("資料已刪除。"));return;}
+ if(kind==="profile"){
+  c.append(table(["欄位","資料"],[["姓名",data.name||"未提供"],["病歷號",data.mrn],
+   ["身分證",data.national_id||(data.basic_info_at?"院方未提供":"尚未查詢")],["生日",data.birthday||"未提供"],
+   ["性別",data.sex||"未提供"],...patientContactRows(data),["聯絡人",data.contact||"未提供"]]));
+  if(!patientContactRows(data).length)c.append(node("p","院方未提供連絡電話。","caption"));
+  c.append(node("p",data.basic_info_at?"已保存的基本資料可離線檢閱；按「更新資料」重新向院內查詢。":"目前為先前核對時取得的資料；身分證與完整基本資料需另行查詢。","caption"));
+ }
+ else if(kind==="numeric")appendNumericTables(c,data.payload?.tables||[]);
  else{$("#dataDialog").dataset.view="registrations";window.RegistrationHistoryUI.append(c,data,root.today);}
 
 }
@@ -669,6 +735,7 @@ $("#rulesForm").addEventListener("submit",e=>{e.preventDefault();act(async()=>{
  say("檢閱設定已保存。");
 });});
 $("#rulesDialog").addEventListener("close",()=>window.ToolWorkspace?.cancelSettings());
+$("#dataDialog").addEventListener("close",()=>{extensionTask="";extensionContext=null;});
 $("#rulesForm").addEventListener("invalid",e=>{for(let p=e.target.parentElement;p&&p!==e.currentTarget;p=p.parentElement)if(p.tagName==="DETAILS")p.open=true;},true);
 for(const button of $$("button[data-icon]"))setIcon(button,button.dataset.icon,button.dataset.iconLabel||button.textContent,button.dataset.iconText!=="true");
 for(const [id,name,label] of [["refreshTasks","refresh","更新爬蟲紀錄"],["refreshList","refresh","更新門診清單"],["previousDay","left","前一天"],["nextDay","right","後一天"]])setIcon($("#"+id),name,label);

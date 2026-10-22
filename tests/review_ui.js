@@ -120,6 +120,162 @@ async function activityTests(){
  assert.equal(root.open,true);assert.equal(root.querySelectorAll(".activity-patient")[0].open,true);
  root.open=false;root.emit("toggle");report.updated_at="2026-10-05";ui.render();assert.equal(findRoot().open,false,"polling overrode explicit collapse during search");
  ui.reset();ui.render({runs:[]});assert.equal(findRoot().open,false,"account reset retained old disclosure state");
+ const profile={...report,id:"PROFILE1",kind:"profile",name:"病人基本資料",status:"completed",created_at:"2026-10-06"};
+ const profileGroups=ui.groupTasks([parent,profile]);assert.equal(profileGroups.totalGroups,1,"profile query did not join its review family");
+ assert.deepEqual([...profileGroups.groups[0].allChildren].map(task=>task.id),["PROFILE1"]);
+ const openedProfiles=[];c.showExtensionTask=async(...values)=>openedProfiles.push(values);c.work={tasks:[parent,profile]};ui.reset();ui.render({runs:[]});
+ const profileRoot=findRoot();profileRoot.open=true;await profileRoot.emit("toggle");
+ const profilePatient=profileRoot.querySelector(".activity-patient");profilePatient.open=true;await profilePatient.emit("toggle");
+ const profileView=profileRoot.querySelectorAll("[data-activity-focus]").find(element=>element.dataset.activityFocus==="bot:PROFILE1:view");
+ assert.ok(profileView,"profile subtask did not expose its saved data action");await profileView.run();
+ assert.deepEqual(openedProfiles,[["PROFILE1","profile"]]);
+}
+async function profileTests(){
+ const s=surface(),c=s.context,$=s.$,calls=[],noteLoads=[],reviewLoads=[],copied=[];
+ const source=fs.readFileSync("vghks_bot/static/bot.js","utf8");
+ c.Node=s.node("div").constructor;c.epoch=0;c.page="review";c.extensionContext=null;c.extensionTask="";c.work.online=true;
+ c.document.createElement=tag=>s.node(tag);c.window.addEventListener=()=>{};
+ c.navigator={clipboard:{writeText:async value=>copied.push(value)}};
+ s.run("vghks_bot/static/clinical-ui.js");c.ClinicalUI=c.window.ClinicalUI;
+ c.window.ReviewNotesUI={control:()=>({button:s.node("button","備註"),panel:s.node("div")}),load:async(...values)=>noteLoads.push(values)};
+ $("#dataDialog").showModal=()=>{$("#dataDialog").open=true;};$("#dataDialog").close=()=>{$("#dataDialog").open=false;return $("#dataDialog").emit("close");};
+ c.setPatientDialogContext=(id,mrn)=>{$("#"+id).dataset.mrn=mrn;};
+ c.JobProgress.publish=()=>{};c.loadReview=async()=>reviewLoads.push(c.currentReview);
+ vm.runInContext(source.match(/function dialog\(id\)\{[^\n]+/)[0],c);
+ vm.runInContext(source.split("\n").find(line=>line.startsWith('$("#dataDialog").addEventListener("close",')),c);
+ vm.runInContext(source.match(/function table\(headers,rows\)\{[^\n]+/)[0],c);
+ vm.runInContext(source.slice(source.indexOf("function patientContactRows("),source.indexOf("async function showDiagnostics(")),c);
+ vm.runInContext(source.slice(source.indexOf("async function extension("),source.indexOf("const eyeNumericPatterns=")),c);
+ vm.runInContext(source.slice(source.indexOf("function renderExtension("),source.indexOf("const libraryFilters=")),c);
+ const compact={mrn:"P1",name:"合成病人",mobile_phone:" 0912000000 ",home_phone:"07-0000000",phone:"0912000000",sex:"女",age:"68",updated_at:"compact-saved",cached:true};
+ const saved={...compact,national_id:"A123456789",phone:"07-1111111",contact:"合成聯絡人",basic_info_at:"basic-saved",updated_at:"recent-local-save"};
+ const profiles=new Map([["P1",compact],["P2",{...saved,mrn:"P2",name:"另一位合成病人",national_id:"B123456789"}]]),tasks=new Map(),readGates=new Map(),detailGates=new Map(),fullDetailGates=new Map();
+ let taskNumber=0,startGate=null,startFailure=null;
+ c.api=async(path,values)=>{
+  calls.push({path,values});
+  if(path==="/extensions/read"){const data=profiles.get(values.mrn)||null;if(readGates.has(values.mrn))await readGates.get(values.mrn).promise;return {data};}
+  if(path==="/reviews/history/read")return {data:null,complete:true,updated_at:"saved-history",coverage:{numeric_start:"2016-01-01"}};
+  if(path==="/tasks/start"){
+   if(startGate)await startGate.promise;if(startFailure)throw startFailure;
+   const id="PROFILE"+(++taskNumber);tasks.set(id,{id,kind:values.kind,mrn:values.mrn,review_task_id:values.review_task_id,name:"病人基本資料",status:"running",message:"正在查詢"});return {task_id:id};
+  }
+  if(path.startsWith("/tasks/detail")){const id=new URLSearchParams(path.split("?")[1]).get("id");if(detailGates.has(id))await detailGates.get(id).promise;if(!path.includes("summary=1")&&fullDetailGates.has(id))await fullDetailGates.get(id).promise;const task=tasks.get(id);assert.ok(task,"unknown synthetic profile task");return path.includes("summary=1")?{...task,items:undefined}:task;}
+  throw new Error(path);
+ };
+ const starts=()=>calls.filter(call=>call.path==="/tasks/start"),text=element=>[element.textContent,...element.all().map(child=>child.textContent)].join(" ");
+ const rows=()=>Object.fromEntries($("#dataContent").querySelector("tbody").children.map(row=>row.children.map(cell=>cell.children[0].textContent)));
+ const update=()=>$("#dataContent").querySelector("button");
+ c.reviewData={task:{id:"R1",status:"completed"},patients:[{...saved,records:[]}]};c.renderReviewDetail();
+ let contacts=$("#reviewDetail").querySelector(".review-contact-info");
+ assert.deepEqual(contacts.children.map(child=>child.textContent),["身分證 A123456789","手機 0912000000","住家電話 07-0000000","電話 07-1111111"]);
+ assert.equal(calls.length,0,"rendering saved patient identity contacted the server");
+ assert.ok(contacts.children.every(child=>child.tagName==="button"&&child.className.includes("patient-copy-badge")),"contact fields are not copyable badges");
+ await $("#reviewDetail").querySelector(".review-mrn-copy").emit("click");
+ for(const badge of contacts.children)await badge.emit("click");
+ await $("#reviewDetail").querySelector(".review-name-copy").emit("click");
+ assert.deepEqual(copied,["P1","A123456789","0912000000","07-0000000","07-1111111","P1\t合成病人\t0912000000"],"clipboard values lost columns, leading zeroes or included display labels");
+ assert.equal($("#reviewDetail").querySelector(".patient-age-badge"),null,"age 68 retained a badge");
+ for(const [age,young] of [[0,true],[54,true],["54歲",true],[55,false],[68,false],["",false]]){
+  c.reviewData.patients[0]={...saved,age,records:[]};c.renderReviewDetail();
+  assert.equal(!!$("#reviewDetail").querySelector(".patient-age-young"),young,"wrong under-55 age style for "+age);
+  assert.equal(!!$("#reviewDetail").querySelector(".patient-age-badge"),young);
+  const sex=$("#reviewDetail").querySelectorAll("span").find(child=>child.textContent==="性別 女");
+  assert.ok(sex&&!sex.className.includes("badge"),"sex was rendered as a badge");
+ }
+ c.reviewData.patients[0]={...saved,mobile_phone:"",records:[]};c.renderReviewDetail();
+ await $("#reviewDetail").querySelector(".review-name-copy").emit("click");
+ assert.equal(copied.at(-1),"P1\t合成病人\t","missing mobile used a different phone or removed the third column");
+ c.reviewData.patients[0]={...saved,mrn:"00000123",name:"合成\t病人\r\n乙",mobile_phone:" 0900123456 ",records:[]};c.reviewPatient="00000123";c.renderReviewDetail();
+ await $("#reviewDetail").querySelector(".review-name-copy").emit("click");
+ assert.equal(copied.at(-1),"00000123\t合成 病人 乙\t0900123456","new patient copy retained an old identity or created extra spreadsheet cells");
+ assert.equal(calls.length,0,"copying a patient header started a data request");c.reviewPatient="P1";
+ c.reviewData.patients[0]={...compact,records:[]};c.renderReviewDetail();contacts=$("#reviewDetail").querySelector(".review-contact-info");
+ assert.deepEqual(contacts.children.map(child=>child.textContent),["手機 0912000000","住家電話 07-0000000"],"compact phone was omitted or duplicated");
+ const profileButton=$("#reviewDetail").querySelectorAll("button").find(button=>button.textContent==="病人基本資料");
+ assert.ok(profileButton,"review has no explicit patient profile action");await profileButton.run();
+ assert.equal($("#dataTitle").textContent,"病人基本資料");assert.equal(starts().length,1);
+ assert.deepEqual(JSON.parse(JSON.stringify(starts()[0].values)),{kind:"profile",mrn:"P1",record_id:"",review_task_id:"R1",force:false});
+ assert.ok($("#dataContent").querySelector(".clinical-loading"),"running profile task has no waiting state");
+ const firstTask=c.extensionTask;tasks.set(firstTask,{...tasks.get(firstTask),status:"completed",items:[saved]});
+ await c.showExtensionTask(firstTask,"profile",false);assert.equal(c.extensionTask,"");
+ assert.equal(rows()["身分證"],"A123456789");assert.equal(rows()["手機"],"0912000000");assert.equal(rows()["住家電話"],"07-0000000");
+ assert.equal(rows()["電話"],"07-1111111");assert.equal(rows()["聯絡人"],"合成聯絡人");
+ assert.match($("#dataContent").children[0].textContent,/basic-saved/);assert.doesNotMatch($("#dataContent").children[0].textContent,/recent-local-save/);
+ assert.equal(noteLoads.length,1);assert.equal(reviewLoads.length,1,"completed profile did not refresh the review header");
+ profiles.set("P1",saved);await c.extension("profile","P1");assert.equal(starts().length,1,"opening a saved full profile started another query");
+ profiles.set("P1",{...saved,national_id:""});await c.extension("profile","P1");assert.equal(starts().length,1,"missing national ID invalidated successful full profile");
+ assert.equal(rows()["身分證"],"院方未提供");await update().run();assert.equal(starts().length,2);assert.equal(starts().at(-1).values.force,true,"manual update did not force a fresh profile");
+ for(const state of ["offline","readonly"]){
+  c.work.online=state!=="offline";c.root.read_only=state==="readonly";
+  profiles.set("P1",compact);const before=starts().length;await c.extension("profile","P1");
+  assert.equal(starts().length,before,state+" compact profile started a query");assert.equal(update().disabled,true,state+" profile update remained enabled");
+  assert.equal(rows()["身分證"],"尚未查詢");assert.equal(rows()["手機"],"0912000000");
+  profiles.set("P1",saved);await c.extension("profile","P1");assert.equal(rows()["身分證"],"A123456789");assert.equal(update().disabled,true);
+  await c.extension("profile","P1","",true);assert.equal(starts().length,before,state+" forced update started a query");assert.equal(update().disabled,true);
+  profiles.delete("P1");await c.extension("profile","P1");assert.equal(starts().length,before);assert.equal($("#dataContent").querySelector(".clinical-loading"),null);
+  assert.match(text($("#dataContent")),state==="readonly"?/唯讀/:/登入/);
+ }
+ c.work.online=true;c.root.read_only=false;
+ const unsafe='<img src=x onerror="throw 1">';c.extensionContext={kind:"profile",mrn:"P1",record_id:""};
+ c.renderExtension({...saved,name:unsafe,national_id:unsafe,contact:unsafe,mobile_phone:"",home_phone:"",phone:""},"profile");
+ assert.equal(rows()["姓名"],unsafe);assert.equal(rows()["身分證"],unsafe);assert.equal(rows()["聯絡人"],unsafe);
+ assert.equal($("#dataContent").querySelectorAll("img,script").length,0,"profile response was inserted as HTML");
+ assert.match(text($("#dataContent")),/院方未提供連絡電話/);assert.equal(rows()["手機"],undefined);
+ c.renderExtension({mrn:"P1",basic_info_at:"saved-empty"},"profile");assert.equal(rows()["姓名"],"未提供");assert.equal(rows()["聯絡人"],"未提供");
+ profiles.set("P1",compact);readGates.set("P1",deferred());let before=starts().length;
+ const closed=c.extension("profile","P1");$("#dataDialog").open=false;$("#dataContent").replaceChildren(s.node("p","closed modal"));
+ readGates.get("P1").resolve();await closed;readGates.delete("P1");
+ assert.equal(starts().length,before,"closing modal during local read started a query");assert.equal(text($("#dataContent"))," closed modal");
+ readGates.set("P1",deferred());const switched=c.extension("profile","P1");await c.extension("profile","P2");const replacement=$("#dataContent").children[0];
+ readGates.get("P1").resolve();await switched;readGates.delete("P1");
+ assert.equal(starts().length,before,"late first-patient read started a query");assert.equal(rows()["病歷號"],"P2");assert.equal($("#dataContent").children[0],replacement,"late first-patient read replaced the modal");
+ readGates.set("P1",deferred());const accountSwitch=c.extension("profile","P1");c.epoch++;$("#dataContent").replaceChildren(s.node("p","other account"));
+ readGates.get("P1").resolve();await accountSwitch;readGates.delete("P1");
+ assert.equal(starts().length,before,"stale account read started a profile query");assert.equal(text($("#dataContent"))," other account");
+ startGate=deferred();const submitting=c.extension("profile","P1");await tick();assert.equal(starts().length,before+1);
+ $("#dataDialog").open=false;$("#dataContent").replaceChildren(s.node("p","closed during submit"));const detailsBefore=calls.filter(call=>call.path.startsWith("/tasks/detail")).length;
+ startGate.resolve();await submitting;startGate=null;assert.equal(calls.filter(call=>call.path.startsWith("/tasks/detail")).length,detailsBefore,"late submit read a task after modal closed");
+ assert.equal(text($("#dataContent"))," closed during submit");
+ await c.extension("profile","P1");const staleTask=c.extensionTask;detailGates.set(staleTask,deferred());const polling=c.showExtensionTask(staleTask,"profile",false);
+ await c.extension("profile","P2");detailGates.get(staleTask).resolve();await polling;detailGates.delete(staleTask);
+ assert.equal(rows()["病歷號"],"P2","late task polling replaced a different patient's saved profile");
+ detailGates.set(firstTask,deferred());$("#dataDialog").open=false;
+ const opening=c.showExtensionTask(firstTask,"profile");
+ assert.equal($("#dataDialog").open,true,"activity profile action did not open its modal before loading");assert.ok($("#dataContent").querySelector(".clinical-loading"));
+ await c.extension("profile","P2");const newerTitle=$("#dataTitle").textContent,newerContent=$("#dataContent").children[0],noteCount=noteLoads.length;
+ detailGates.get(firstTask).resolve();await opening;detailGates.delete(firstTask);
+ assert.equal(rows()["病歷號"],"P2","late activity task summary replaced the newer patient");assert.equal($("#dataContent").children[0],newerContent);
+ assert.equal($("#dataTitle").textContent,newerTitle);assert.equal(noteLoads.length,noteCount,"stale activity task refreshed another review");
+ detailGates.set(firstTask,deferred());const closing=c.showExtensionTask(firstTask,"profile");$("#dataDialog").open=false;
+ $("#dataContent").replaceChildren(s.node("p","closed activity modal"));detailGates.get(firstTask).resolve();await closing;detailGates.delete(firstTask);
+ assert.equal($("#dataDialog").open,false,"late activity task reopened a closed modal");assert.equal(text($("#dataContent"))," closed activity modal");
+ fullDetailGates.set(firstTask,deferred());const fullOpening=c.showExtensionTask(firstTask,"profile");await tick();
+ assert.equal(calls.at(-1).path,"/tasks/detail?id="+firstTask,"completed activity task did not request its saved item");
+ await c.extension("profile","P2");fullDetailGates.get(firstTask).resolve();await fullOpening;fullDetailGates.delete(firstTask);
+ assert.equal(rows()["病歷號"],"P2","late completed activity task detail replaced the newer patient");
+ const startsBeforeActivity=starts().length;await c.showExtensionTask(firstTask,"profile");
+ assert.equal(rows()["病歷號"],"P1");assert.equal($("#dataDialog").dataset.mrn,"P1");assert.equal(starts().length,startsBeforeActivity,"opening a saved activity task launched a fresh query");
+ detailGates.set(firstTask,deferred());const closeThenGeneric=c.showExtensionTask(firstTask,"profile");await $("#dataDialog").close();
+ assert.equal(c.extensionTask,"");assert.equal(c.extensionContext,null,"closing the data dialog retained its pending profile context");
+ c.dialog("dataDialog");$("#dataTitle").textContent="集合名稱";$("#dataContent").replaceChildren(s.node("form","generic editor"));
+ detailGates.get(firstTask).resolve();await closeThenGeneric;detailGates.delete(firstTask);
+ assert.equal($("#dataTitle").textContent,"集合名稱");assert.equal(text($("#dataContent"))," generic editor","old activity response revived after another modal reopened");
+ for(const closeFirst of [false,true]){
+  readGates.set("P1",deferred());const localReading=c.extension("profile","P1"),beforeGeneric=starts().length;
+  if(closeFirst)await $("#dataDialog").close();
+  c.dialog("dataDialog");$("#dataContent").replaceChildren(s.node("form","generic takeover"));
+  readGates.get("P1").resolve();await localReading;readGates.delete("P1");
+  assert.equal(starts().length,beforeGeneric,"generic modal takeover started the old patient query");assert.equal(text($("#dataContent"))," generic takeover");
+ }
+ c.window.addEventListener=()=>{};c.reviewPatientIdentity=()=>({name:"歷史資料病人"});s.run("vghks_bot/static/review-history.js");
+ readGates.set("P1",deferred());const historyTakeover=c.extension("profile","P1"),beforeHistory=starts().length;
+ await c.window.ReviewHistoryUI.open("numeric","P2");const historyContent=$("#dataContent").children[0];
+ readGates.get("P1").resolve();await historyTakeover;readGates.delete("P1");
+ assert.equal(starts().length,beforeHistory,"history modal takeover started the old profile query");assert.equal($("#dataDialog").dataset.view,"history");
+ assert.equal($("#dataContent").children[0],historyContent,"old profile local read replaced the history modal");
+ profiles.set("P1",compact);startFailure=new Error("synthetic profile query failure");await assert.rejects(c.extension("profile","P1"),/profile query failure/);startFailure=null;
+ assert.equal(rows()["手機"],"0912000000","failed profile query discarded compact contact data");assert.equal(update().disabled,false);
+ assert.equal($("#dataContent").querySelector(".clinical-loading"),null,"failed profile query retained a spinner");
 }
 async function historyLoadingTests(){
  const s=surface(),c=s.context,$=s.$;
@@ -428,4 +584,4 @@ function syncDetailsTests(){
  assert.ok(batch);assert.equal(batch.open,false);assert.deepEqual(batch.querySelectorAll("pre").map(node=>node.textContent),[
   "SOAP1 · SOAP_VERSION_A","SOAP2 · SOAP_VERSION_B"]);
 }
-(async()=>{await noteTests();await activityTests();await historyLoadingTests();layoutTests();await toolSelectionTests();await handoffTests();await sheetSyncTests();await destinationTests();await fuTests();syncDetailsTests();process.stdout.write("Review UI race, hierarchy, loading, viewport, handoff, FU and sheet sync checks passed\n");})().catch(error=>{console.error(error);process.exitCode=1;});
+(async()=>{await noteTests();await activityTests();await profileTests();await historyLoadingTests();layoutTests();await toolSelectionTests();await handoffTests();await sheetSyncTests();await destinationTests();await fuTests();syncDetailsTests();process.stdout.write("Review UI race, hierarchy, patient profile, loading, viewport, handoff, FU and sheet sync checks passed\n");})().catch(error=>{console.error(error);process.exitCode=1;});

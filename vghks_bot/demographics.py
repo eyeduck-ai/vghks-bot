@@ -55,7 +55,9 @@ def merge_demographics(patient, *preferred, on_date=None):
         return next((source[key] for source in sources
                      if source.get(key) is not None and str(source[key]).strip()), "")
 
-    result = {**patient, **{key: first(key) for key in ("name", "sex", "age")}}
+    result = {**patient, **{key: first(key) for key in (
+        "name", "sex", "age", "national_id", "mobile_phone", "home_phone", "phone", "contact",
+        "basic_info_at")}}
     birthday_source = next((source for source in sources if birthday_iso(source.get("birthday"))), None)
     if birthday_source is not None:
         birthday = birthday_iso(birthday_source["birthday"])

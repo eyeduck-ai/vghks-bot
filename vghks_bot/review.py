@@ -32,7 +32,7 @@ from .storage import StorageError
 from .surgery_schedule import KIND as SURGERY_KIND
 from .tags import classification
 
-FOREGROUND_KINDS = {"numeric", "registrations", "resolve", "history", "earnings_options"} | (APPROVAL_KINDS - {"approval_refresh", "approval_sync"})
+FOREGROUND_KINDS = {"numeric", "registrations", "profile", "resolve", "history", "earnings_options"} | (APPROVAL_KINDS - {"approval_refresh", "approval_sync"})
 REGISTRATION_SCHEMA = 1  # Includes the explicit no_show icon, including null for unknown.
 
 
@@ -366,7 +366,7 @@ class Review:
                 task["retry_only"] = retry
         else:
             kind = values.get("kind", "review")
-            if kind not in {"review", "resolve", "numeric", "registrations", "history", SURGERY_KIND} | APPROVAL_KINDS | EARNINGS_KINDS:
+            if kind not in {"review", "resolve", "numeric", "registrations", "profile", "history", SURGERY_KIND} | APPROVAL_KINDS | EARNINGS_KINDS:
                 raise ValueError("工具類型不正確。")
             task = {"id": uuid.uuid4().hex, "kind": kind, "created_at": timestamp(), "account_id": self.app.account_id,
                     "force": values.get("force") is True, "refresh": values.get("refresh") is True}
@@ -416,14 +416,14 @@ class Review:
                 foreground = True
             else:
                 mrn = normalize_mrn(values.get("mrn"))
-                task.update(name="本次數值報告" if kind == "numeric" else "掛號紀錄", mrn=mrn)
-                if parent_id := values.get("review_task_id"):
-                    if not isinstance(parent_id, str):
-                        raise ValueError("檢閱任務代碼不正確。")
-                    parent = self._note_task({"task_id": parent_id})
-                    if mrn not in {member["mrn"] for member in parent["members"]}:
-                        raise ValueError("病人不在此檢閱任務中。")
+                names = {"numeric": "本次數值報告", "registrations": "掛號紀錄", "profile": "病人基本資料"}
+                task.update(name=names[kind], mrn=mrn)
+                parent = self.extension_scope(values, mrn)
+                if parent:
                     task["review_task_id"] = parent["id"]
+                    if kind == "profile":
+                        task["patient_name"] = next(member.get("name", "") for member in parent["members"]
+                                                    if member["mrn"] == mrn)
                 if kind == "numeric":
                     record = self.app.library_record(values.get("record_id"))
                     if record["mrn"] != mrn:
@@ -627,6 +627,8 @@ class Review:
 
     def profile(self, mrn, *, force=False):
         cached = self.db.get("profile", mrn, required=False)
+        if not self.valid_profile(cached, mrn):
+            cached = None
         if (cached and cached.get("status") == "resolved" and cached.get("mrn") == mrn
                 and cached.get("name", "").strip() and not force and fresh(cached["updated_at"], 86400)):
             return merge_demographics(cached)
@@ -635,9 +637,66 @@ class Review:
         validate_patient(value, mrn)
         if value.get("mrn") != mrn or not value.get("name", "").strip():
             raise ValueError("未取得可確認的病人基本資料。")
-        return self.db.save("profile", merge_demographics({"id": mrn, "mrn": mrn, "status": "resolved", "name": value["name"],
-            "sex": value.get("sex", ""), "birthday": value.get("birthday", ""), "age": value.get("age", ""),
-            "mobile_phone": value.get("mobile_phone", ""), "home_phone": value.get("home_phone", "")}))
+        with self.app.store.library.batch():
+            latest = self.db.get("profile", mrn, required=False)
+            if not self.valid_profile(latest, mrn):
+                latest = {}
+            return self.db.save("profile", merge_demographics({**latest, "id": mrn, "mrn": mrn,
+                "status": "resolved"}, value, latest))
+
+    @staticmethod
+    def valid_profile(value, mrn):
+        return bool(value and value.get("status") == "resolved" and value.get("mrn") == mrn
+                    and isinstance(value.get("name"), str) and value["name"].strip())
+
+    def extension_scope(self, values, mrn):
+        """Keep optional review context confined to this account and patient."""
+        if "review_task_id" not in values:
+            return None
+        parent_id = values["review_task_id"]
+        if not isinstance(parent_id, str) or not parent_id:
+            raise ValueError("檢閱任務代碼不正確。")
+        parent = self._note_task({"task_id": parent_id})
+        if mrn not in {member["mrn"] for member in parent["members"]}:
+            raise ValueError("病人不在此檢閱任務中。")
+        return parent
+
+    def read_profile(self, values):
+        """Read saved verified fields, including while offline or read-only."""
+        mrn = normalize_mrn(values.get("mrn"))
+        self.extension_scope(values, mrn)
+        cached = self.db.get("profile", mrn, required=False)
+        return merge_demographics(cached) if self.valid_profile(cached, mrn) else None
+
+    def basic_info(self, task):
+        """QUY15 is fetched only by an explicitly requested profile task."""
+        mrn = task["mrn"]
+        cached = self.db.get("profile", mrn, required=False)
+        if not self.valid_profile(cached, mrn):
+            cached = None
+        if cached and cached.get("basic_info_at") and not task["force"]:
+            return {**merge_demographics(cached), "cached": True}
+        with self.app.sdk_factory(self.app.settings) as sdk:
+            value = clean(sdk.patients.get_basic_info(mrn))
+        validate_patient(value, mrn)
+        if (not isinstance(value, dict) or value.get("mrn") != mrn
+                or not isinstance(value.get("name"), str) or not value["name"].strip()):
+            raise ValueError("未取得可確認的病人基本資料。")
+        fields = {key: value.get(key, "") for key in (
+            "mrn", "name", "birthday", "sex", "age", "national_id", "mobile_phone", "home_phone", "phone", "contact")}
+        # Save only the displayed profile fields, never QUY15's raw HTML or
+        # unrelated inpatient encounter details. Empty fields preserve prior data.
+        with self.app.store.library.batch():
+            latest = self.db.get("profile", mrn, required=False)
+            if not self.valid_profile(latest, mrn):
+                latest = {}
+            known_name = latest.get("name") or task.get("patient_name", "")
+            if known_name.strip() and "".join(known_name.split()) != "".join(value["name"].split()):
+                raise ValueError("回傳病人姓名不符，這筆基本資料未保存。")
+            result = merge_demographics({**latest, "id": mrn, "mrn": mrn,
+                                        "status": "resolved"}, fields)
+            result.update(basic_info_at=timestamp(), cached=False)
+            return self.db.save("profile", result)
 
     def member_demographics(self, member):
         profile = self.db.get("profile", member["mrn"], required=False) or {}
@@ -773,6 +832,8 @@ class Review:
 
     def extension(self, task):
         mrn, kind = task["mrn"], task["kind"]
+        if kind == "profile":
+            return self.basic_info(task)
         key = task.get("record_id", mrn)
         cached = self.db.get(kind, key, required=False)
         if kind == "numeric":

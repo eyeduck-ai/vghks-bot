@@ -314,12 +314,12 @@ class BotHandler(Handler):
                     result = review.preferences(values)
                 elif local == "/api/extensions/read":
                     kind = values.get("kind")
-                    if kind not in {"numeric", "registrations"}:
+                    if kind not in {"numeric", "registrations", "profile"}:
                         raise ValueError("資料類型不正確。")
                     key = values.get("record_id") if kind == "numeric" else values.get("mrn")
                     if kind == "numeric":
                         workspace.library_record(key)
-                    result = {"data": review.db.get(kind, key, required=False)}
+                    result = {"data": review.read_profile(values) if kind == "profile" else review.db.get(kind, key, required=False)}
                 else:
                     # The embedded comparison UI can save date preferences but
                     # cannot change workspace identity or bypass root login.

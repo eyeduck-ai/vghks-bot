@@ -216,7 +216,7 @@ class AccountGateway:
         first = args[0] if args else None
         mrn = getattr(first, "mrn", "") or getattr(getattr(first, "order", None), "mrn", "")
         if isinstance(first, str) and (service in {"records", "orders"} or
-                                      service == "patients" and method == "get_demographics"):
+                                      service == "patients" and method in {"get_demographics", "get_basic_info"}):
             mrn = first
         self.local.trace_context, self.local.trace_mrn = context, mrn
         if self.recorder:

@@ -1,7 +1,7 @@
 "use strict";
 
 window.TaskActivityUI=(()=>{
- const childKinds=new Set(["history","numeric","registrations"]);
+ const childKinds=new Set(["history","numeric","registrations","profile"]);
  const expanded=new Set(),closedMatches=new Set();
  let lastHistory=null,signature="",filterSignature="";
  let remote=null,offset=0,changeVersion=0,remoteVersion=-1,requestSequence=0,filterTimer=0,loading=null;

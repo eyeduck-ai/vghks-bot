@@ -19,7 +19,8 @@ from .settings import timestamp
 
 PHASE_NAMES = {
     "auth.check": "登入與連線檢查", "auth.login": "登入", "auth.reconnect": "重新連線",
-    "patients.get_demographics": "病人基本資料", "patients.resolve_identity": "病人身分核對",
+    "patients.get_demographics": "病人基本資料", "patients.get_basic_info": "病人身分與聯絡資料",
+    "patients.resolve_identity": "病人身分核對",
     "records.get_visit_cases": "就診索引", "records.get_soap": "SOAP 病歷",
     "records.get_numeric_history": "歷年數值報告", "records.get_numeric_report": "該次數值報告",
     "orders.get_order_history": "歷年醫囑索引", "orders.get_case_orders": "該次醫囑索引",

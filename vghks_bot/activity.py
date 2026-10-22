@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import date
 
-CHILD_KINDS = {"history", "numeric", "registrations"}
+CHILD_KINDS = {"history", "numeric", "registrations", "profile"}
 STATUSES = {"queued", "running", "cancelling", "completed", "partial", "paused", "cancelled", "interrupted", "failed"}
 SYSTEMS = {"門診系統", "審查查詢", "薪資業績", "手術系統", "進階工具", "SDK"}
 LABELS = {"queued": "排隊中", "running": "執行中", "completed": "完成", "partial": "部分完成",
@@ -58,7 +58,7 @@ def search(work, values):
         links = dict(db.execute("""SELECT c.id,p.id FROM bot_documents c JOIN bot_documents p
             ON p.kind='task' AND p.id=json_extract(c.payload,'$.review_task_id')
             AND json_extract(p.payload,'$.kind')='review'
-            WHERE c.kind='task' AND json_extract(c.payload,'$.kind') IN ('history','numeric','registrations')
+            WHERE c.kind='task' AND json_extract(c.payload,'$.kind') IN ('history','numeric','registrations','profile')
             AND (json_extract(c.payload,'$.account_id') IS NULL OR json_extract(p.payload,'$.account_id') IS NULL
                  OR json_extract(c.payload,'$.account_id')=json_extract(p.payload,'$.account_id'))
             AND EXISTS(SELECT 1 FROM json_each(p.payload,'$.members') m
