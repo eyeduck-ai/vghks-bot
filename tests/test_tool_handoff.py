@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from vghks_bot.bot import BotApplication
+from vghks_bot.patient_handoff import public_document
 from vghks_bot.selftest_bot import BotSyntheticSDK, wait_task
 from vghks_bot.settings import Settings
 from vghks_bot.workbench import snapshot as workbench_snapshot
@@ -142,9 +143,19 @@ class ToolHandoffTests(unittest.TestCase):
         private = self.work.analysis.store.document("analysis_cohorts", result["cohort"]["id"])
         source = private["members"][0]["handoff_sources"][0]
         self.assertIn("soap", source["record"])
+        compact = next(group for group in workbench_snapshot(self.work, compact=True)["sets"]
+                       if group["id"] == result["worklist"]["id"])
+        self.assertNotIn("members", compact)
+        self.assertFalse(compact["members_loaded"])
+        self.assertEqual(compact["member_count"], 1)
+        self.assertEqual(compact["members_preview"][0]["mrn"], "TEST001")
+        for member in compact["members_preview"]:
+            self.assertEqual(set(member), {"mrn", "name"})
+        # Match the on-demand /sets/read response, including its public boundary.
+        requested = public_document(self.work.review.db.get("set", result["worklist"]["id"]))
         documents = [result["worklist"], result["cohort"],
                      self.work.review.cohort({"set_id": result["worklist"]["id"]}),
-                     next(group for group in workbench_snapshot(self.work, compact=True)["sets"] if group["id"] == result["worklist"]["id"]),
+                     requested,
                      next(cohort for cohort in self.work.analysis.overview({})["cohorts"]
                           if cohort["id"] == private["id"]),
                      self.work.review.save_set({"id": result["worklist"]["id"], "name": "renamed"}),

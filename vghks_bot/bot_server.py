@@ -12,6 +12,7 @@ from .activity import search as search_activity
 from .google_sheets import SheetError, SheetUnavailable
 from .jobs import BusyError
 from .launcher import CHALLENGE_HEADER, REOPEN_HEADER, REOPEN_PATH, signature, valid_token
+from .patient_handoff import public_document
 from .request_gate import RequestGate
 from .server import STATIC, Handler, LocalServer
 from .storage import StorageError
@@ -90,6 +91,7 @@ class BotHandler(Handler):
         assets = {"/": ("bot.html", "text/html; charset=utf-8"),
                   "/bot.js": ("bot.js", "text/javascript; charset=utf-8"),
                   "/review-history.js": ("review-history.js", "text/javascript; charset=utf-8"),
+                  "/review-paging.js": ("review-paging.js", "text/javascript; charset=utf-8"),
                   "/registration-history.js": ("registration-history.js", "text/javascript; charset=utf-8"),
                   "/review-handoff.js": ("review-handoff.js", "text/javascript; charset=utf-8"),
                   "/scan-browser.js": ("scan-browser.js", "text/javascript; charset=utf-8"),
@@ -208,6 +210,7 @@ class BotHandler(Handler):
                 if self.server.database_manager and self.headers.get("X-Database-Context") != root.context_token:
                     raise ValueError("資料庫已切換，請重新載入頁面。")
                 readonly_routes = {"/api/lists", "/api/library/search", "/api/library/record", "/api/patient-tags/search",
+                    "/api/reviews/patients", "/api/reviews/patient", "/api/reviews/notes/page", "/api/reviews/notes/summary", "/api/sets/read", "/api/sets/search",
                     "/api/library/data/read", "/api/library/data/preview-delete",
                     "/api/reviews/results", "/api/reviews/history/read", "/api/reviews/notes/read", "/api/extensions/read", "/api/analysis/results", "/api/analysis/raw",
                     "/api/analysis/google", "/api/analysis/google/sources", "/api/analysis/cataract/status", "/api/analysis/surgery/candidates", "/api/analysis/surgery/history",
@@ -268,6 +271,7 @@ class BotHandler(Handler):
                 if local in {"/api/start", "/api/lists/browse", "/api/fetch", "/api/analysis/start"} and not workspace.gateway.online:
                     raise ValueError("請先登入此帳號，再使用網路功能。")
                 custom = {"/api/sets/save", "/api/sets/delete", "/api/sets/cohort", "/api/draft/save",
+                          "/api/reviews/patients", "/api/reviews/patient", "/api/reviews/notes/page", "/api/reviews/notes/summary", "/api/sets/read", "/api/sets/search",
                           "/api/tasks/start", "/api/tasks/stop", "/api/reviews/results", "/api/reviews/history/read",
                           "/api/reviews/notes/read", "/api/reviews/notes/save", "/api/reviews/notes/clear", "/api/reviews/reclassify",
                           "/api/reviews/preferences", "/api/accounts/save", "/api/extensions/read"}
@@ -291,6 +295,10 @@ class BotHandler(Handler):
                     result = review.remove_handoff(values)
                 elif local == "/api/sets/save":
                     result = review.save_set(values)
+                elif local == "/api/sets/read":
+                    result = public_document(review.db.get("set", values.get("id")))
+                elif local == "/api/sets/search":
+                    result = {"sets": review.db.set_summaries(values.get("q", ""))}
                 elif local == "/api/sets/cohort":
                     result = review.cohort(values)
                 elif local == "/api/sets/delete":
@@ -304,6 +312,14 @@ class BotHandler(Handler):
                     result = review.stop(values.get("id"))
                 elif local == "/api/reviews/results":
                     result = review.results(values)
+                elif local == "/api/reviews/patients":
+                    result = review.pages.page(values)
+                elif local == "/api/reviews/patient":
+                    result = review.pages.patient(values)
+                elif local == "/api/reviews/notes/page":
+                    result = review.pages.notes(values)
+                elif local == "/api/reviews/notes/summary":
+                    result = review.pages.notes(values, summary=True)
                 elif local == "/api/reviews/history/read":
                     result = review.history.read(values)
                 elif local == "/api/reviews/notes/read":
@@ -323,7 +339,8 @@ class BotHandler(Handler):
                     key = values.get("record_id") if kind == "numeric" else values.get("mrn")
                     if kind == "numeric":
                         workspace.library_record(key)
-                    result = {"data": review.read_profile(values) if kind == "profile" else review.db.get(kind, key, required=False)}
+                    result = {"data": review.read_profile(values) if kind == "profile" else
+                              review.read_numeric(values) if kind == "numeric" else review.db.get(kind, key, required=False)}
                 else:
                     # The embedded comparison UI can save date preferences but
                     # cannot change workspace identity or bypass root login.

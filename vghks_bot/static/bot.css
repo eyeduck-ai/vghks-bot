@@ -272,6 +272,11 @@ button.panel-toggle.icon-button:hover{background:#dce8d7;border-color:#c4d4bd}
 .review-data-info{margin:0 0 10px;color:var(--muted);font-size:12px}
 .review-data-info>summary{cursor:pointer;min-height:24px;line-height:24px}
 .review-data-summary{color:var(--muted);font-size:12px;overflow-wrap:anywhere}
+.review-pager{display:flex;justify-content:flex-end;align-items:center;gap:10px;margin:4px 0 10px;min-height:30px}
+.review-pager button{min-height:30px;padding:4px 10px}.review-pager span{font-variant-numeric:tabular-nums}
+.review-pager[hidden]{display:none}
+.review-page-context{padding:7px 10px;background:var(--soft);border-left:2px solid var(--line);font-size:12px}
+.review-page-context[hidden]{display:none}
 .review-data-label{margin-left:12px;color:var(--green);text-decoration:underline;text-underline-offset:3px;white-space:nowrap}
 .review-data-values{display:grid;grid-template-columns:minmax(140px,auto) minmax(0,1fr);gap:6px 14px;margin:8px 0 0;padding:10px 12px;border-left:2px solid var(--line);background:var(--soft);line-height:1.5}
 .review-data-values dt,.review-data-values dd{margin:0;overflow-wrap:anywhere}.review-data-values dd{color:var(--ink)}

@@ -13,12 +13,13 @@ function surface(){
   get isConnected(){return this.parentElement?this.parentElement.isConnected:[...nodes.values()].includes(this);}
   append(...values){for(const child of values){child.parentElement=this;this.children.push(child);}}
   prepend(...values){for(const child of values)child.parentElement=this;this.children.unshift(...values);}
+  insertBefore(child,anchor){if(child.parentElement)child.remove();const index=anchor?this.children.indexOf(anchor):this.children.length;child.parentElement=this;this.children.splice(index,0,child);}
   remove(){if(this.parentElement){this.parentElement.children=this.parentElement.children.filter(child=>child!==this);this.parentElement=null;}}
   before(...values){if(this.parentElement){const index=this.parentElement.children.indexOf(this);for(const child of values)child.parentElement=this.parentElement;this.parentElement.children.splice(index,0,...values);}}
   replaceChildren(...values){for(const child of this.children)child.parentElement=null;this.children=[];this.append(...values);}
   all(){return this.children.flatMap(child=>[child,...child.all()]);}
   contains(value){return value===this||this.all().includes(value);}
-  matches(selector){if(selector.startsWith("#"))return this.id===selector.slice(1);if(selector.startsWith("."))return this.className.split(/\s+/).includes(selector.slice(1));if(selector==="[data-activity-focus]")return "activityFocus" in this.dataset;return this.tagName===selector;}
+  matches(selector){if(selector.startsWith("#"))return this.id===selector.slice(1);if(selector.startsWith("."))return this.className.split(/\s+/).includes(selector.slice(1));if(/^\[data-[\w-]+\]$/.test(selector))return selector.slice(6,-1).replace(/-([a-z])/g,(_,letter)=>letter.toUpperCase()) in this.dataset;return this.tagName===selector;}
   querySelectorAll(selector){return this.all().filter(child=>selector.split(",").some(part=>child.matches(part)));}
   querySelector(selector){return this.querySelectorAll(selector)[0]||null;}
   addEventListener(name,run){this.events.set(name,[...(this.events.get(name)||[]),run]);}
@@ -46,7 +47,8 @@ async function noteTests(){
  c.act=async run=>{const control=c.document.activeElement,wasDisabled=control?.disabled;if(control)control.disabled=true;try{return await run();}finally{if(control)control.disabled=wasDisabled;}};
  c.api=async(path,values)=>{
   calls.push({path,values});
-  if(path.endsWith("/read"))return {task_id:values.task_id,patients:["P1","P2"].map(mrn=>({mrn,text:saved.get(mrn)||""}))};
+  if(path.endsWith("/summary"))return {task_id:values.task_id,note_count:[...saved.values()].filter(text=>text.trim()).length};
+  if(path.endsWith("/read")||path.endsWith("/page"))return {task_id:values.task_id,patients:(values.mrns||["P1","P2"]).map(mrn=>({mrn,text:saved.get(mrn)||""}))};
   if(path.endsWith("/save")){if(saveFailure)throw new Error("synthetic save failure");if(saveGate)await saveGate.promise;saved.set(values.mrn,values.text);return {updated_at:"saved"};}
   if(path.endsWith("/clear")){if(clearGate)await clearGate.promise;const count=saved.size;saved.clear();return {task_id:values.task_id,cleared_count:count};}
   throw new Error(path);
@@ -130,6 +132,31 @@ async function activityTests(){
  assert.ok(profileView,"profile subtask did not expose its saved data action");await profileView.run();
  assert.deepEqual(openedProfiles,[["PROFILE1","profile"]]);
 }
+async function externalNoteTests(){
+ const s=surface(),c=s.context,$=s.$,calls=[];let serverText="first",saveFailure=false;
+ c.work.revisions={review_note:0};c.setIcon=(button,name,label)=>{button.iconLabel=label;};
+ c.api=async(path,values)=>{
+  calls.push({path,values});
+  if(path.endsWith("/page"))return {task_id:values.task_id,patients:values.mrns.map(mrn=>({mrn,text:serverText,sequence_no:"001"}))};
+  if(path.endsWith("/summary"))return {task_id:values.task_id,note_count:serverText.trim()?1:0};
+  if(path.endsWith("/save")){if(saveFailure)throw new Error("synthetic save failure");serverText=values.text;return {updated_at:"saved"};}
+  if(path.endsWith("/clear")){serverText="";return {task_id:values.task_id,cleared_count:1};}
+  throw new Error(path);
+ };
+ c.confirmDelete=async()=>true;c.renderReviewDetail=()=>{throw new Error("note-only update rebuilt the SOAP reader");};
+ s.run("vghks_bot/static/review-notes.js");const ui=c.window.ReviewNotesUI;await ui.load("R1",{mrns:["P1"]});
+ const soap=s.node("section","unchanged SOAP","soap-record"),control=ui.control({mrn:"P1"});$("#reviewDetail").append(soap,control.button,control.panel);
+ await control.button.emit("click");const input=$("#reviewNoteInput");input.selectionStart=input.selectionEnd=2;input.setSelectionRange=(start,end)=>{input.selectionStart=start;input.selectionEnd=end;};input.focus();
+ serverText="remote edit";c.work.revisions.review_note++;await ui.load("R1",{mrns:["P1"]});
+ assert.equal($("#reviewDetail").querySelector(".soap-record"),soap);assert.equal($("#reviewNoteInput"),input);assert.equal(input.value,"remote edit");assert.equal(c.document.activeElement,input);assert.equal(input.selectionStart,2);assert.equal(control.button.iconLabel,"編輯病人備註");
+ input.value="local edit after refresh";await input.emit("input");serverText="another remote edit";c.work.revisions.review_note++;await ui.load("R1",{mrns:["P1"]});
+ assert.equal(input.value,"local edit after refresh","external note replaced unsaved text");await ui.flush("P1");assert.equal(serverText,"local edit after refresh","visible input handler still referenced an abandoned note object");
+ saveFailure=true;input.value="must preserve";await input.emit("input");const before=calls.filter(call=>call.path.endsWith("/page")).length;
+ await ui.load("R1",{mrns:["P1"],force:true});assert.equal(calls.filter(call=>call.path.endsWith("/page")).length,before);assert.equal(input.value,"must preserve");
+ await assert.rejects(ui.clearAll(),/備註尚未儲存/);assert.equal(calls.filter(call=>call.path.endsWith("/clear")).length,0);
+ saveFailure=false;await ui.flush("P1");await ui.clearAll();assert.equal(input.value,"");assert.equal(control.button.iconLabel,"新增病人備註");assert.equal($("#reviewDetail").querySelector(".soap-record"),soap);
+ ui.reset();
+}
 async function profileTests(){
  const s=surface(),c=s.context,$=s.$,calls=[],noteLoads=[],reviewLoads=[],copied=[];
  const source=fs.readFileSync("vghks_bot/static/bot.js","utf8");
@@ -187,6 +214,9 @@ async function profileTests(){
   const caption=$("#reviewDetail").querySelector(".soap-record").querySelector(".caption");
   assert.equal(caption.textContent,"合成醫師 · ONE · "+(cached?"沿用本機版本":"已保存")+" · 取得 2026-10-21T08:00:00","SOAP caption omitted its source, reuse state or acquisition time");
   assert.doesNotMatch(caption.textContent,/2026-10-27|2026-10-20T07/,"SOAP caption used patient verification or first-save time");
+  const section=$("#reviewDetail").querySelector(".soap-record"),original=s.node("details");original.open=true;section.append(original);
+  c.reviewData.patients[0].national_id="C123456789";c.renderReviewDetail();
+  assert.equal($("#reviewDetail").querySelector(".soap-record"),section,"profile-only change rebuilt an unchanged SOAP section");assert.equal(original.open,true,"profile update collapsed original SOAP text");
  }
  c.reviewData.patients[0]={...saved,...metadataPatient,records:[{...metadataPatient.records[0],doctor:"合成醫師",updated_at:undefined}]};c.renderReviewDetail();
  assert.equal($("#reviewDetail").querySelector(".soap-record").querySelector(".caption").textContent,"合成醫師 · ONE · 沿用本機版本","missing SOAP acquisition time gained a fallback timestamp");
@@ -390,6 +420,8 @@ async function toolSelectionTests(){
  c.api=async(path,values)=>{
   requests.push({path,values});
   if(path==="/tools/state")return {modules:JSON.parse(JSON.stringify(modules))};
+  if(path==="/sets/read")return JSON.parse(JSON.stringify(groups.find(group=>group.id===values.id)));
+  if(path==="/sets/search")return {sets:groups.filter(group=>[group.name,...group.members.map(patient=>patient.mrn)].some(text=>text.includes(values.q))).map(group=>({id:group.id,name:group.name,member_count:group.members.length,members_preview:group.members.slice(0,1),members_loaded:false}))};
   if(path==="/tools/state/save"){modules[values.module]={set_id:values.set_id};return {modules};}
   if(path==="/tools/handoff/remove")return {worklist:{...groups[3],worklist_module:"surgery",members:groups[3].members.filter(member=>!values.mrns.includes(member.mrn))},cohort:{id:"WORKLIST-COHORT"}};
   if(path==="/tasks/start"){if(values.kind==="resolve")return lookupGate.promise;if(values.kind==="review")return startGate.promise;}
@@ -458,6 +490,17 @@ async function toolSelectionTests(){
  await $("#toolClearPatients").emit("click");assert.equal(c.selectedSet.members.length,0);
  assert.ok(requests.some(request=>request.path==="/tools/handoff/remove"&&request.values.mrns.length===3));
  assert.equal(JSON.stringify(groups),original);ui.reset();
+ c.work.sets=groups.map(group=>({id:group.id,name:group.name,member_count:group.members.length,members_preview:group.members.slice(0,1),members_loaded:false}));
+ const compactReads=requests.filter(request=>request.path==="/sets/read").length;
+ ui.adoptReview({...task,id:"COMPACT",members:undefined,member_count:3});
+ assert.equal($("#toolSelectionSummary").children.length,0,"collapsed source eagerly built patient chips");
+ assert.match($("#toolSelectedCount").textContent,/3 位/);
+ assert.equal(requests.filter(request=>request.path==="/sets/read").length,compactReads,"adopting compact task fetched the whole source set");
+ await $("#toolEditSetup").emit("click");assert.equal($("#toolSelectionSummary").children.length,3);
+ assert.equal(requests.filter(request=>request.path==="/sets/read").length,compactReads+1,"editing compact source did not load its members");
+ $("#toolSavedDialog").close=()=>{};await $("#toolOpenSaved").emit("click");
+ $("#toolSavedQuery").value="00000003";await $("#toolSavedQuery").emit("input");await new Promise(resolve=>setTimeout(resolve,230));
+ assert.ok(requests.some(request=>request.path==="/sets/search"&&request.values.q==="00000003"),"saved set search searched only preview MRNs");ui.reset();
 }
 async function handoffTests(){
  const s=surface(),c=s.context,$=s.$,calls=[],opened=[],received=[];let gate=null,flush=true;
@@ -609,4 +652,4 @@ function syncDetailsTests(){
   "SOAP1 · SOAP_VERSION_A","SOAP2 · SOAP_VERSION_B"]);
 }
 module.exports={surface,deferred,tick};
-if(require.main===module)(async()=>{await noteTests();await activityTests();await profileTests();await historyLoadingTests();layoutTests();await toolSelectionTests();await handoffTests();await sheetSyncTests();await destinationTests();await fuTests();syncDetailsTests();process.stdout.write("Review UI race, hierarchy, patient profile, loading, viewport, handoff, FU and sheet sync checks passed\n");})().catch(error=>{console.error(error);process.exitCode=1;});
+if(require.main===module)(async()=>{await noteTests();await externalNoteTests();await activityTests();await profileTests();await historyLoadingTests();layoutTests();await toolSelectionTests();await handoffTests();await sheetSyncTests();await destinationTests();await fuTests();syncDetailsTests();process.stdout.write("Review UI race, hierarchy, patient profile, loading, viewport, handoff, FU and sheet sync checks passed\n");})().catch(error=>{console.error(error);process.exitCode=1;});

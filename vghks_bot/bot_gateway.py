@@ -23,6 +23,10 @@ from .scanner import Cancelled, safe_failure
 from .settings import timestamp
 
 
+class AcquisitionDeferred(Exception):
+    """An unsent shared background read yielded to a foreground acquisition."""
+
+
 class NetworkGate:
     def __init__(self, maximum=3):
         self.maximum, self.active = maximum, 0
@@ -36,7 +40,7 @@ class NetworkGate:
             self.condition.notify_all()
 
     @contextmanager
-    def slot(self, *, deadline=None, cancel=None):
+    def slot(self, *, deadline=None, cancel=None, defer=None):
         with self.condition:
             deadline = deadline if deadline is not None else monotonic() + 30
             while self.active >= self.maximum:
@@ -45,7 +49,13 @@ class NetworkGate:
                 remaining = deadline - monotonic()
                 if remaining <= 0:
                     raise BusyError("等待院內連線名額逾時，請稍後重試；目前查詢仍在執行。")
+                if defer and defer():
+                    raise AcquisitionDeferred()
                 self.condition.wait(min(remaining, .2))
+            if cancel is not None and cancel.is_set():
+                raise Cancelled()
+            if defer and defer():
+                raise AcquisitionDeferred()
             self.active += 1
         try:
             yield
@@ -78,10 +88,12 @@ class AccountGateway:
         self.wait_timeout = 30.0
 
     @contextmanager
-    def task_context(self, task_id, kind, cancel=None):
+    def task_context(self, task_id, kind, cancel=None, *, acquisition_id=""):
         previous = getattr(self.local, "task", {})
         previous_cancel = getattr(self.local, "cancel", None)
         self.local.task = {"task_id": task_id, "task_kind": kind}
+        if acquisition_id:
+            self.local.task["acquisition_id"] = acquisition_id
         self.local.cancel = cancel
         try:
             yield
@@ -119,6 +131,9 @@ class AccountGateway:
         if not self.event:
             return
         message, code = safe_failure(exc) if exc else ("", "")
+        acquisition_id = getattr(self.local, "task", {}).get("acquisition_id")
+        if acquisition_id:
+            assessment = {**(assessment or {}), "acquisition_id": acquisition_id}
         if exc and error_info(exc).category == "NOT_FOUND":
             assessment = {"availability": "NOT_FOUND", "item_count": 0, "complete": True,
                           "issues": [], "warnings": []}
@@ -238,16 +253,35 @@ class AccountGateway:
             self.local.foreground = False
 
     @contextmanager
+    def query_priority(self, probe, defer=None):
+        """Allow a queued shared read to inherit a newly joined foreground user."""
+        previous = getattr(self.local, "priority_probe", None)
+        previous_defer = getattr(self.local, "defer_probe", None)
+        self.local.priority_probe = probe
+        self.local.defer_probe = defer
+        try:
+            yield
+        finally:
+            self.local.priority_probe = previous
+            self.local.defer_probe = previous_defer
+
+    @contextmanager
     def serial(self):
-        front = getattr(self.local, "foreground", False)
+        probe = getattr(self.local, "priority_probe", None)
+        defer = getattr(self.local, "defer_probe", None)
+        front = bool(getattr(self.local, "foreground", False) or probe and probe())
         cancel = getattr(self.local, "cancel", None)
         deadline = monotonic() + self.wait_timeout
         acquired, registered = False, False
+        def should_defer():
+            return bool(defer and not (getattr(self.local, "foreground", False) or probe and probe()) and defer())
         def check_wait():
             if cancel is not None and cancel.is_set():
                 raise Cancelled()
             if monotonic() >= deadline:
                 raise BusyError("此帳號仍有查詢占用連線，等待逾時；請稍後重試或先暫停該任務。")
+            if should_defer():
+                raise AcquisitionDeferred()
         try:
             with self.condition:
                 if front:
@@ -256,17 +290,30 @@ class AccountGateway:
                     self.condition.notify_all()
                 else:
                     while self.foreground_waiters:
+                        if probe and probe():
+                            front = True
+                            self.foreground_waiters += 1
+                            registered = True
+                            self.condition.notify_all()
+                            break
                         check_wait()
                         self.condition.wait(min(.2, max(0, deadline - monotonic())))
             while not acquired:
                 check_wait()
+                if not front and probe and probe():
+                    with self.condition:
+                        front = True
+                        self.foreground_waiters += 1
+                        registered = True
+                        self.condition.notify_all()
                 acquired = self.lock.acquire(timeout=min(.2, max(0, deadline - monotonic())))
             if registered:
                 with self.condition:
                     self.foreground_waiters -= 1
                     registered = False
                     self.condition.notify_all()
-            with self.gate.slot(deadline=deadline, cancel=cancel):
+            check_wait()
+            with self.gate.slot(deadline=deadline, cancel=cancel, defer=should_defer):
                 yield
         finally:
             if registered:

@@ -16,16 +16,17 @@ window.ReviewHandoff=(()=>{
  }
  function updatePatients(patients){
   scope();
-  for(const patient of patients)if(selectedPatients.has(patient.mrn))selectedPatients.set(patient.mrn,patient);
+  for(const patient of patients)if(selectedPatients.has(patient.mrn))selectedPatients.set(patient.mrn,identity(patient));
   renderSelection();
  }
  function toggle(patient,checked){
   scope();
   if(root.read_only){renderSelection();return;}
   const mrn=String(patient.mrn||"").trim();
-  if(mrn&&checked)selectedPatients.set(mrn,{...patient,mrn});else selectedPatients.delete(mrn);
+  if(mrn&&checked)selectedPatients.set(mrn,identity({...patient,mrn}));else selectedPatients.delete(mrn);
   renderSelection();
  }
+ function identity(patient){return Object.fromEntries(["mrn","name","sex","age","birthday"].map(key=>[key,patient[key]??""]));}
  function has(mrn){scope();return selectedPatients.has(mrn);}
  function patients(){scope();return [...selectedPatients.values()];}
  function clear(){selectedPatients.clear();renderSelection();}

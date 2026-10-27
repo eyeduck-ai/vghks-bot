@@ -48,7 +48,8 @@ class LibraryData:
             return bool(db.execute("SELECT 1 FROM clinical_cache_deletions WHERE mrn=?", (mrn,)).fetchone())
 
     def soap_cleared(self, ids, mrns):
-        with self.library.connect() as db:
+        resources = getattr(self.app, "resources", None)
+        with resources.invalidation(mrns, {"soap"}) if resources else nullcontext(), self.library.connect() as db:
             purge_sources(db, record_ids=ids)
             keys = [(row["mrn"], row["key"]) for row in db.execute("SELECT mrn,key FROM analysis_steps WHERE kind='cataract_soap' "
                     "AND json_extract(payload,'$.record_id') IN (SELECT value FROM json_each(?))", (json.dumps(ids),))]
@@ -158,7 +159,8 @@ class LibraryData:
             categories = set(preview["categories"])
             self.app.store.purge_index_copies(selected if "visits" in categories else [], preview["lists"])
             self.app.analysis.store.invalidate_previews(selected)
-            with self.library.connect() as db:
+            resources = getattr(self.app, "resources", None)
+            with resources.invalidation(selected, categories) if resources else nullcontext(), self.library.connect() as db:
                 if "analysis" in categories:
                     purge_sources(db, mrns=selected)
                     if db.execute("SELECT 1 FROM sqlite_master WHERE name='surgery_drafts'").fetchone():

@@ -1,6 +1,7 @@
 """Resumable SDK composition; one patient context at a time, shared across modules."""
 from __future__ import annotations
 
+import threading
 from collections import defaultdict
 from contextlib import ExitStack
 from dataclasses import fields, replace
@@ -115,12 +116,33 @@ def validate_case_report(value, lookup_mrn, case):
         raise ValueError("單次數值報告就診識別不符。")
 
 
+class ReadinessToken:
+    """Run-local proof with no task cancellation or SDK lifetime references."""
+    def __init__(self):
+        self.lock = threading.RLock()
+        self.ready = set()
+
+    def ensure(self, connection, target):
+        with self.lock:
+            if target not in self.ready:
+                require_ready(connection.auth.check(only=(target,)))
+                self.ready.add(target)
+
+    def accept(self, target):
+        with self.lock:
+            self.ready.add(target)
+
+
 class RunSessions:
     """Lazy login once per account, used serially for all patients in this run."""
     def __init__(self, factory, state):
         self.factory, self.state = factory, state
         self.stack = ExitStack()
         self.connections, self.ready = {}, set()
+        self.readiness = {}
+
+    def token(self, settings):
+        return self.readiness.setdefault(id(settings), ReadinessToken())
 
     def get(self, settings, target):
         self.state.check_cancel()
@@ -131,7 +153,7 @@ class RunSessions:
             self.connections[key] = self.stack.enter_context(self.factory(settings))
         connection = self.connections[key]
         if (key, target) not in self.ready:
-            require_ready(connection.auth.check(only=(target,)))
+            self.token(settings).ensure(connection, target)
             self.ready.add((key, target))
         return connection
 
@@ -157,6 +179,7 @@ class PatientCollector:
         self.sessions = sessions
         self.review = review
         self.control = checkpoint
+        self.readiness = sessions.token(settings) if sessions is not None else ReadinessToken()
 
     def check(self):
         self.state.check_cancel()
@@ -173,15 +196,27 @@ class PatientCollector:
                 raise ValueError("需要連線取得新資料，請先儲存所選帳號的密碼。")
             self.connection = self.stack.enter_context(self.factory(self.settings))
         if target not in self.ready:
-            require_ready(self.connection.auth.check(only=(target,)))
+            self.readiness.ensure(self.connection, target)
             self.ready.add(target)
         return self.connection
 
-    def query(self, key, kind, operation, *, refresh=False, binary=False, expected_mrn=None, validator=None):
+    def shared(self, operation, *args, **kwargs):
+        # Cache-only runs never open a session or add an auth request. A pure
+        # readiness token can safely outlive cancellation of the first owner.
+        from .clinical_resources import Acquisition
+
+        result = operation(*args, readiness=self.readiness, **kwargs)
+        if isinstance(result, Acquisition) and result.source in {"network", "shared"}:
+            self.readiness.accept("prq")
+        return result
+
+    def query(self, key, kind, operation, *, refresh=False, binary=False, expected_mrn=None, validator=None, canonical=False):
+        from .clinical_resources import Acquisition
+
         self.check()
         if key in self.seen:
             return self.seen[key]
-        cached = self.store.step(self.mrn, key)
+        cached = None if canonical else self.store.step(self.mrn, key)
         previous_index = cached if kind == "order_index" else None
         if cached and kind == "asset":
             try:
@@ -206,9 +241,15 @@ class PatientCollector:
         try:
             self.state.update(stage="analysis", message=f"{self.member.get('name') or self.mrn} · {kind}")
             value = operation()
+            acquired = value if isinstance(value, Acquisition) else None
+            if acquired:
+                value = acquired.value
             assessment = assess_order_index(value)
             # Persist completed requests even when cancellation arrives during I/O.
-            if binary:
+            if acquired:
+                if not binary:
+                    (validator or validate_patient)(value, expected_mrn or self.mrn)
+            elif binary:
                 value = self.store.save_asset(self.mrn, key, value, self.settings.username)
             else:
                 value = clean(value)
@@ -226,9 +267,9 @@ class PatientCollector:
                     assessment = replace(assessment, item_count=len(value), availability="AVAILABLE" if value else "EMPTY")
                 self.store.save_step(self.mrn, key, kind, value, self.settings.username,
                                      assessment=to_jsonable(assessment))
-            self.state.count(analysis_fetched=1)
+            self.state.count(**{"analysis_cached" if acquired and acquired.source != "network" else "analysis_fetched": 1})
             self.seen[key] = value
-            self.note_assessment(key, kind, to_jsonable(assessment))
+            self.note_assessment(key, kind, acquired.assessment if acquired else to_jsonable(assessment))
             self.state.checkpoint()
             return value
         except (Cancelled, StorageError, AnalysisYield):
@@ -274,9 +315,12 @@ class PatientCollector:
     def examinations(self, terms, *, prioritize_soap=False):
         refresh = self.options["refresh"]
         eye_only = self.options["modules"] == ["cataract"]
-        visits = self.query("visits", "visits", lambda: self.sdk().records.get_visit_cases(self.mrn),
-                            refresh=refresh, validator=validate_visits)
+        resources = getattr(getattr(self.review, "app", None), "resources", None)
+        visits = self.query("visits", "visits", lambda: self.shared(resources.visits, self.mrn,
+            force=refresh or self.options["force"]) if resources else self.sdk().records.get_visit_cases(self.mrn),
+                            refresh=refresh, validator=validate_visits, canonical=bool(resources))
         cases = [model(VisitCase, raw) for raw in visits or []]
+        self.verified_cases = cases
         case_models = {digest(case.identity): case for case in cases}
         case_sources = {key: case.mrn for key, case in case_models.items()}
         self.allowed_mrns = {self.mrn, *case_sources.values()}
@@ -330,9 +374,11 @@ class PatientCollector:
                 continue
             case, key = selected
             self.query("numeric-case:" + key, "numeric",
-                       lambda case=case: self.sdk().records.get_numeric_report(case),
+                       lambda case=case: self.shared(resources.case_numeric, self.mrn, case, force=self.options["force"])
+                       if resources else self.sdk().records.get_numeric_report(case),
                        expected_mrn=case.mrn,
-                       validator=lambda value, _, case=case: validate_case_report(value, self.mrn, case))
+                       validator=lambda value, _, case=case: validate_case_report(value, self.mrn, case),
+                       canonical=bool(resources))
 
         sources = {}
         categories = ("*",) if eye_only else ("*", "OR")
@@ -445,6 +491,8 @@ class PatientCollector:
             return
         from .review import case_key
 
+        resources = getattr(getattr(self.review, "app", None), "resources", None)
+
         candidates = []
         for raw in visits:
             case = model(VisitCase, raw)
@@ -467,7 +515,7 @@ class PatientCollector:
                     and self.store.step(self.mrn, "cataract-soap-empty:" + key)):
                 continue
             cached = self.store.library.get_record(key)
-            if (cached and cached.get("mrn") == self.mrn
+            if (not resources and cached and cached.get("mrn") == self.mrn
                     and not (self.options["force"] or self.options["refresh"])
                     and (self.options.get("mrn") or current_cache(case.visit_date.isoformat(), cached["updated_at"]))):
                 self.store.save_step(self.mrn, "cataract-soap", "cataract_soap",
@@ -476,24 +524,28 @@ class PatientCollector:
                 return
             try:
                 self.state.update(stage="analysis", message=f"{self.member.get('name') or self.mrn} · 最新眼科 SOAP")
-                soap = self.sdk().records.get_soap(case)
-                if (not isinstance(soap, SoapRecord) or soap.case.identity != case.identity
-                        or soap.case.patient_mrn != self.mrn):
+                resources = getattr(getattr(self.review, "app", None), "resources", None)
+                acquired = self.shared(resources.soap, self.mrn, case, self.member,
+                    force=self.options["force"] or self.options["refresh"]) if resources else None
+                soap = None if acquired else self.sdk().records.get_soap(case)
+                if not acquired and (not isinstance(soap, SoapRecord) or soap.case.identity != case.identity
+                                     or soap.case.patient_mrn != self.mrn):
                     raise ValueError("眼科 SOAP 就診識別不符。")
-                if not soap.full_text.strip():
+                if acquired.value["empty"] if acquired else not soap.full_text.strip():
                     self.store.save_step(self.mrn, "cataract-soap-empty:" + key, "cataract_soap",
                                          {"status": "empty", "record_id": key}, self.settings.username)
                     continue
-                record = {"id": key, "mrn": self.mrn, "name": self.member.get("name", ""),
+                record = acquired.value["record"] if acquired else {"id": key, "mrn": self.mrn, "name": self.member.get("name", ""),
                           "date": case.visit_date.isoformat(), "section": case.section_name,
                           "section_code": case.section_code, "case_no": case.case_no,
                           "source_mrn": case.mrn, "case_index": case.index,
                           "doctor": case.doctor_name, "doctor_card": case.doctor_card,
                           **soap_snapshot(soap)}
-                self.store.library.save_record(record, self.settings.username, self.state.data["id"])
+                if not acquired:
+                    self.store.library.save_record(record, self.settings.username, self.state.data["id"])
                 self.store.save_step(self.mrn, "cataract-soap", "cataract_soap",
                                      {"status": "ready", "record_id": key}, self.settings.username)
-                self.state.count(analysis_fetched=1)
+                self.state.count(**{"analysis_cached" if acquired and acquired.source != "network" else "analysis_fetched": 1})
                 self.state.checkpoint()
                 return
             except (Cancelled, StorageError, AuthenticationError, AnalysisYield):
@@ -534,6 +586,10 @@ class PatientCollector:
                 if source_mrn not in self.allowed_mrns:
                     raise ValueError("報告參照病歷號未經就診清單核對。")
                 validate_patient(reference, source_mrn)
+                resources = getattr(getattr(self.review, "app", None), "resources", None)
+                if resources:
+                    return self.shared(resources.branch, self.mrn, cls, method, reference,
+                        verified_cases=self.verified_cases, force=self.options["force"] or changed and not binary)
                 return getattr(self.sdk().orders, method)(model(cls, reference))
             # Retry metadata-only / empty report branches when explicitly refreshing.
             value = self.query(key, "asset" if binary else "report",

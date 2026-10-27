@@ -76,6 +76,9 @@ class Review:
         self.db = WorkbenchStore(app.store.library)
         from .review_history import ReviewHistory
         self.history = ReviewHistory(self)
+        from .review_pages import ReviewPages
+
+        self.pages = ReviewPages(self)
         self.foreground = {}
         self.threads = {}
         self.lock = threading.RLock()
@@ -139,8 +142,9 @@ class Review:
             raise ValueError("轉送 SOAP 來源格式不正確。")
         selected_records = set(record_ids) if record_ids is not None else None
         names = {"retina": "視網膜比較", "cataract": "白內障術前分析", "surgery": "刀表更新"}
+        self.pages.ensure(values.get("review_task_id"))
         with self.app.store.library.batch():
-            result = self.results({"id": values.get("review_task_id")})
+            result = self.pages.selected(values.get("review_task_id"), mrns)
             patients = {patient["mrn"]: patient for patient in result["patients"]}
             if any(mrn not in patients for mrn in mrns):
                 raise ValueError("病人不在此檢閱任務中。")
@@ -674,6 +678,25 @@ class Review:
         cached = self.db.get("profile", mrn, required=False)
         return merge_demographics(cached) if self.valid_profile(cached, mrn) else None
 
+    def read_numeric(self, values):
+        """Read the shared per-case snapshot without creating a network task."""
+        from .clinical_resources import ClinicalResources
+
+        mrn = normalize_mrn(values.get("mrn"))
+        self.extension_scope(values, mrn)
+        record = self.app.library_record(values.get("record_id"))
+        if record["mrn"] != mrn:
+            raise ValueError("病人與就診不符。")
+        case = VisitCase(record.get("source_mrn") or mrn, date.fromisoformat(record["date"]), "O",
+                         record["case_no"], record["section_code"], record["section"],
+                         index=record.get("case_index"), doctor_name=record.get("doctor", ""),
+                         doctor_card=record.get("doctor_card", ""), lookup_mrn=mrn)
+        cached = ClinicalResources.cached_numeric(self.app, mrn, case, allow_stale=True)
+        if not cached:
+            return None
+        return {"id": record["id"], "mrn": mrn, "record_id": record["id"], "status": "ready",
+                "payload": cached.value, "updated_at": cached.saved_at, "cached": True}
+
     def basic_info(self, task):
         """QUY15 is fetched only by an explicitly requested profile task."""
         mrn = task["mrn"]
@@ -711,6 +734,9 @@ class Review:
         return merge_demographics(member, profile)
 
     def cases(self, mrn, force=False):
+        if resources := getattr(self.app, "resources", None):
+            result = resources.visits(mrn, force=force)
+            return [model(VisitCase, case) for case in result.value], result.saved_at
         cached = self.db.get("visits", mrn, required=False)
         if cached and not force and fresh(cached["updated_at"], 300):
             return [model(VisitCase, c) for c in cached["cases"]], cached["updated_at"]
@@ -787,27 +813,35 @@ class Review:
                         found_day = True
                         self.db.item(task["id"], mrn, {**result, "status": "partial", "processing": True})
                         continue
-                    record = None if task["force"] else self.app.store.library.get_record(key)
+                    record = None if task["force"] or getattr(self.app, "resources", None) else self.app.store.library.get_record(key)
                     cache_hit = bool(record and current_cache(day.isoformat(), record["updated_at"]))
                     if not cache_hit:
-                        with self.app.sdk_factory(self.app.settings) as sdk:
-                            soap = sdk.records.get_soap(case)
-                        if (not isinstance(soap, SoapRecord) or soap.case.identity != case.identity
-                                or soap.case.patient_mrn != mrn):
-                            from vghks_sdk import ParseError
+                        if resources := getattr(self.app, "resources", None):
+                            acquired = resources.soap(mrn, case, member, force=task["force"])
+                            if acquired.value["empty"]:
+                                result["attempts"].append({**attempt, "status": "empty", "message": "SOAP 尚無內容"})
+                                continue
+                            record = acquired.value["record"]
+                            cache_hit = acquired.source != "network"
+                        else:
+                            with self.app.sdk_factory(self.app.settings) as sdk:
+                                soap = sdk.records.get_soap(case)
+                            if (not isinstance(soap, SoapRecord) or soap.case.identity != case.identity
+                                    or soap.case.patient_mrn != mrn):
+                                from vghks_sdk import ParseError
 
-                            raise ParseError("SOAP identity mismatch", code="BOT_SOAP_CASE_MISMATCH")
-                        if not soap.full_text.strip():
-                            result["attempts"].append({**attempt, "status": "empty", "message": "SOAP 尚無內容"})
-                            continue
-                        record = {"id": key, "mrn": mrn, "name": member.get("name", ""), "sex": member.get("sex", ""),
-                            "age": member.get("age", ""), "birthday": member.get("birthday", ""),
-                            "birthday_raw": member.get("birthday_raw", ""), "date": day.isoformat(), "section": case.section_name,
-                            "section_code": case.section_code, "case_no": case.case_no,
-                            "source_mrn": case.mrn, "case_index": case.index, "doctor": case.doctor_name,
-                            "doctor_card": case.doctor_card, **soap_snapshot(soap)}
-                        self.app.store.library.save_record(record, self.app.username, task["id"])
-                        record = self.app.store.library.get_record(key)
+                                raise ParseError("SOAP identity mismatch", code="BOT_SOAP_CASE_MISMATCH")
+                            if not soap.full_text.strip():
+                                result["attempts"].append({**attempt, "status": "empty", "message": "SOAP 尚無內容"})
+                                continue
+                            record = {"id": key, "mrn": mrn, "name": member.get("name", ""), "sex": member.get("sex", ""),
+                                "age": member.get("age", ""), "birthday": member.get("birthday", ""),
+                                "birthday_raw": member.get("birthday_raw", ""), "date": day.isoformat(), "section": case.section_name,
+                                "section_code": case.section_code, "case_no": case.case_no,
+                                "source_mrn": case.mrn, "case_index": case.index, "doctor": case.doctor_name,
+                                "doctor_card": case.doctor_card, **soap_snapshot(soap)}
+                            self.app.store.library.save_record(record, self.app.username, task["id"])
+                            record = self.app.store.library.get_record(key)
                     record = {k: v for k, v in record.items() if k not in {"versions", "matches", "manual_tags"}}
                     record.update(case=clean(case), cached=cache_hit,
                                   version=digest([record["soap"], record.get("soap_structure")]),
@@ -850,6 +884,14 @@ class Review:
         else:
             valid = bool(cached and cached.get("registration_schema") == REGISTRATION_SCHEMA
                          and fresh(cached["updated_at"], 60))
+        if kind == "numeric" and (resources := getattr(self.app, "resources", None)):
+            source_mrn = record.get("source_mrn") or mrn
+            case = VisitCase(source_mrn, date.fromisoformat(record["date"]), "O", record["case_no"],
+                             record["section_code"], record["section"], index=record.get("case_index"),
+                             doctor_name=record.get("doctor", ""), doctor_card=record.get("doctor_card", ""), lookup_mrn=mrn)
+            acquired = resources.case_numeric(mrn, case, force=task["force"])
+            return {"id": key, "mrn": mrn, "record_id": key, "status": "ready", "payload": acquired.value,
+                    "cached": acquired.source != "network", "updated_at": acquired.saved_at}
         if valid and not task["force"]:
             return {**cached, "cached": True}
         with self.app.sdk_factory(self.app.settings) as sdk:
@@ -937,7 +979,7 @@ class Review:
             raise ValueError("此任務不是病歷檢閱。")
         return task
 
-    def _registration_sequence(self, member):
+    def _registration_sequence(self, member, *, registrations=None):
         sources = [row for row in member.get("registrations", []) if isinstance(row, dict) and row.get("visit_date")]
         if not sources:
             return ""
@@ -952,7 +994,8 @@ class Review:
             return ""
         if source.get("sequence_no"):
             return str(source["sequence_no"])
-        saved = self.db.get("registrations", member["mrn"], required=False) or {}
+        saved = ((registrations.get(member["mrn"]) or {}) if registrations is not None else
+                 self.db.get("registrations", member["mrn"], required=False) or {})
         numbers = set()
         history = saved.get("payload")
         if not isinstance(history, list):

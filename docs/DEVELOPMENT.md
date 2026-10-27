@@ -105,6 +105,14 @@ Python 虛擬環境的啟動腳本與部分命令列程式含建立時的絕對�
 
 搬回的院內資料快照及不再使用的個人診斷，應確認用途及需要保留的內容後再清除；清理腳本不處理這些資料。自動測試及 EXE 離線自測使用合成 SDK 與獨立暫存資料庫，不讀取專案根目錄的 `VGHKS-bot-data/`；正常啟動若未指定 `--data-dir`，仍會在原始碼或 EXE 同層使用或建立此資料目錄。
 
+## 大型病歷檢閱效能驗收
+
+`python tools/benchmark_review.py --sizes 40 1000 5000 20000` 在一次性合成資料庫量測分頁、末頁定位、單人全部 SOAP、備註及 compact workbench。工具禁止 socket 連線，報告預設寫入忽略的 `.build/review-paging-benchmark.json`；冷次全文搜尋與三次暖態中位數分開記錄，時間不含 HTTP 傳輸與真實瀏覽器繪製。
+
+一般分頁必須只回 40 位摘要、不解碼 SOAP，SQL 數不隨任務總人數逐人增加；單人詳情只讀該病人快照。`tools/browser_bot_fixture.py --review-patients 1000 --local-board` 可啟動兩個合成帳號的完整舊格式檢閱，不呼叫院內服務，供瀏覽器驗收跨頁、完整搜尋、來源收合、備註與閱讀位置。關閉測試伺服器後會清除暫存資料庫。
+
+跨任務共用取得的回歸須以 barrier 製造同時 cache miss，核對實體 SDK／HTTP、前景優先權、各訂閱者取消、force 分流、登入／清除 epoch 與病人／完整就診 selector。快取與合併結果不得改寫 PRQ 病人 context，不得增加 SDK 外層重試；必要身分核對與 SDK 內部退避仍照常發生。
+
 ## 更新 SDK
 
 核對上游版本與變更後，同時修改 `pyproject.toml` 和 `requirements-build.lock.txt` 的完整 commit。`build.ps1` 會核對實際安裝來源；SDK 版本相同但 commit 不符時，只重新安裝 SDK。來源檢查與直接打包也會拒絕不符的 commit，EXE 授權聲明及封裝報告保留完整 commit。

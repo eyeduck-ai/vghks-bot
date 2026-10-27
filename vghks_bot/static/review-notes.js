@@ -1,35 +1,55 @@
 "use strict";
 
 window.ReviewNotesUI=(()=>{
- let taskId="", rows=new Map(), generation=0, clearing=false, clearOperation=null;
+ let taskId="",rows=new Map(),loaded=new Set(),noteCount=0,noteRevision="",generation=0,clearing=false,clearOperation=null;
 
  function syncControls(){
-  $("#reviewClearNotes").disabled=!!root?.read_only||clearing||!taskId||![...rows.values()].some(row=>row.text.trim());
+  $("#reviewClearNotes").disabled=!!root?.read_only||clearing||!taskId||!noteCount&&![...rows.values()].some(row=>row.text.trim());
   $("#reviewExportNotes").disabled=clearing||!taskId;
   for(const field of $$("#reviewNoteInput,#reviewNoteRetry"))field.disabled=!!root?.read_only||clearing;
+  refreshVisible();
  }
 
  function reset(){
   generation++;
   for(const entry of rows.values())clearTimeout(entry.timer);
-  taskId="";rows=new Map();syncControls();
+  taskId="";rows=new Map();loaded=new Set();noteCount=0;noteRevision="";syncControls();
  }
  function current(mrn){return rows.get(mrn);}
  function sequence(mrn){return current(mrn)?.sequence_no||"";}
- async function load(id,{force=false}={}){
+ async function load(id,{force=false,mrns}={}){
   if(clearOperation)await clearOperation;
-  if(id===taskId&&!force)return;
+  const requested=[...new Set((mrns||[...(reviewData?.patients||[]).map(row=>row.mrn),reviewPatient]).filter(Boolean))];
+  const sourceRevision=work?.revisions?.review_note;
+  const refresh=force||sourceRevision!==undefined&&sourceRevision!==noteRevision;
+  const missing=requested.filter(mrn=>!loaded.has(mrn));
+  if(id===taskId&&!refresh&&!missing.length)return;
   if(force&&!await flushAll())return;
-  const revision=++generation, selectedAccount=account;
-  const result=await api("/reviews/notes/read",{task_id:id});
+  const revision=++generation,selectedAccount=account;
+  const query=id!==taskId||refresh?requested:missing;
+  const [result,summary]=await Promise.all([api("/reviews/notes/page",{task_id:id,mrns:query}),api("/reviews/notes/summary",{task_id:id})]);
   if(revision!==generation||selectedAccount!==account||id!==currentReview)return;
-  const previous=rows;
-  rows=new Map(result.patients.map(row=>[row.mrn,{
-   ...row,savedText:row.text,open:previous.get(row.mrn)?.open||false,
-   timer:null,flushPromise:null,error:"",status:row.text?"已儲存":""
-  }]));
-  taskId=id;
-  syncControls();
+  if(result.task_id!==id||summary.task_id!==id||!Array.isArray(result.patients)||result.patients.some(row=>!query.includes(row.mrn)))throw new Error("備註資料範圍不符，請重新開啟檢閱。");
+  if(id!==taskId){for(const row of rows.values())clearTimeout(row.timer);rows=new Map();loaded=new Set();}
+  for(const row of result.patients){
+   const previous=rows.get(row.mrn);
+   if(previous&&previous.text!==previous.savedText){previous.sequence_no=row.sequence_no;loaded.add(row.mrn);continue;}
+   if(previous?.timer)clearTimeout(previous.timer);
+   const entry=previous||{open:false,timer:null,flushPromise:null};
+   Object.assign(entry,row,{savedText:row.text,timer:null,error:"",status:row.text?"已儲存":""});rows.set(row.mrn,entry);loaded.add(row.mrn);
+  }
+  taskId=id;noteCount=summary.note_count||0;noteRevision=sourceRevision;syncControls();
+ }
+ function refreshVisible(){
+  if(taskId!==currentReview)return;
+  const entry=current(reviewPatient),detail=$("#reviewDetail");if(!entry||!detail)return;
+  const input=detail.querySelector("#reviewNoteInput"),button=detail.querySelector("#reviewNoteToggle"),panel=detail.querySelector(".review-note-panel");
+  if(input&&input.value!==entry.text){
+   const focused=document.activeElement===input,start=input.selectionStart,end=input.selectionEnd;input.value=entry.text;
+   if(focused&&Number.isInteger(start)&&Number.isInteger(end))input.setSelectionRange?.(Math.min(start,entry.text.length),Math.min(end,entry.text.length));
+  }
+  if(button){setIcon(button,"noteAdd",entry.text.trim()?"編輯病人備註":"新增病人備註");button.setAttribute("aria-expanded",String(entry.open));}
+  if(panel)panel.hidden=!entry.open;updateStatus(reviewPatient);
  }
  function updateStatus(mrn){
   if(reviewPatient!==mrn)return;
@@ -52,7 +72,7 @@ window.ReviewNotesUI=(()=>{
     try{
      const saved=await api("/reviews/notes/save",{task_id:selectedTask,mrn,text});
      if(selectedTask!==taskId||selectedAccount!==account)return false;
-     entry.savedText=text;entry.updated_at=saved.updated_at;
+     noteCount=Math.max(0,noteCount+Number(!!text.trim())-Number(!!entry.savedText.trim()));entry.savedText=text;entry.updated_at=saved.updated_at;syncControls();
     }catch(error){entry.status="";entry.error=error.message||"請重試";updateStatus(mrn);return false;}
    }
    entry.status="已儲存";entry.error="";updateStatus(mrn);return true;
@@ -77,15 +97,15 @@ window.ReviewNotesUI=(()=>{
    // Settle every existing save before deletion, with editing locked throughout.
    if(!(await Promise.all([...rows.keys()].map(flush))).every(Boolean))throw new Error("有備註尚未儲存，請先重試後再清除。");
    requireCurrent();
-   const notes=await api("/reviews/notes/read",{task_id:selectedTask});requireCurrent();
-   const count=notes.patients.filter(row=>row.text.trim()).length;
+   const notes=await api("/reviews/notes/summary",{task_id:selectedTask});requireCurrent();
+   const count=notes.note_count||0;
    if(!count){say("本次檢閱尚無備註。");return false;}
    const title=reviewData?.task.name||"病歷檢閱";
    if(!await confirmDelete(`清除「${title}」全部 ${count} 位病人的備註？範圍包含未顯示於搜尋或 TAG 篩選結果的病人。`,{title:"批次清除備註",label:"清除全部備註"}))return false;
    requireCurrent();
    const result=await api("/reviews/notes/clear",{task_id:selectedTask});
    if(!stillCurrent())return true;
-   generation++;
+   generation++;noteCount=0;
    for(const row of rows.values()){
     clearTimeout(row.timer);row.timer=null;row.text=row.savedText="";row.updated_at="";row.error="";row.status="";
    }
@@ -93,7 +113,7 @@ window.ReviewNotesUI=(()=>{
    $("#reviewNotesPrint").replaceChildren();$("#reviewNotesPrintButton").disabled=true;
    $("#reviewNotesContext").textContent=`${title} · 0 位有備註的病人`;
    const task=work?.tasks.find(row=>row.id===selectedTask);if(task)task.note_count=0;
-   window.TaskActivityUI?.update();renderReviewDetail();
+   window.TaskActivityUI?.update();refreshVisible();
    say(`已清除 ${result.cleared_count} 位病人的備註。`);return true;
   })().finally(()=>{clearing=false;clearOperation=null;syncControls();});
   return clearOperation;
@@ -101,7 +121,7 @@ window.ReviewNotesUI=(()=>{
  function control(patient){
   let entry=current(patient.mrn);
   if(!entry){entry={mrn:patient.mrn,text:"",savedText:"",open:false,status:"",error:"",timer:null,flushPromise:null};rows.set(patient.mrn,entry);}
-  const button=node("button",undefined,"review-note-toggle");button.type="button";
+  const button=node("button",undefined,"review-note-toggle");button.type="button";button.id="reviewNoteToggle";
   const label=entry.text.trim()?"編輯病人備註":"新增病人備註";
   setIcon(button,"noteAdd",label);
   button.setAttribute("aria-expanded",String(entry.open));
@@ -140,7 +160,10 @@ window.ReviewNotesUI=(()=>{
  }
  async function openPrint(){
   if(!await flushAll())throw new Error("有備註尚未儲存，請先重試後再列印。");
-  const result=await api("/reviews/notes/read",{task_id:currentReview});
+  const selectedTask=currentReview,selectedAccount=account,revision=generation;
+  const result=await api("/reviews/notes/read",{task_id:selectedTask});
+  if(selectedTask!==currentReview||selectedAccount!==account||revision!==generation)return;
+  if(result.task_id!==selectedTask)throw new Error("備註資料範圍不符，請重新開啟檢閱。");
   const patients=result.patients.filter(patient=>patient.text.trim());
   const title=reviewData?.task.name||"病歷檢閱";
   $("#reviewNotesContext").textContent=`${title} · ${patients.length} 位有備註的病人`;

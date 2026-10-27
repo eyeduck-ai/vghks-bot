@@ -9,7 +9,7 @@ async function refreshTests(){
   api:async path=>{calls.push(path);if(path.startsWith("/status?"))return {...status,catalog_revision:revision};if(path==="/workbench?compact=1"){snapshotReads++;return {tasks:[{id:"review",kind:"review",status:"running"}],sets:[]};}throw new Error("unexpected full history read "+path);},
   $:selector=>{if(!nodes.has(selector))nodes.set(selector,{textContent:"",open:false,classList:{toggle(){}}});return nodes.get(selector);},
   categoryOptions(){},renderSets(){},say(){},loadReview:async()=>{loadCount++;},inProgress:new Set(["running","queued","cancelling"]),
-  window:{Approvals:{badge(){}},ToolWorkspace:{watched:()=>[],poll:async()=>{}},TaskActivityUI:{invalidate(){},load:async()=>{}},ReviewHistoryUI:{poll:async()=>{}}}};
+  window:{Approvals:{badge(){}},ToolWorkspace:{watched:()=>[],poll:async()=>{}},TaskActivityUI:{invalidate(){},load:async()=>{}},ReviewHistoryUI:{poll:async()=>{}},ReviewPaging:{poll:async()=>{loadCount++;}}}};
  vm.createContext(context);vm.runInContext(source.slice(start,end),context);
  await context.refresh({light:true});assert.equal(snapshotReads,1,"initial snapshot was not loaded");
  await context.refresh({light:true});assert.equal(snapshotReads,1,"unchanged catalog was reloaded");

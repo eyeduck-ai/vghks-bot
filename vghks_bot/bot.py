@@ -42,6 +42,9 @@ class Workspace(Application):
         self.review = Review(self)
         self._migrate_default_tags()
         self.scans = ScanArchive(self)
+        from .clinical_resources import ClinicalResources
+
+        self.resources = ClinicalResources(self)
         self.diagnostics = Diagnostics(self)
         self.gateway.diagnostic = self.diagnostics.save
         self.gateway.event = self.review.db.sdk_event
@@ -93,6 +96,7 @@ class Workspace(Application):
             self.session_lock.release()
 
     def _login(self, password, info):
+        self.resources.reset()
         settings = replace(self.settings, username=self.username, password=password)
         self.gateway.login(settings)
         account = self.accounts[self.account_id]
@@ -105,6 +109,7 @@ class Workspace(Application):
             self._logout()
 
     def _logout(self):
+        self.resources.reset()
         self.analysis.cataract_queue.pause("帳號已登出，重新登入後可繼續背景抓取。")
         self.gateway.online = False
         with self.lock:
@@ -128,9 +133,14 @@ class Workspace(Application):
             if not self.idle.is_set() or self.analysis.sheet_busy:
                 raise BusyError("請先暫停此帳號的任務，再刪除。")
             ids = values.get("ids")
+            if not isinstance(ids, list) or not 1 <= len(ids) <= 1000 or any(
+                    not isinstance(key, str) or len(key) != 24 or any(c not in "0123456789abcdef" for c in key) for key in ids):
+                raise ValueError("請選擇要刪除的就診紀錄。")
             # Validate and durably mark before removing derived task copies.
-            self.review.db.purge_records(ids)
-            return super().delete_records(values)
+            patients = {record["mrn"] for key in ids if (record := self.store.library.get_record(key, include_versions=False))}
+            with self.resources.invalidation(patients, {"soap"}):
+                self.review.db.purge_records(ids)
+                return super().delete_records(values)
 
     def library_search(self, values):
         values = dict(values)
@@ -149,6 +159,8 @@ class Workspace(Application):
         return {**result, "categories": self.settings.public()["categories"], "stats": self.store.library.stats()}
 
     def request_close(self):
+        if hasattr(self, "resources"):
+            self.resources.close()
         if hasattr(self, "review"):
             with self.review.lock:
                 for state in self.review.foreground.values():
@@ -158,6 +170,7 @@ class Workspace(Application):
     def close(self):
         self.request_close()
         self.gateway.close(wait=True)
+        self.resources.close(wait=True)
         with self.review.lock:
             threads = list(self.review.threads.values())
         for thread in threads:

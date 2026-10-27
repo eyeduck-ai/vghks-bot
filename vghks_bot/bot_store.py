@@ -132,6 +132,9 @@ class WorkbenchStore:
             from .task_data import initialize
 
             initialize(db)
+            from .review_pages import initialize as initialize_review_pages
+
+            initialize_review_pages(db)
         for task in self.task_summaries(statuses=("queued", "running", "cancelling")):
             self.save("task", {**self.get("task", task["id"]), "status": "paused", "message": "上次中斷，待續跑"})
 
@@ -317,6 +320,24 @@ class WorkbenchStore:
         if str((values or {}).get("summary", "")) == "1":
             return tasks
         return self.documents("task", keys=[task["id"] for task in tasks])
+
+    def set_summaries(self, query=""):
+        if not isinstance(query, str) or len(query) > 500:
+            raise ValueError("搜尋字串最多 500 字。")
+        with self.library.read_snapshot() as db:
+            db.create_function("review_casefold", 1, lambda text: str(text or "").casefold(), deterministic=True)
+            clauses, args = ["d.kind='set'"], []
+            if query:
+                clauses.append("(instr(review_casefold(json_extract(d.payload,'$.name')),?)>0 OR EXISTS(SELECT 1 FROM json_each(d.payload,'$.members') j WHERE instr(review_casefold(json_extract(j.value,'$.mrn')),?)>0))")
+                args += [query.casefold(), query.casefold()]
+            rows = db.execute("SELECT d.id,json_extract(d.payload,'$.name') AS name,d.updated_at,"
+                "coalesce(json_array_length(d.payload,'$.members'),0) AS member_count,"
+                "json_extract(d.payload,'$.worklist_module') AS worklist_module,"
+                "(SELECT json_group_array(json_object('mrn',json_extract(value,'$.mrn'),'name',json_extract(value,'$.name'))) FROM (SELECT value FROM json_each(d.payload,'$.members') LIMIT 3)) AS preview "
+                "FROM bot_documents d WHERE " + " AND ".join(clauses) + " ORDER BY d.updated_at DESC,d.id", args).fetchall()
+        return [{"id": row["id"], "name": row["name"], "updated_at": row["updated_at"], "member_count": row["member_count"],
+                 "members_count": row["member_count"], "members_preview": json.loads(row["preview"]), "members_loaded": False,
+                 **({"worklist_module": row["worklist_module"]} if row["worklist_module"] else {})} for row in rows]
 
     def delete(self, kind, key):
         with self.library.connect() as db:

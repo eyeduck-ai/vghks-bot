@@ -1,5 +1,6 @@
 """Launch the real UI with synthetic SDK data, never hospital services."""
 import argparse
+import hashlib
 import json
 import struct
 import sys
@@ -17,7 +18,7 @@ from vghks_bot.bot_server import BotHandler, BotServer  # noqa: E402
 from vghks_bot.databases import DatabaseManager  # noqa: E402
 from vghks_bot.selftest_bot import BotSyntheticSDK  # noqa: E402
 from vghks_bot.selftest_soap import synthetic_soap  # noqa: E402
-from vghks_bot.settings import Settings, today  # noqa: E402
+from vghks_bot.settings import Settings, timestamp, today  # noqa: E402
 from vghks_bot.soap_data import snapshot as soap_snapshot  # noqa: E402
 from vghks_bot.surgery_schedule import EBOARD_URL  # noqa: E402
 
@@ -237,6 +238,38 @@ def seed_ophthalmic(workspace, mrn="TEST001", *, report_gallery=False):
             "order": row, "assets": assets, "texts": [], "details": [], "issues": [], "status": "complete"}, workspace.username)
 
 
+def seed_large_review(workspace, count):
+    """A complete task with one SOAP per patient, created without SDK queries."""
+    from vghks_bot.tags import classification
+
+    task_id = "synthetic-review-" + workspace.username.lower()
+    day, observed = (today() - timedelta(days=1)).isoformat(), timestamp()
+    members = [{"mrn": f"PAGE{i:06}", "name": f"合成病人{i:06}", "sex": "女", "age": "68",
+        "registrations": [{"mrn": f"PAGE{i:06}", "visit_date": day, "section_code": "70",
+            "room": "02", "sequence_no": str(i)}]} for i in range(1, count + 1)]
+    with workspace.store.library.batch():
+        group = workspace.review.db.save("set", {"id": task_id + "-set", "name": f"合成大型檢閱 {count} 位",
+            "members": members})
+        workspace.review.db.save("task", {"id": task_id, "kind": "review", "name": group["name"],
+            "set_id": group["id"], "members": members, "mode": "latest", "cutoff": today().isoformat(),
+            "department_keywords": ["眼科"], "status": "completed", "created_at": observed,
+            "finished_at": observed, "force": False, "message": "合成資料已保存；未連線院內"})
+        for i, member in enumerate(members, 1):
+            key = hashlib.sha256(f"{workspace.username}:{member['mrn']}:{day}".encode()).hexdigest()[:24]
+            record = {"id": key, "mrn": member["mrn"], "name": member["name"], "date": day,
+                "section": "眼科", "section_code": "70", "doctor": "合成醫師", "case_no": f"SYN-{i}",
+                "soap": f"S: SYNTHETIC ONLY {i}\nO: Va 0.4 / 0.6\nA: 合成眼科紀錄\nP: # FU\n"
+                    + ("synthetic local review data " * 300) + f"\n來源帳號 {workspace.username}",
+                "updated_at": observed}
+            workspace.store.library.save_record(record, workspace.username, task_id)
+            record.update(classification(record, workspace.settings))
+            workspace.review.db.item(task_id, member["mrn"], {**member, "status": "reviewed", "records": [record],
+                "checked_at": observed, "index_checked_at": observed, "message": "已取得"})
+            if i % 20 == 1:
+                workspace.review.db.save("review_note", {"id": task_id + ":" + member["mrn"],
+                    "text": f"合成備註 {i}"})
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--followup", action="store_true")
@@ -248,7 +281,10 @@ def main():
     parser.add_argument("--lookup-failures", action="store_true", help="Synthetic expired, missing, forbidden and rejected patient queries")
     parser.add_argument("--registrations", action="store_true", help="Complete registration fields, explicit and unknown attendance")
     parser.add_argument("--sheet-management", action="store_true", help="Synthetic online sheet statistics; no Google calls")
+    parser.add_argument("--review-patients", type=int, default=0, help="Seed a completed synthetic review with 1-20000 patients")
     args = parser.parse_args()
+    if not 0 <= args.review_patients <= 20000:
+        parser.error("--review-patients must be between 0 and 20000")
     with tempfile.TemporaryDirectory(prefix="vghks-bot-synthetic-") as directory:
         sdk = SessionSDK if args.lookup_failures else RegistrationsSDK if args.registrations else DemographicsSDK if args.demographics else FollowUpSDK if args.followup else BotSyntheticSDK
         manager = DatabaseManager(Path(directory), Settings(), sdk)
@@ -256,6 +292,8 @@ def main():
         try:
             for user, label in (("SECOND", "合成帳號乙"), ("TEST", "合成帳號甲")):
                 key = app.login({"username": user, "password": "synthetic", "label": label})["account"]["id"]
+                if args.review_patients:
+                    seed_large_review(app.workspace(key), args.review_patients)
                 if args.sheet_management:
                     sys.path.insert(0, str(ROOT / "tests"))
                     from analysis_fixtures import MemorySheets

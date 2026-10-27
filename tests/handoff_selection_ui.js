@@ -2,12 +2,20 @@
 // Synthetic UI checks: no credentials, patient data or network requests.
 const assert=require("node:assert/strict"),fs=require("node:fs"),vm=require("node:vm");
 function surface(){
- const nodes=new Map();
+ const nodes=new Map();let context;
  class Element{
-  constructor(tag="div"){this.tagName=tag;this.children=[];this.dataset={};this.className="";this.value="";this.disabled=false;this.checked=false;this.scrollTop=0;this.events=new Map();}
+  constructor(tag="div"){this.tagName=tag;this.children=[];this.dataset={};this.className="";this.value="";this.disabled=false;this.checked=false;this.scrollTop=0;this.events=new Map();this.parentElement=null;
+   this.classList={toggle:(name,on)=>{const values=new Set(this.className.split(/\s+/).filter(Boolean));if(on)values.add(name);else values.delete(name);this.className=[...values].join(" ");}};}
   append(...children){for(const child of children){child.parentElement=this;this.children.push(child);}}
-  replaceChildren(...children){this.children=[];this.append(...children);}
+  replaceChildren(...children){for(const child of this.children)child.parentElement=null;this.children=[];this.append(...children);}
+  remove(){if(this.parentElement){this.parentElement.children=this.parentElement.children.filter(child=>child!==this);this.parentElement=null;}}
+  insertBefore(child,anchor){if(child.parentElement)child.remove();const index=anchor?this.children.indexOf(anchor):this.children.length;child.parentElement=this;this.children.splice(index,0,child);}
+  get isConnected(){return this.parentElement?this.parentElement.isConnected:[...nodes.values()].includes(this);}
   all(){return this.children.flatMap(child=>[child,...child.all()]);}
+  contains(value){return value===this||this.all().includes(value);}
+  querySelectorAll(selector){return this.all().filter(child=>selector.startsWith(".")?child.className.split(/\s+/).includes(selector.slice(1)):child.tagName===selector);}
+  querySelector(selector){return this.querySelectorAll(selector)[0]||null;}
+  focus(){context.document.activeElement=this;}
   addEventListener(name,run){this.events.set(name,run);}
   setAttribute(name,value){this[name]=value;}
   emit(name){return this.events.get(name)?.({preventDefault(){}});}
@@ -15,7 +23,7 @@ function surface(){
  const $=selector=>{if(!nodes.has(selector))nodes.set(selector,new Element());return nodes.get(selector);};
  const node=(tag,text,cls)=>{const value=new Element(tag);value.textContent=text||"";value.className=cls||"";return value;};
  const calls=[],opened=[];
- const context={$,node,$$:selector=>[...new Set([...nodes.values()].flatMap(value=>[value,...value.all()]))].filter(value=>value.className.split(/\s+/).includes(selector.slice(1))),
+ context={$,node,$$:selector=>[...new Set([...nodes.values()].flatMap(value=>[value,...value.all()]))].filter(value=>value.className.split(/\s+/).includes(selector.slice(1))),document:{activeElement:null},
   root:{read_only:false},account:"A",currentReview:"R1",reviewPatient:"P1",window:{ReviewNotesUI:{flushAll:async()=>true,sequence:()=>""}},DOMException,
   Option:function(text,value){const option=node("option",text);option.value=value;return option;},
   dialog:()=>{$("#handoffDialog").open=true;},act:run=>run(),refresh:async()=>{},say(){},
@@ -34,8 +42,9 @@ async function run(){
  const {context:c,$,calls,opened,ui}=surface();
  const first={mrn:"P1",name:"合成甲",status:"completed",records:[{id:"SOAP1",date:"2026-10-01"}]};
  const second={mrn:"P2",name:"合成乙",status:"completed",records:[{id:"SOAP2",date:"2026-10-02"}]};
+ const summary=patient=>{const {records,...identity}=patient;return {...identity,dates:records.map(record=>record.date),record_count:records.length,auto_tags:[],manual_tags:[]};};
  $("#reviewPatients").scrollTop=70;$("#reviewDetail").scrollTop=110;
- c.renderReviewPatients([first,second]);
+ c.renderReviewPatients([first,second].map(summary));
  const rows=$("#reviewPatients").children;
  assert.equal(rows[0].tagName,"div");assert.equal(rows[0].children[0].tagName,"label");assert.equal(rows[0].children[1].tagName,"button");
  assert.equal(rows[0].children[1].all().some(value=>value.type==="checkbox"),false,"checkbox nested in patient button");
@@ -43,10 +52,11 @@ async function run(){
  assert.equal(c.reviewPatient,"P1","selection moved review focus");assert.equal($("#reviewDetail").scrollTop,110);
  ui.toggle(first,true);ui.toggle(first,true);ui.toggle({mrn:" "},true);
  assert.equal(ui.patients().length,2,"selection did not deduplicate MRNs");
+ assert.ok(ui.patients().every(patient=>patient.records===undefined),"cross-page selection retained SOAP bodies");
  assert.equal($("#reviewHandoffSelected").disabled,false);
- c.renderReviewPatients([first]);assert.equal(ui.patients().length,2,"filter dropped hidden selection");
+ c.renderReviewPatients([summary(first)]);assert.equal(ui.patients().length,2,"page or filter change dropped hidden selection");
  assert.equal($("#reviewPatients").scrollTop,70,"refresh reset patient rail scroll");
- c.renderReviewPatients([{...first,name:"合成甲更新"},second]);
+ c.renderReviewPatients([{...first,name:"合成甲更新"},second].map(summary));
  assert.equal(ui.patients().find(patient=>patient.mrn==="P1").name,"合成甲更新");
  assert.ok($("#reviewPatients").children.every(row=>row.children[0].children[0].checked),"refresh lost checkbox state");
  ui.scope();assert.equal(ui.patients().length,2,"same review/page return cleared selection");

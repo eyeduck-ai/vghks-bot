@@ -191,6 +191,18 @@ class ReviewHistory:
         return assessment["issues"]
 
     def _index_steps(self, mrn, resource, reference=""):
+        if resource == "visits":
+            values = [self.store.step(mrn, "visits"), self.review.db.get("visits", mrn, required=False)]
+            return [value for value in values if value] or [None]
+        if resource == "numeric":
+            return [self.store.step(mrn, "numeric-history")]
+        if resource == "case_numeric":
+            from .review import case_key
+
+            case = self.case(mrn, reference)
+            values = [self.store.step(mrn, "numeric-case:" + digest(case.identity)),
+                      self.review.db.get("numeric", case_key(case), required=False)]
+            return [value for value in values if value] or [None]
         if resource == "orders":
             return [self.store.step(mrn, "orders-history:" + category) for category in ("*", "OR")]
         if resource == "case_orders":
@@ -255,6 +267,11 @@ class ReviewHistory:
             return sorted(rows, key=lambda row: (row["date"], row["id"]), reverse=True), saved
         if resource in {"case_numeric", "case_orders"}:
             case = self.case(mrn, reference)
+            if resource == "case_numeric" and getattr(self.app, "resources", None):
+                from .clinical_resources import ClinicalResources
+
+                value = ClinicalResources.cached_numeric(self.app, mrn, case, allow_stale=True, allow_partial=True)
+                return (value.value, value.saved_at) if value else (None, "")
             key = ("numeric-case:" if resource == "case_numeric" else "orders-case:") + digest(case.identity)
             step = self.store.step(mrn, key)
             if not step:
@@ -328,8 +345,8 @@ class ReviewHistory:
             return {**self.app.scans.download(mrn, reference), "resource": resource, "reference": reference}
         if not task.get("force"):
             data, _ = self._stored(mrn, resource, reference, cataract=bool(task.get("cohort_id")))
-            complete = resource not in {"orders", "case_orders"} or all(
-                order_index_complete(step) for step in self._index_steps(mrn, resource, reference))
+            steps = self._index_steps(mrn, resource, reference)
+            complete = not steps or all(order_index_complete(step) for step in steps)
             if resource == "order_report":
                 complete = data is not None and result_complete(data, self.store)
             if data is not None and complete:
@@ -376,6 +393,17 @@ class ReviewHistory:
                     "resource": resource, "reference": reference, "issues": failures}
         elif resource in CASE_RESOURCES:
             case = self.case(mrn, reference)
+            resources = getattr(self.app, "resources", None)
+            if resources and resource == "case_numeric":
+                resources.case_numeric(mrn, case, force=task.get("force", False))
+                return {"status": "ready", "cached": False, "resource": resource, "reference": reference}
+            if resources and resource == "visit_soap":
+                if self.review.db.deleted_since(reference, "") and not task.get("force"):
+                    raise ValueError("這份病歷已刪除；如需重新取得，請明確按更新資料。")
+                member = next(m for m in self.review.db.get("task", task["review_task_id"])["members"] if m["mrn"] == mrn)
+                acquired = resources.soap(mrn, case, member, force=task.get("force", False))
+                return {"status": "missing" if acquired.value["empty"] else "ready", "cached": acquired.source != "network",
+                        "resource": resource, "reference": reference}
             with self.app.sdk_factory(self.app.settings) as sdk:
                 if resource == "case_numeric":
                     report = sdk.records.get_numeric_report(case)
@@ -549,6 +577,11 @@ class ReviewHistory:
             if binary:
                 item["status"] = "downloading"
                 publish("attachments")
+            if resources := getattr(self.app, "resources", None):
+                proof = visits if visits is not None else self._visits(mrn)[0] or []
+                return resources.branch(mrn, cls, method, ref, verified_cases=proof,
+                    force=task.get("force", False), fast_attachment=binary).value
+            if binary:
                 with report_attachment_downloads(), self.app.sdk_factory(self.app.settings) as sdk:
                     value = getattr(sdk.orders, method)(model(cls, ref))
             else:

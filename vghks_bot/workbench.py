@@ -48,7 +48,7 @@ def snapshot(work, *, compact=False):
         for task in tasks:
             if task["kind"] == "review":
                 task["note_count"] = counts.get(task["id"], 0)
-        return {"sets": public_document(work.review.db.all("set")), "tasks": public_document(tasks),
+        return {"sets": work.review.db.set_summaries() if compact else public_document(work.review.db.all("set")), "tasks": public_document(tasks),
                 "sdk_sessions": [] if compact else work.review.db.sdk_sessions(),
                 "preferences": work.review.preferences(), "categories": work.settings.public()["categories"],
                 "approval_counts": work.approvals.tracker.counts(),
