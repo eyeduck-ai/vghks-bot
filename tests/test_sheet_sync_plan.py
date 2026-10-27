@@ -3,6 +3,7 @@ import copy
 import unittest
 
 from analysis_fixtures import MemorySheets, book_fixture, literal, proposal, soap_record
+from vghks_sheet_core.calendar import calendar_binding_compatible
 
 from vghks_bot.analysis_store import digest
 from vghks_bot.sheet_identity import (
@@ -96,6 +97,22 @@ class StablePlannerTests(unittest.TestCase):
         client.write(preview["requests"])
         self.assertEqual(verify(client.read(), preview), "verified")
         return preview
+
+    def test_calendar_campus_mrn_tolerance_does_not_relax_clinical_planner_identity(self):
+        for mrn in ("", "99876"):
+            with self.subTest(mrn=mrn):
+                client = setup_book()
+                sheet = client.book["sheets"][0]
+                uid = uid_at(sheet, 5)
+                name = cell_text(sheet["rows"][5][3])
+                sheet["rows"][5][2] = literal(mrn)
+                self.assertTrue(calendar_binding_compatible({"mrn": mrn, "name": name},
+                                {"patient": {"mrn": "0000001", "name": name}}))
+                draft = proposal()
+                draft.update(target_sync_id=uid, selected_fields=["iol"])
+                with self.assertRaisesRegex(ValueError, "不是此病人"):
+                    Planner(client.read(), client.key, [draft]).build()
+                self.assertEqual(cell_text(sheet["rows"][5][2]), mrn)
 
     def test_uid_following_manual_row_drag_preserves_sheet_route_and_arrival(self):
         client = setup_book()

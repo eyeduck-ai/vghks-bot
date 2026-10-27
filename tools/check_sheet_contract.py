@@ -221,6 +221,7 @@ def analyze_book(book):
         except (ValueError, KeyError, TypeError):
             main_errors += 1
     monitor = scan(setup["book"])
+    row_issues = monitor["row_issues"]
     monitored = {f"{item['sheet']}!{item['row'] + 1}": (item["date"], item["hospital"])
                  for item in monitor["patients"] if item["kind"] == "MONTHLY"}
     mismatches = [{"row": ref, "code": "missing_from_main" if ref not in main else "missing_from_monitor" if ref not in monitored else "route_mismatch"}
@@ -232,8 +233,13 @@ def analyze_book(book):
             "parsing": {"match": not mismatches and not main_errors, "monthly_main_count": len(main),
                         "monthly_monitor_count": len(monitored), "mismatch_count": len(mismatches), "mismatches": mismatches,
                         "main_header_error_count": main_errors, "monitor_issue_count": len(monitor["issues"]),
-                        "monitor_issues": monitor_issue_summary(monitor["issues"])},
-            "compatible": not setup["issues"] and not header_errors and not main_errors and not mismatches and not monitor["issues"]}
+                        "monitor_issues": monitor_issue_summary(monitor["issues"]),
+                        "monitor_row_issue_count": len(row_issues),
+                        "monitor_row_issues": [{"code": code, "count": count} for code, count in
+                                               sorted(Counter(issue["code"] if issue["code"] == "invalid_fu_date"
+                                                              else "row_issue" for issue in row_issues).items())]},
+            "compatible": not setup["issues"] and not header_errors and not main_errors and not mismatches
+                          and not monitor["issues"] and not row_issues}
 
 
 def gas_contract(repo):
