@@ -45,6 +45,9 @@ class Workspace(Application):
         from .clinical_resources import ClinicalResources
 
         self.resources = ClinicalResources(self)
+        from .review_preparation import ReviewPreparation
+
+        self.review.preparation = ReviewPreparation(self.review)
         self.diagnostics = Diagnostics(self)
         self.gateway.diagnostic = self.diagnostics.save
         self.gateway.event = self.review.db.sdk_event
@@ -96,6 +99,7 @@ class Workspace(Application):
             self.session_lock.release()
 
     def _login(self, password, info):
+        self.review.preparation.pause("登入狀態已變更，請明確繼續背景準備。", invalidate=True)
         self.resources.reset()
         settings = replace(self.settings, username=self.username, password=password)
         self.gateway.login(settings)
@@ -109,6 +113,7 @@ class Workspace(Application):
             self._logout()
 
     def _logout(self):
+        self.review.preparation.pause("帳號已登出，請重新登入後繼續背景準備。", invalidate=True)
         self.resources.reset()
         self.analysis.cataract_queue.pause("帳號已登出，重新登入後可繼續背景抓取。")
         self.gateway.online = False
@@ -140,7 +145,11 @@ class Workspace(Application):
             patients = {record["mrn"] for key in ids if (record := self.store.library.get_record(key, include_versions=False))}
             with self.resources.invalidation(patients, {"soap"}):
                 self.review.db.purge_records(ids)
-                return super().delete_records(values)
+                result = super().delete_records(values)
+            # Purging task copies hides pending records from the base reader.
+            # Preserve the already verified patient scope for cache fences.
+            self.library_data.soap_cleared(ids, patients)
+            return {**result, "mrns": sorted(patients)}
 
     def library_search(self, values):
         values = dict(values)
@@ -159,6 +168,8 @@ class Workspace(Application):
         return {**result, "categories": self.settings.public()["categories"], "stats": self.store.library.stats()}
 
     def request_close(self):
+        if hasattr(self, "review") and hasattr(self.review, "preparation"):
+            self.review.preparation.close()
         if hasattr(self, "resources"):
             self.resources.close()
         if hasattr(self, "review"):
@@ -171,6 +182,7 @@ class Workspace(Application):
         self.request_close()
         self.gateway.close(wait=True)
         self.resources.close(wait=True)
+        self.review.preparation.close(wait=True)
         with self.review.lock:
             threads = list(self.review.threads.values())
         for thread in threads:

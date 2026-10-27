@@ -7,7 +7,7 @@ function surface(){
  const nodes=new Map();let context;
  class Element{
   constructor(tag="div"){this.tagName=tag;this.children=[];this.dataset={};this.value="";this.textContent="";this.disabled=false;this.hidden=false;this.scrollTop=0;this.scrollLeft=0;this.style={};this.events=new Map();this.className="";this.parentElement=null;
-   this.classList={add:name=>{this.className+=" "+name;},toggle(){}};}
+   this.classList={add:name=>{if(!this.className.split(/\s+/).includes(name))this.className+=" "+name;},remove:name=>{this.className=this.className.split(/\s+/).filter(value=>value!==name).join(" ");},contains:name=>this.className.split(/\s+/).includes(name),toggle:(name,force)=>{const present=this.className.split(/\s+/).includes(name),next=force===undefined?!present:force;this.className=this.className.split(/\s+/).filter(value=>value&&value!==name).concat(next?[name]:[]).join(" ");return next;}};}
   set id(value){this._id=value;nodes.set("#"+value,this);}get id(){return this._id;}
   get firstElementChild(){return this.children[0]||null;}
   get isConnected(){return this.parentElement?this.parentElement.isConnected:[...nodes.values()].includes(this);}
@@ -19,12 +19,13 @@ function surface(){
   replaceChildren(...values){for(const child of this.children)child.parentElement=null;this.children=[];this.append(...values);}
   all(){return this.children.flatMap(child=>[child,...child.all()]);}
   contains(value){return value===this||this.all().includes(value);}
+  closest(selector){for(let current=this;current;current=current.parentElement)if(current.matches(selector))return current;return null;}
   matches(selector){if(selector.startsWith("#"))return this.id===selector.slice(1);if(selector.startsWith("."))return this.className.split(/\s+/).includes(selector.slice(1));if(/^\[data-[\w-]+\]$/.test(selector))return selector.slice(6,-1).replace(/-([a-z])/g,(_,letter)=>letter.toUpperCase()) in this.dataset;return this.tagName===selector;}
   querySelectorAll(selector){return this.all().filter(child=>selector.split(",").some(part=>child.matches(part)));}
   querySelector(selector){return this.querySelectorAll(selector)[0]||null;}
   addEventListener(name,run){this.events.set(name,[...(this.events.get(name)||[]),run]);}
   emit(name){if(name==="click")context.document.activeElement=this;return Promise.all((this.events.get(name)||[]).map(run=>run({preventDefault(){},stopPropagation(){},target:this})));}
-  setAttribute(name,value){this[name]=value;}focus(){context.document.activeElement=this;}
+  setAttribute(name,value){this[name]=value;}getAttribute(name){return this[name]??null;}focus(){context.document.activeElement=this;}
   removeAttribute(name){delete this[name];}scrollIntoView(){}
  }
  const $=selector=>{if(!nodes.has(selector))nodes.set(selector,new Element());return nodes.get(selector);};

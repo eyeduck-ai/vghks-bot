@@ -66,7 +66,7 @@ let reviewHeaderTask="",reviewSetupExpanded=false,reviewHasResults=false;
 let cataractScroll=null;
 
 function say(message,error=false){const n=$(error?"#notice":"#toast");n.textContent=message;n.hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>n.hidden=true,error?9000:3500);}
-function applyReadonly(){window.SheetManagement?.readonly();window.DatabaseUI?.readonly();window.ReviewHandoff?.renderSelection();}
+function applyReadonly(){window.SheetManagement?.readonly();window.DatabaseUI?.readonly();window.ReviewHandoff?.renderSelection();window.ReviewPreparationUI?.poll({});}
 async function act(callback,source=document.activeElement){$("#notice").hidden=true;const revision=epoch,control=source?.tagName==="BUTTON"?source:null;if(control?.dataset.busy)return;const wasDisabled=control?.disabled;if(control){control.dataset.busy="true";control.setAttribute("aria-busy","true");control.disabled=true;}try{return await callback();}catch(e){if(e.name!=="AbortError")say(e.message||"操作未完成",true);}finally{if(control){delete control.dataset.busy;control.removeAttribute("aria-busy");if(control.isConnected&&revision===epoch)control.disabled=!!wasDisabled;}}}
 async function request(path, body, scoped=true){
   const key=account, revision=epoch;
@@ -162,7 +162,7 @@ async function enter(key){
  await readList();showPage("patients");renderSets();applyReadonly();
 }
 function updateReviewLayout(){document.body.classList.toggle("review-result-compact",page==="review"&&!!reviewData&&!reviewSetupExpanded);}
-function showPage(name){if(page==="module"&&name!=="module")captureCataractScroll();page=name;document.body.classList.toggle("module-workspace",name==="module");$("#sidebarAccount").open=false;Choices.sync();window.ToolWorkspace?.visibility(name);window.SurgerySystem?.visibility(name);window.SheetManagement?.visibility(name);for(const section of $$("main>.page"))section.hidden=section.id!==name+"Page";for(const b of $$("[data-page]"))b.classList.toggle("active",b.dataset.page===name);updateReviewLayout();window.WorkspacePoll?.visibility();}
+function showPage(name){if(page==="module"&&name!=="module")captureCataractScroll();page=name;document.body.classList.toggle("module-workspace",name==="module");$("#sidebarAccount").open=false;Choices.sync();window.ToolWorkspace?.visibility(name);window.SurgerySystem?.visibility(name);window.SheetManagement?.visibility(name);for(const section of $$("main>.page"))section.hidden=section.id!==name+"Page";for(const b of $$("[data-page]"))b.classList.toggle("active",b.dataset.page===name);updateReviewLayout();window.WorkspacePoll?.visibility();window.ReviewPaging?.visibility();}
 function toggleReviewPatients(){const hidden=!$("#reviewPatients").hidden;$("#reviewPatients").hidden=hidden;$("#reviewPager").hidden=hidden;$("#reviewLayout").classList.toggle("patients-collapsed",hidden);const toggle=$("#reviewPatientsToggle");toggle.setAttribute("aria-expanded",String(!hidden));toggle.textContent=hidden?"›":"‹";toggle.title=hidden?"展開病人清單":"收合病人清單";toggle.setAttribute("aria-label",toggle.title);}
 async function navigate(name){if(page==="review"&&name!=="review"&&!await window.ReviewNotesUI?.flushAll())throw new Error("有備註尚未儲存，請重試後再切換頁面。");showPage(name);if(name==="library")await loadLibrary();if(name==="tags")await loadTags();if(name==="tasks")await refresh();if(name==="approvals"){await window.Approvals.enter();}if(name==="earnings")await window.Earnings.open();if(name==="surgery")await window.SurgerySystem.open();if(name==="sheetManagement")await window.SheetManagement.open();}
 const draftValue=()=>({start:$("#startDate").value,end:$("#endDate").value,mode:$("#dateMode").value,selected:[...selected],manual,tab:listTab});
@@ -292,6 +292,7 @@ async function refresh({light=false}={}){
   work.tasks=[...tasks.values()].sort((a,b)=>(b.updated_at||"").localeCompare(a.updated_at||""));
  }
  Object.assign(work,{revisions:value.revisions,online:value.online,offline_mode:value.offline_mode,recovery_count:value.recovery_count,connection_error_code:value.connection_error_code,connection_issue:value.connection_issue,password_status:value.password_status,approval_counts:value.approval_counts,approval_monitor_enabled:value.approval_monitor_enabled});
+ window.ReviewPreparationUI?.poll(value);
  window.Approvals?.badge(value.approval_counts,value.approval_monitor_enabled);
  $("#taskCount").textContent=value.active_count||"";
  const activity=JSON.stringify([value.revisions.task,value.revisions.review_note,value.revisions.sdk_event,value.runs]);
@@ -351,33 +352,50 @@ function renderReviewHeader(value){
  if(finished||suppressCompletedReview&&task.status==="completed")$("#reviewProgress").replaceChildren();else JobProgress.show("#reviewProgress",task);
 }
 async function loadReview(options){return window.ReviewPaging.load(options);}
-function renderReviewPatients(values){
+function renderReviewPatients(values,viewport=null){
  const patients=$("#reviewPatients"),scroll=patients.scrollTop,focused=document.activeElement;
  const focusMrn=focused?.dataset?.mrn||focused?.closest?.(".review-patient-row")?.dataset.mrn,focusCheck=focused?.className?.includes("review-handoff-check");
  const existing=new Map([...patients.children].filter(row=>row.dataset.mrn).map(row=>[row.dataset.mrn,row])),rows=[];
+ patients.classList.toggle("is-virtual",!!viewport);
  window.ReviewHandoff?.updatePatients(values);
- if(!reviewPatient)reviewPatient=values[0]?.mrn||"";
+ if(!reviewPatient&&!viewport)reviewPatient=values[0]?.mrn||"";
  for(const p of values){
-  const sequenceNo=p.sequence_no||window.ReviewNotesUI.sequence(p.mrn),dates=p.dates||[...new Set((p.records||[]).map(record=>record.date))];
+  const sequenceNo=p.sequence_no!==undefined?p.sequence_no:window.ReviewNotesUI.sequence(p.mrn),dates=p.dates||[...new Set((p.records||[]).map(record=>record.date))];
   const tags=p.auto_tags||[...new Map((p.records||[]).flatMap(record=>record.matches||[]).map(tag=>[tag.category,tag])).values()];
-  const signature=JSON.stringify([p.mrn,p.name,p.status,sequenceNo,dates,tags,p.manual_tags,root.read_only]);
+  const signature=JSON.stringify([p.mrn,p.name,p.status,sequenceNo,dates,tags,p.manual_tags,root.read_only,!!viewport]);
   let row=existing.get(p.mrn);
   if(!row||row.dataset.reviewSignature!==signature){
    row=node("div",undefined,"review-patient-row");row.dataset.mrn=p.mrn;row.dataset.reviewSignature=signature;
    const control=node("label",undefined,"review-patient-check"),checkbox=check(`勾選 ${p.name||p.mrn}（${p.mrn}）`,!!window.ReviewHandoff?.has(p.mrn),checked=>window.ReviewHandoff?.toggle(p,checked));
    checkbox.className="review-handoff-check";checkbox.dataset.mrn=p.mrn;checkbox.disabled=!!root.read_only;control.append(checkbox);
    const button=btn("",()=>selectReviewPatient(p.mrn),"patient-select"),heading=node("span",undefined,"review-patient-top"),badge=node("span",sequenceNo||"未提供","review-sequence");
-   button.dataset.mrn=p.mrn;badge.title="掛號序號："+(sequenceNo||"未提供");heading.append(node("strong",p.name||p.mrn),badge);
+   button.dataset.mrn=p.mrn;button.title=[p.name||p.mrn,p.mrn,"掛號序號："+(sequenceNo||"未提供"),labels[p.status]||p.status,...dates,...tags.map(tag=>tag.category_name||tag.category),...(p.manual_tags||[]).map(tag=>tag.name||tag.category_name||tag.category||tag)].join(" · ");button.setAttribute("aria-label",button.title);badge.title="掛號序號："+(sequenceNo||"未提供");const name=node("strong",p.name||p.mrn);name.title=p.name||p.mrn;heading.append(name,badge);
    button.append(heading,node("span",`${p.mrn} · ${labels[p.status]||p.status}`,"caption"));
-   if(dates.length)button.append(node("span",dates.join("、"),"caption"));button.append(badges(tags),badges(p.manual_tags,true));row.append(control,button);
+   if(dates.length){const datesLabel=node("span",dates.join("、"),"caption review-patient-dates");datesLabel.title=dates.join("、");button.append(datesLabel);}
+   if(viewport){const tagLine=node("span",undefined,"review-patient-tags"),all=[...tags,...(p.manual_tags||[])];tagLine.append(badges(tags.slice(0,2)),badges((p.manual_tags||[]).slice(0,Math.max(0,2-tags.length)),true));if(all.length>2)tagLine.append(node("span","+"+(all.length-2),"caption"));tagLine.title=button.title;button.append(tagLine);}
+   else button.append(badges(tags),badges(p.manual_tags,true));row.append(control,button);
   }
   row.querySelector(".patient-select").classList.toggle("active",p.mrn===reviewPatient);
   const checkbox=row.querySelector(".review-handoff-check");checkbox.checked=!!window.ReviewHandoff?.has(p.mrn);checkbox.disabled=!!root.read_only;
+  if(viewport){const index=viewport.positions[p.mrn];row.dataset.reviewIndex=String(index);row.style.position="";row.style.top="";row.style.height=viewport.rowHeight+"px";row.setAttribute("role","listitem");row.setAttribute("aria-posinset",String(index+1));row.setAttribute("aria-setsize",String(viewport.total));}
   rows.push(row);
+ }
+ if(viewport){
+  const positionRows=new Map(rows.map(row=>[Number(row.dataset.reviewIndex),row])),slots=[];
+  const spacer=(kind,height)=>{let value=patients.querySelector(".review-spacer-"+kind);if(!value){value=node("div",undefined,"review-list-spacer review-spacer-"+kind);value.setAttribute("aria-hidden","true");}value.style.height=Math.max(0,height)+"px";return value;};
+  slots.push(spacer("before",viewport.start*viewport.rowHeight));
+  for(let index=viewport.start;index<viewport.end;index++){
+   let row=positionRows.get(index);
+   if(!row){row=node("div","載入本機病人資料…","review-patient-placeholder caption");row.style.height=viewport.rowHeight+"px";row.setAttribute("aria-hidden","true");}
+   slots.push(row);
+  }
+  slots.push(spacer("after",(viewport.total-viewport.end)*viewport.rowHeight));
+  if(viewport.pin&&Number.isInteger(viewport.pin.index)&&existing.has(viewport.pin.mrn)){const pinned=existing.get(viewport.pin.mrn);pinned.style.position="absolute";pinned.style.top=viewport.pin.index*viewport.rowHeight+"px";slots.push(pinned);}
+  rows.splice(0,rows.length,...slots);
  }
  for(const child of [...patients.children])if(!rows.includes(child))child.remove();
  for(const [index,row] of rows.entries())if(patients.children[index]!==row){const anchor=patients.children[index]||null;if(patients.moveBefore&&row.isConnected)patients.moveBefore(row,anchor);else patients.insertBefore(row,anchor);}
- if(!rows.length)patients.append(empty("沒有符合的病人。"));patients.scrollTop=scroll;
+ if(!values.length&&(!viewport||!viewport.total))patients.append(empty("沒有符合的病人。"));patients.scrollTop=scroll;
  if(focusMrn&&!patients.contains(focused))rows.find(row=>row.dataset.mrn===focusMrn)?.querySelector(focusCheck?".review-handoff-check":".patient-select")?.focus({preventScroll:true});
 }
 function soapNode(record){return SOAPView.create(record);}
@@ -812,6 +830,7 @@ $("#saveConcurrency").addEventListener("click",()=>act(async()=>{const r=await r
 window.addEventListener("message",e=>{if(e.origin!==location.origin||!["moduleFrame","cataractFrame"].some(id=>e.source===$("#"+id).contentWindow))return;window.JobProgress.receive(e,[$("#moduleFrame"),$("#cataractFrame")],account,root.read_only);if(e.data?.type==="bot:task-started")act(refresh);else if(page==="module"&&e.source===activeModuleFrame().contentWindow){if(e.data?.type==="bot:compare-open")window.FileCompare?.open();else window.FileCompare?.receive(e,activeModuleFrame(),account);}});
 window.addEventListener("jobprogressaction",event=>act(async()=>{
  const {action,run}=event.detail;if(run._owner!==account)return;
+ if(run.kind==="review_preparation"){if(action!=="debug"&&root.read_only)return;await window.ReviewPreparationUI?.progressAction(run,action);await refresh({light:true});return;}
  if(action==="debug"){await openLookupDiagnostics(run.id);return;}
  if(root.read_only)return;
  if(action==="stop")await api(run.source==="bot"?"/tasks/stop":"/stop",{id:run.id});

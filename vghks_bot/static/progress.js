@@ -19,7 +19,7 @@ window.JobProgress = (() => {
   });
   let owner=scopedAccount||"local",card=null,cardSignature="",minimized=true,expanded=false,serial=0,readOnly=false;
   const dialogStack=[];
-  const taskNames={list:"門診清單",review:"病歷檢閱",resolve:"病人基本資料",profile:"病人基本資料",history:"歷史資料",analysis:"進階工具",surgery_schedule:"手術排程",approval_sync:"審查同步",approval_case:"審查明細",earnings_capture:"薪資業績",earnings_options:"薪資期別"};
+  const taskNames={list:"門診清單",review:"病歷檢閱",review_preparation:"背景準備病歷",resolve:"病人基本資料",profile:"病人基本資料",history:"歷史資料",analysis:"進階工具",surgery_schedule:"手術排程",approval_sync:"審查同步",approval_case:"審查明細",earnings_capture:"薪資業績",earnings_options:"薪資期別"};
   function publish(run,account=owner){
     if(!run?.id||!account)return;
     prune();

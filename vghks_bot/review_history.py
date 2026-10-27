@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import uuid
+from contextlib import nullcontext
 from datetime import timedelta
 
 from vghks_sdk import AuthenticationError, SoapRecord, VisitCase
@@ -38,6 +39,10 @@ NAMES = {"numeric": "歷年數值類報告", "orders": "歷年醫囑清單", "vi
          "case_numeric": "該次數值類報告", "case_orders": "該次醫囑清單",
          "order_report": "醫囑報告內容", "visit_soap": "歷史 SOAP",
          "scans": "歷年掃描病歷", "case_scans": "該次掃描病歷", "scan_asset": "掃描病歷 PDF"}
+
+
+class PreparationLimit(Exception):
+    pass
 
 
 class ReviewHistory:
@@ -355,11 +360,17 @@ class ReviewHistory:
             cases, _ = self.review.cases(mrn, force=True)
             self.store.save_step(mrn, "visits", "visits", clean(cases), self.app.username)
         elif resource == "numeric":
+            from vghks_sdk import assess_data
+
             with self.app.sdk_factory(self.app.settings) as sdk:
                 report = sdk.records.get_numeric_history(mrn, NumericHistoryFilter())
             if report.mrn != mrn:
                 raise ValueError("歷年數值報告病人不符。")
-            self.store.save_step(mrn, "numeric-history", "numeric", clean(report), self.app.username)
+            assessment = clean(assess_data(report))
+            with state.commit_guard() if state and hasattr(state, "commit_guard") else nullcontext():
+                self.store.save_step(mrn, "numeric-history", "numeric", clean(report), self.app.username, assessment=assessment)
+            if assessment.get("complete") is False:
+                return {"status": "partial", "cached": False, "resource": resource, "reference": reference}
         elif resource == "orders":
             if not self._visits(mrn)[0]:
                 self.review.cases(mrn)
@@ -381,9 +392,11 @@ class ReviewHistory:
                     except Exception as exc:
                         if should_pause(exc):
                             raise
-                        issues = self._save_order_index(mrn, key, [], issues=[to_jsonable(error_info(exc))])
+                        with state.commit_guard() if state and hasattr(state, "commit_guard") else nullcontext():
+                            issues = self._save_order_index(mrn, key, [], issues=[to_jsonable(error_info(exc))])
                     else:
-                        issues = self._save_order_index(mrn, key, orders)
+                        with state.commit_guard() if state and hasattr(state, "commit_guard") else nullcontext():
+                            issues = self._save_order_index(mrn, key, orders)
                     failures.extend(issues)
                     # Publish each saved category, so the browser can display it
                     # while the remaining category is still being fetched.
@@ -433,13 +446,14 @@ class ReviewHistory:
                     self.app.store.library.save_record(record, self.app.username, task["id"])
         else:
             result = self._collect_order_report(task, state)
-            return {"status": result["status"], "cached": False, "resource": resource, "reference": reference}
+            return {"status": result["status"], "cached": False, "resource": resource, "reference": reference,
+                    **{key: result[key] for key in ("preparation_complete", "limited", "attachment_count") if key in result}}
         return {"status": "ready", "cached": False, "resource": resource, "reference": reference}
 
     def _publish_order_report(self, task, value, state=None, *, start=False):
         """Publish only durable files, merging late checkpoints under one transaction."""
         mrn, key = task["mrn"], "history-order:" + task["reference"]
-        with self.app.store.library.batch():
+        with state.commit_guard() if state and hasattr(state, "commit_guard") else nullcontext(), self.app.store.library.batch():
             saved = self.store.step(mrn, key)
             previous = saved["payload"] if saved else {}
             owns = start or previous.get("processing_run") in {None, value["processing_run"]}
@@ -498,13 +512,21 @@ class ReviewHistory:
             value["data_revision"] = snapshot["data_revision"]
             if state:
                 task["progress"] = copy.deepcopy(value["progress"])
-                self.review.db.update_task(task["id"], {"progress": value["progress"],
-                    "message": value["progress"]["stage"]})
+                if not hasattr(state, "preparation_report"):
+                    self.review.db.update_task(task["id"], {"progress": value["progress"],
+                        "message": value["progress"]["stage"]})
         if state:
-            state.update(progress=value["progress"], message=value["progress"]["stage"])
+            if hasattr(state, "preparation_report"):
+                state.preparation_report(value["progress"]["stage"])
+            else:
+                state.update(progress=value["progress"], message=value["progress"]["stage"])
 
     def _collect_order_report(self, task, state=None):
         mrn, reference = task["mrn"], task["reference"]
+        limits = task.get("preparation_limits")
+        attachment_limit = limits["max_attachments"] if limits and limits["attachments"] else 0
+        attachment_count = 0
+        limited = False
         if task.get("cohort_id"):
             sources, visits = self.app.analysis.cataract_sources(mrn)
             variants = self._groups(mrn, sources, visits=visits).get(reference)
@@ -558,6 +580,7 @@ class ReviewHistory:
             self._publish_order_report(task, result, state, start=start)
 
         def fetch(cls, method, ref, *, binary=False, item=None):
+            nonlocal attachment_count
             check_cancel()
             source = ref.get("mrn", "")
             if source not in allowed:
@@ -575,6 +598,12 @@ class ReviewHistory:
                     except (KeyError, ValueError):
                         pass
             if binary:
+                if limits:
+                    admitted = (state.preparation_attachment() if state and hasattr(state, "preparation_attachment")
+                                else attachment_count < attachment_limit)
+                    if not admitted:
+                        raise PreparationLimit()
+                    attachment_count += 1
                 item["status"] = "downloading"
                 publish("attachments")
             if resources := getattr(self.app, "resources", None):
@@ -598,6 +627,7 @@ class ReviewHistory:
             return payload
 
         def collect(cls, method, refs, accept, *, binary=False):
+            nonlocal limited
             for ref in unique_refs(refs):
                 check_cancel()
                 item = None
@@ -615,6 +645,9 @@ class ReviewHistory:
                             accept(value)
                 except (Cancelled, AuthenticationError, StorageError):
                     raise
+                except PreparationLimit:
+                    limited = True
+                    break
                 except Exception as exc:
                     if should_pause(exc):
                         raise
@@ -649,7 +682,10 @@ class ReviewHistory:
         try:
             collect(OrderDetailRef, "get_order_detail", details, accept_detail)
             collect(OrderReportRef, "get_order_report", reports, accept_report)
-            collect(PacsStudyRef, "get_pacs_study", studies, lambda study: images.extend(study.get("images") or []))
+            if not limits or limits["attachments"] and attachment_limit > 0:
+                collect(PacsStudyRef, "get_pacs_study", studies, lambda study: images.extend(study.get("images") or []))
+            elif studies:
+                limited = True
             discovered = True
             publish("attachments")
             collect(PdfAttachmentRef, "download_pdf", pdfs, None, binary=True)
@@ -664,6 +700,12 @@ class ReviewHistory:
             publish("paused")
             raise
         result["processing"] = False
+        if limits and limited:
+            result["issues"].append({"branch": "preparation", "code": "BOT_PREPARATION_LIMIT",
+                                     "message": "已準備選定內容；其餘附件於開啟報告時補查。"})
+        if limits:
+            result.update(limited=limited, attachment_count=attachment_count,
+                preparation_complete=not any(issue.get("code") != "BOT_PREPARATION_LIMIT" for issue in result["issues"]))
         if result["issues"]:
             result["status"] = "partial"
         elif not (result["details"] or result["texts"] or result["assets"]):

@@ -6,6 +6,7 @@ import hashlib
 import threading
 import uuid
 from collections import defaultdict
+from contextlib import nullcontext
 from datetime import date
 
 from vghks_sdk import SoapRecord, VisitCase
@@ -542,6 +543,9 @@ class Review:
                         stage=task.get("message", "") if stage is None else stage)
 
     def report(self, state, task, *, stage):
+        if hasattr(state, "preparation_report"):
+            state.preparation_report(stage)
+            return
         value = self.task_progress(task, stage=stage)
         self.db.update_task(task["id"], {"progress": value, "message": stage})
         state.update(progress=value, message=stage)
@@ -697,7 +701,7 @@ class Review:
         return {"id": record["id"], "mrn": mrn, "record_id": record["id"], "status": "ready",
                 "payload": cached.value, "updated_at": cached.saved_at, "cached": True}
 
-    def basic_info(self, task):
+    def basic_info(self, task, state=None):
         """QUY15 is fetched only by an explicitly requested profile task."""
         mrn = task["mrn"]
         cached = self.db.get("profile", mrn, required=False)
@@ -715,7 +719,7 @@ class Review:
             "mrn", "name", "birthday", "sex", "age", "national_id", "mobile_phone", "home_phone", "phone", "contact")}
         # Save only the displayed profile fields, never QUY15's raw HTML or
         # unrelated inpatient encounter details. Empty fields preserve prior data.
-        with self.app.store.library.batch():
+        with state.commit_guard() if state and hasattr(state, "commit_guard") else nullcontext(), self.app.store.library.batch():
             latest = self.db.get("profile", mrn, required=False)
             if not self.valid_profile(latest, mrn):
                 latest = {}
@@ -763,8 +767,10 @@ class Review:
             cases, checked = self.cases(mrn, task["force"] or task["refresh"] or mrn in task.get("recheck_mrns", []))
         result["index_cases"] = clean(cases)
         result["index_checked_at"] = checked
-        self.db.item(task["id"], mrn, {**result, "status": "partial", "processing": True})
+        self._patient_checkpoint(state, task, mrn, {**result, "records": checkpoint.get("records", []),
+            "attempts": checkpoint.get("attempts", [])} if task.get("preparation") else result)
         adopted = {r["id"]: r for r in checkpoint.get("records", [])}
+        attempted = {a["record_id"]: a for a in checkpoint.get("attempts", []) if a.get("status") == "empty"} if task.get("preparation") else {}
         keyword = task.get("department_keyword")
         keywords = task.get("department_keywords")
         needles = keywords if keywords is not None else [keyword] if keyword is not None else []
@@ -802,6 +808,9 @@ class Review:
                 state.check_cancel()
                 key = case_key(case)
                 attempt = {"date": day.isoformat(), "case_no": case.case_no, "section": case.section_name, "record_id": key}
+                if key in attempted:
+                    result["attempts"].append(attempted[key])
+                    continue
                 deleted_after = "" if task.get("base_task_id") and not task["force"] else task["created_at"]
                 if self.db.deleted_since(key, deleted_after):
                     result["attempts"].append({**attempt, "status": "deleted"})
@@ -811,7 +820,7 @@ class Review:
                         result["records"].append(adopted[key])
                         result["attempts"].append({**attempt, "status": "ready"})
                         found_day = True
-                        self.db.item(task["id"], mrn, {**result, "status": "partial", "processing": True})
+                        self._patient_checkpoint(state, task, mrn, result)
                         continue
                     record = None if task["force"] or getattr(self.app, "resources", None) else self.app.store.library.get_record(key)
                     cache_hit = bool(record and current_cache(day.isoformat(), record["updated_at"]))
@@ -820,6 +829,8 @@ class Review:
                             acquired = resources.soap(mrn, case, member, force=task["force"])
                             if acquired.value["empty"]:
                                 result["attempts"].append({**attempt, "status": "empty", "message": "SOAP 尚無內容"})
+                                if task.get("preparation"):
+                                    self._patient_checkpoint(state, task, mrn, result)
                                 continue
                             record = acquired.value["record"]
                             cache_hit = acquired.source != "network"
@@ -850,7 +861,7 @@ class Review:
                     result["attempts"].append({**attempt, "status": "ready"})
                     found_day = True
                     # Checkpoint after each SOAP, including all same-day entries.
-                    self.db.item(task["id"], mrn, {**result, "status": "partial", "processing": True})
+                    self._patient_checkpoint(state, task, mrn, result)
                 except (Cancelled, StorageError):
                     raise
                 except Exception as exc:
@@ -869,6 +880,10 @@ class Review:
         result["fallback"] = bool(result["records"] and result["records"][0]["date"] < max(by_day).isoformat())
         result["message"] = "較新 SOAP 未取得，顯示上一份可讀病歷" if result["fallback"] else "" if result["records"] else "有就診，但未取得非空 SOAP"
         return result
+
+    def _patient_checkpoint(self, state, task, mrn, result):
+        with state.commit_guard() if hasattr(state, "commit_guard") else nullcontext():
+            self.db.item(task["id"], mrn, {**result, "status": "partial", "processing": True})
 
     def extension(self, task):
         mrn, kind = task["mrn"], task["kind"]

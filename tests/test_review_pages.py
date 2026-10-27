@@ -6,6 +6,7 @@ import sqlite3
 import tempfile
 import threading
 import unittest
+from datetime import date
 from pathlib import Path
 from unittest.mock import patch
 
@@ -144,6 +145,228 @@ class ReviewPageTests(unittest.TestCase):
         self.assertNotIn("mobile_phone", profile["patients"][0])
         self.assertEqual(self.pages.patient({"id": "pages", "mrn": "PAGE0000"})["patient"]["mobile_phone"], "0900000000")
 
+    def test_continuous_windows_and_nearby_prefetch_are_bounded_local_reads(self):
+        self.seed(205)
+        partial = self.store.item("pages", "PAGE0040")
+        self.store.item("pages", "PAGE0040", {**partial, "status": "partial", "processing": True})
+        with self.work.store.library.connect() as db:
+            db.execute("DELETE FROM bot_task_items WHERE task_id='pages' AND key='PAGE0041'")
+        decoded, sql, original_loads, original_connect = [], [], json.loads, sqlite3.connect
+
+        def loads(value, *args, **kwargs):
+            if isinstance(value, str) and '"soap"' in value:
+                decoded.append(original_loads(value))
+            return original_loads(value, *args, **kwargs)
+
+        def connect(*args, **kwargs):
+            db = original_connect(*args, **kwargs)
+            db.set_trace_callback(sql.append)
+            return db
+
+        sdk_calls, windows = list(BotSyntheticSDK.calls), []
+        with patch.object(self.work, "sdk_factory", side_effect=AssertionError("local read opened SDK")), \
+                patch("json.loads", side_effect=loads), patch("vghks_bot.library.sqlite3.connect", side_effect=connect):
+            for offset in (0, 40, 80):
+                sql.clear()
+                window = self.pages.page({"id": "pages", "offset": offset, "limit": 40,
+                                          "selected_mrn": "PAGE0204", "local_only": True})
+                self.assertEqual((window["offset"], len(window["patients"])), (offset, 40))
+                self.assertLessEqual(len(sql), 22)
+                self.assertLess(len(json.dumps(window)), 80000)
+                windows.append(window)
+            self.assertFalse(decoded, "scrolling summaries decoded SOAP")
+            prefetched = [self.pages.patient({"id": "pages", "mrn": mrn, "prefetch": True, "local_only": True})
+                          for mrn in ("PAGE0039", "PAGE0040", "PAGE0041")]
+            self.assertEqual([value["prefetchable"] for value in prefetched], [True, False, False])
+            self.assertEqual([value["patient"] for value in prefetched[1:]], [None, None])
+            self.assertEqual([patient["mrn"] for patient in decoded], ["PAGE0039"])
+            foreground = self.pages.patient({"id": "pages", "mrn": "PAGE0040", "local_only": False})
+            self.assertEqual(foreground["patient"]["status"], "partial")
+            self.assertTrue(foreground["patient"]["records"])
+            self.assertNotIn("prefetchable", foreground)
+        self.assertEqual(BotSyntheticSDK.calls, sdk_calls)
+        mrns = [patient["mrn"] for window in windows for patient in window["patients"]]
+        self.assertEqual(mrns, [f"PAGE{i:04}" for i in range(120)])
+        self.assertEqual(len({window["collection_revision"] for window in windows}), 1)
+        self.assertEqual(len({window["selected_revision"] for window in windows}), 1)
+        self.assertTrue(all(window["selected_navigation"]["position"] == 204 for window in windows))
+        for field in ("prefetch", "local_only"):
+            for invalid in (None, 0, 1, "true", "false", []):
+                for method, values in ((self.pages.page, {"id": "pages"}),
+                                       (self.pages.patient, {"id": "pages", "mrn": "PAGE0000"})):
+                    with self.assertRaisesRegex(ValueError, "布林"):
+                        method({**values, field: invalid})
+
+    def test_same_mrn_prefetch_keeps_task_snapshot_and_account_scope(self):
+        self.seed(3)
+        other_task = self.seed(3, "other-task")
+        other_patient = self.store.item("other-task", "PAGE0001")
+        other_patient["records"][0]["soap"] = "other-task-only evidence"
+        self.store.item("other-task", "PAGE0001", other_patient)
+        other_task["members"].append({"mrn": "PAGE9999", "name": "other task only"})
+        self.store.save("task", other_task)
+        self.store.item("other-task", "PAGE9999", {"mrn": "PAGE9999", "status": "ready", "records": []})
+        values = {"mrn": "PAGE0001", "prefetch": True, "local_only": True}
+        first = self.pages.patient({"id": "pages", **values})
+        second = self.pages.patient({"id": "other-task", **values})
+        self.assertTrue(first["prefetchable"] and second["prefetchable"])
+        self.assertNotEqual(first["revision"], second["revision"])
+        self.assertNotEqual(first["patient"]["records"][0]["soap"], second["patient"]["records"][0]["soap"])
+        self.assertEqual(self.pages.page({"id": "pages", "q": "other-task-only"})["total"], 0)
+        self.assertEqual(self.pages.page({"id": "other-task", "q": "other-task-only"})["total"], 1)
+        for method, request in ((self.pages.patient, {"id": "pages", "mrn": "PAGE9999", "prefetch": True}),
+                                (self.pages.page, {"id": "pages", "selected_mrn": "PAGE9999"}),
+                                (self.pages.notes, {"task_id": "pages", "mrns": ["PAGE9999"]})):
+            with self.assertRaisesRegex(ValueError, "不在此檢閱任務"):
+                method(request)
+        self.assertFalse(self.pages.page({"id": "pages", "focus_mrn": "PAGE9999"})["focus_found"])
+        self.assertFalse(self.pages.patient({"id": "other-task", "mrn": "PAGE9999", "prefetch": True})["prefetchable"])
+        other_account = self.app.login({"username": "SECOND", "password": "synthetic"})["account"]["id"]
+        foreign = self.app.workspace(other_account)
+        with self.assertRaises(ValueError):
+            foreign.review.pages.patient({"id": "pages", **values})
+        foreign.review.db.save("task", {"id": "pages", "kind": "review", "status": "completed",
+                                       "account_id": other_account, "members": [{"mrn": "PAGE0001"}]})
+        foreign.review.db.item("pages", "PAGE0001", {"mrn": "PAGE0001", "status": "ready",
+                             "records": [{"id": "foreign-record", "mrn": "PAGE0001", "soap": "other-account-only"}]})
+        self.assertEqual(foreign.review.pages.patient({"id": "pages", **values})["patient"]["records"][0]["soap"], "other-account-only")
+        self.assertEqual(self.pages.patient({"id": "pages", **values}), first)
+
+    def test_same_second_pending_partial_ready_updates_invalidate_local_prefetch(self):
+        with patch("vghks_bot.bot_store.timestamp", return_value="2026-10-27 17:00:00"):
+            self.seed(85)
+            original = self.store.item("pages", "PAGE0041")
+            with self.work.store.library.connect() as db:
+                db.execute("DELETE FROM bot_task_items WHERE task_id='pages' AND key='PAGE0041'")
+            values = {"id": "pages", "offset": 40, "selected_mrn": "PAGE0041"}
+            pending = self.pages.page(values)
+            skipped = self.pages.patient({"id": "pages", "mrn": "PAGE0041", "prefetch": True, "local_only": True})
+            self.assertFalse(skipped["prefetchable"])
+            self.assertEqual(skipped["revision"], pending["selected_revision"])
+            self.assertEqual(self.pages.page({"id": "pages", "q": "checkpoint-needle"})["total"], 0)
+            original["records"][0]["soap"] = "checkpoint-needle partial"
+            self.store.item("pages", "PAGE0041", {**original, "status": "partial", "processing": True})
+            partial = self.pages.page(values)
+            foreground = self.pages.patient({"id": "pages", "mrn": "PAGE0041", "local_only": True})
+            self.assertEqual(foreground["patient"]["records"][0]["soap"], "checkpoint-needle partial")
+            self.assertFalse(self.pages.patient({"id": "pages", "mrn": "PAGE0041", "prefetch": True})["prefetchable"])
+            self.assertEqual(self.pages.page({"id": "pages", "q": "checkpoint-needle"})["total"], 1)
+            original["records"].append({**original["records"][0], "id": "second-snapshot", "soap": "second complete snapshot"})
+            self.store.item("pages", "PAGE0041", {**original, "status": "ready", "processing": False})
+            complete = self.pages.page(values)
+            prefetched = self.pages.patient({"id": "pages", "mrn": "PAGE0041", "prefetch": True, "local_only": True})
+        self.assertEqual(len({value["task"]["updated_at"] for value in (pending, partial, complete)}), 1)
+        self.assertEqual(len({value["collection_revision"] for value in (pending, partial, complete)}), 3)
+        self.assertEqual(len({value["selected_revision"] for value in (pending, partial, complete)}), 3)
+        self.assertEqual(prefetched["revision"], complete["selected_revision"])
+        self.assertTrue(prefetched["prefetchable"])
+        self.assertEqual(len(prefetched["patient"]["records"]), 2, "a patient must return every SOAP snapshot together")
+        self.assertEqual(foreground["patient"]["status"], "partial", "new checkpoints mutated an old local result")
+        self.assertIsNone(skipped["patient"])
+
+    def test_collection_revision_spans_windows_ignores_notes_and_uses_one_snapshot(self):
+        task = self.seed(85)
+        first = self.pages.page({"id": "pages", "selected_mrn": "PAGE0084"})
+        second = self.pages.page({"id": "pages", "offset": 40, "selected_mrn": "PAGE0000"})
+        self.assertEqual(first["collection_revision"], second["collection_revision"])
+        self.assertNotEqual(first["revision"], second["revision"])
+        self.review.save_note({"task_id": "pages", "mrn": "PAGE0000", "text": "typing does not reorder patients"})
+        self.assertEqual(first["collection_revision"], self.pages.page({"id": "pages"})["collection_revision"])
+        for values in ({"q": "STRASSE"}, {"search_mode": "regex"}, {"tag": "followup"}):
+            self.assertNotEqual(first["collection_revision"], self.pages.page({"id": "pages", **values})["collection_revision"])
+        for kind in ("profile", "patient_tags", "preferences", "records", "registrations"):
+            before = self.pages.page({"id": "pages"})["collection_revision"]
+            with self.work.store.library.connect() as db:
+                db.execute("INSERT INTO bot_revisions VALUES(?,1) ON CONFLICT(kind) DO UPDATE SET revision=revision+1", (kind,))
+            self.assertNotEqual(before, self.pages.page({"id": "pages"})["collection_revision"], kind)
+        before = self.pages.page({"id": "pages"})["collection_revision"]
+        self.store.save("task", {**task, "status": "running", "message": "new progress"})
+        self.assertNotEqual(before, self.pages.page({"id": "pages"})["collection_revision"])
+        with patch("vghks_bot.review_pages.today", return_value=date(2026, 11, 1)):
+            before = self.pages.page({"id": "pages"})["collection_revision"]
+        with patch("vghks_bot.review_pages.today", return_value=date(2026, 11, 2)):
+            self.assertNotEqual(before, self.pages.page({"id": "pages"})["collection_revision"])
+        baseline = self.pages.page({"id": "pages"})
+        revision, errors = self.pages.collection_revision, []
+
+        def write_profile():
+            try:
+                self.store.save("profile", {"id": "PAGE0000", "mrn": "PAGE0000", "status": "resolved", "name": "new overlay"})
+            except Exception as exc:
+                errors.append(exc)
+
+        def race(db, *args):
+            writer = threading.Thread(target=write_profile)
+            writer.start()
+            writer.join(5)
+            self.assertFalse(writer.is_alive())
+            self.assertEqual(errors, [])
+            return revision(db, *args)
+
+        with patch.object(self.pages, "collection_revision", side_effect=race):
+            during = self.pages.page({"id": "pages"})
+        self.assertEqual(during["collection_revision"], baseline["collection_revision"])
+        self.assertEqual(during["patients"][0]["name"], baseline["patients"][0]["name"])
+        after = self.pages.page({"id": "pages"})
+        self.assertNotEqual(after["collection_revision"], baseline["collection_revision"])
+        self.assertEqual(after["patients"][0]["name"], "new overlay")
+
+    def test_filtered_anchor_relocates_without_losing_global_navigation(self):
+        self.seed(85)
+        values = {"id": "pages", "q": "STRASSE", "focus_mrn": "PAGE0083", "selected_mrn": "PAGE0083"}
+        first = self.pages.page(values)
+        self.assertEqual((first["total"], first["offset"], first["selected_navigation"]["position"]), (42, 40, 41))
+        self.assertEqual(first["selected_navigation"]["previous_mrn"], "PAGE0081")
+        for mrn in ("PAGE0001", "PAGE0003", "PAGE0005"):
+            patient = self.store.item("pages", mrn)
+            patient["records"][0]["soap"] = "no longer a match"
+            self.store.item("pages", mrn, patient)
+        relocated = self.pages.page(values)
+        self.assertEqual((relocated["offset"], relocated["selected_navigation"]["position"]), (0, 38))
+        self.assertTrue(relocated["focus_found"])
+        self.assertEqual(relocated["patients"][-1]["mrn"], "PAGE0083")
+        self.work.store.library.set_patient_tags(["PAGE0007", "PAGE0083"], ["surgery"])
+        tagged = self.pages.page({**values, "tag": "surgery"})
+        self.assertEqual((tagged["total"], tagged["selected_navigation"]["previous_mrn"]), (2, "PAGE0007"))
+        self.work.store.library.set_patient_tags(["PAGE0083"], ["surgery"], remove=True)
+        outside = self.pages.page({**values, "tag": "surgery", "offset": 1000})
+        self.assertEqual((outside["offset"], outside["focus_found"], outside["total"]), (0, False, 1))
+        self.assertIsNone(outside["selected_navigation"]["position"])
+        detail = self.pages.patient({"id": "pages", "mrn": "PAGE0083", "q": "STRASSE", "tag": "surgery"})
+        self.assertEqual(detail["revision"], outside["selected_revision"])
+        self.assertTrue(detail["patient"]["records"])
+        self.assertIsNone(detail["previous_mrn"])
+
+    def test_sequence_summaries_batch_registration_cache_without_note_bodies(self):
+        task = self.seed(85)
+        source = {"visit_date": "2026-10-27", "room": "12", "section_code": "70"}
+        for member in task["members"]:
+            member["registrations"] = [{"mrn": member["mrn"], **source}]
+        task["members"][0]["registrations"][0]["sequence_no"] = "003"
+        self.store.save("task", task)
+        self.store.save("registrations", {"id": "PAGE0001", "payload": [{"mrn": "PAGE0001", **source, "sequence_no": "007"}]})
+        self.store.save("registrations", {"id": "PAGE0002", "payload": [{"mrn": "PAGE9999", **source, "sequence_no": "wrong patient"}]})
+        self.review.save_note({"task_id": "pages", "mrn": "PAGE0001", "text": "private note must remain lazy"})
+        sql, connect = [], sqlite3.connect
+
+        def traced(*args, **kwargs):
+            db = connect(*args, **kwargs)
+            db.set_trace_callback(sql.append)
+            return db
+
+        with patch.object(self.work, "sdk_factory", side_effect=AssertionError("sequence summary opened SDK")), \
+                patch("vghks_bot.library.sqlite3.connect", side_effect=traced):
+            page = self.pages.page({"id": "pages"})
+        self.assertEqual([row["sequence_no"] for row in page["patients"][:3]], ["003", "007", ""])
+        self.assertEqual(sum("WHERE kind='registrations' AND id IN" in statement for statement in sql), 1)
+        self.assertFalse(any("WHERE kind='review_note'" in statement for statement in sql))
+        self.assertNotIn("private note must remain lazy", json.dumps(page))
+        before = page["collection_revision"]
+        self.store.save("registrations", {"id": "PAGE0001", "payload": [{"mrn": "PAGE0001", **source, "sequence_no": "008"}]})
+        updated = self.pages.page({"id": "pages"})
+        self.assertNotEqual(before, updated["collection_revision"])
+        self.assertEqual(updated["patients"][1]["sequence_no"], "008")
+
     def test_focus_cross_page_notes_and_scope(self):
         self.seed()
         page = self.pages.page({"id": "pages", "focus_mrn": "PAGE0084"})
@@ -253,6 +476,7 @@ class ReviewPageTests(unittest.TestCase):
         self.store.save("set", {"id": "private-group", "name": "synthetic", "members": [{"mrn": "PAGE0000"}]})
         other = self.app.login({"username": "SECOND", "password": "synthetic"})["account"]["id"]
         self.app.offline(self.account)
+        sdk_calls = list(BotSyntheticSDK.calls)
         server = BotServer(0, self.app)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
@@ -274,12 +498,17 @@ class ReviewPageTests(unittest.TestCase):
             self.assertEqual(request("/reviews/patients", {"id": "pages"}, cookie=False)[0], 401)
             self.assertEqual(request("/reviews/patients", {"id": "pages"}, csrf=False)[0], 403)
             self.assertEqual(request("/reviews/patients", {"id": "pages"}, account=other)[0], 400)
+            self.assertEqual(request("/reviews/patient", {"id": "pages", "mrn": "PAGE0044", "prefetch": True,
+                                                       "local_only": True}, account=other)[0], 400)
             self.assertEqual(request("/sets/read", {"id": "private-group"}, account=other)[0], 400)
             self.app.read_only = True
             for path, values in (("/reviews/patients", {"id": "pages"}), ("/reviews/patient", {"id": "pages", "mrn": "PAGE0044"}),
+                                 ("/reviews/patient", {"id": "pages", "mrn": "PAGE0044", "prefetch": True, "local_only": True}),
                                  ("/reviews/notes/page", {"task_id": "pages", "mrns": ["PAGE0044"]}),
                                  ("/reviews/notes/summary", {"task_id": "pages"}), ("/sets/read", {"id": "private-group"}), ("/sets/search", {"q": "PAGE0000"})):
                 self.assertEqual(request(path, values)[0], 200, path)
+            self.assertEqual(request("/reviews/patient", {"id": "pages", "mrn": "PAGE0044", "prefetch": "true"})[0], 400)
+            self.assertEqual(BotSyntheticSDK.calls, sdk_calls)
         finally:
             server.shutdown()
             server.server_close()

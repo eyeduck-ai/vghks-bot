@@ -210,6 +210,7 @@ class BotHandler(Handler):
                 if self.server.database_manager and self.headers.get("X-Database-Context") != root.context_token:
                     raise ValueError("資料庫已切換，請重新載入頁面。")
                 readonly_routes = {"/api/lists", "/api/library/search", "/api/library/record", "/api/patient-tags/search",
+                    "/api/reviews/preparation/read",
                     "/api/reviews/patients", "/api/reviews/patient", "/api/reviews/notes/page", "/api/reviews/notes/summary", "/api/sets/read", "/api/sets/search",
                     "/api/library/data/read", "/api/library/data/preview-delete",
                     "/api/reviews/results", "/api/reviews/history/read", "/api/reviews/notes/read", "/api/extensions/read", "/api/analysis/results", "/api/analysis/raw",
@@ -271,6 +272,7 @@ class BotHandler(Handler):
                 if local in {"/api/start", "/api/lists/browse", "/api/fetch", "/api/analysis/start"} and not workspace.gateway.online:
                     raise ValueError("請先登入此帳號，再使用網路功能。")
                 custom = {"/api/sets/save", "/api/sets/delete", "/api/sets/cohort", "/api/draft/save",
+                          "/api/reviews/preparation/read", "/api/reviews/preparation/action",
                           "/api/reviews/patients", "/api/reviews/patient", "/api/reviews/notes/page", "/api/reviews/notes/summary", "/api/sets/read", "/api/sets/search",
                           "/api/tasks/start", "/api/tasks/stop", "/api/reviews/results", "/api/reviews/history/read",
                           "/api/reviews/notes/read", "/api/reviews/notes/save", "/api/reviews/notes/clear", "/api/reviews/reclassify",
@@ -322,6 +324,10 @@ class BotHandler(Handler):
                     result = review.pages.notes(values, summary=True)
                 elif local == "/api/reviews/history/read":
                     result = review.history.read(values)
+                elif local == "/api/reviews/preparation/read":
+                    result = review.preparation.read(values)
+                elif local == "/api/reviews/preparation/action":
+                    result = review.preparation.handle(values)
                 elif local == "/api/reviews/notes/read":
                     result = review.read_notes(values)
                 elif local == "/api/reviews/notes/save":

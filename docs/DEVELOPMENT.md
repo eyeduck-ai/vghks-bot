@@ -109,7 +109,9 @@ Python 虛擬環境的啟動腳本與部分命令列程式含建立時的絕對�
 
 `python tools/benchmark_review.py --sizes 40 1000 5000 20000` 在一次性合成資料庫量測分頁、末頁定位、單人全部 SOAP、備註及 compact workbench。工具禁止 socket 連線，報告預設寫入忽略的 `.build/review-paging-benchmark.json`；冷次全文搜尋與三次暖態中位數分開記錄，時間不含 HTTP 傳輸與真實瀏覽器繪製。
 
-一般分頁必須只回 40 位摘要、不解碼 SOAP，SQL 數不隨任務總人數逐人增加；單人詳情只讀該病人快照。`tools/browser_bot_fixture.py --review-patients 1000 --local-board` 可啟動兩個合成帳號的完整舊格式檢閱，不呼叫院內服務，供瀏覽器驗收跨頁、完整搜尋、來源收合、備註與閱讀位置。關閉測試伺服器後會清除暫存資料庫。
+連續清單的每批讀取只回 40 位摘要、不解碼 SOAP，SQL 數不隨任務總人數逐人增加；單人詳情只讀該病人快照。量測另涵蓋前進、返回與遠處定位的視窗，以及 ready 預讀與 partial 略過；這些資料庫量測不代表瀏覽器 heap／DOM 已驗證。`tools/browser_bot_fixture.py --review-patients 1000 --local-board` 可啟動兩個合成帳號的完整舊格式檢閱，不呼叫院內服務，供瀏覽器驗收雙向捲動、全域搜尋、跨區勾選、來源收合、備註與閱讀位置。必須另檢查可見列、摘要區塊、detail cache 與預讀中的請求量均有上限，切換 scope 不採用舊回應。關閉測試伺服器後會清除暫存資料庫。
+
+背景準備需用合成 barrier 驗證明確啟動、有限一輪、前景讓位、各資源及附件上限、快取重用、暫停與已送出讀取的保存。檢閱來源定義與進度 revision 分開核對；原 task paused 不得被默默續跑，讀取狀態不得啟動網路。登出／離線／重啟、唯讀與清除資料必須維持原保護，只有明確重試才可重新取得已清除資料。全程不讀取使用者資料庫或院內資料。
 
 跨任務共用取得的回歸須以 barrier 製造同時 cache miss，核對實體 SDK／HTTP、前景優先權、各訂閱者取消、force 分流、登入／清除 epoch 與病人／完整就診 selector。快取與合併結果不得改寫 PRQ 病人 context，不得增加 SDK 外層重試；必要身分核對與 SDK 內部退避仍照常發生。
 

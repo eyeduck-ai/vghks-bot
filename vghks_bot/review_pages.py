@@ -183,6 +183,22 @@ class ReviewPages:
             raise ValueError("搜尋格式不正確。")
         return query, mode, tag
 
+    @staticmethod
+    def read_flags(values):
+        # These options never enable a network fallback, including when false.
+        for field in ("prefetch", "local_only"):
+            if field in values and type(values[field]) is not bool:
+                raise ValueError("本機預讀選項需為布林值。")
+        return values.get("prefetch", False)
+
+    def collection_revision(self, db, task, query, mode, tag):
+        # Read alongside the page in its WAL snapshot, so metadata from a newer
+        # writer cannot label an older window. Notes do not reorder this list.
+        revisions = dict(db.execute("SELECT kind,revision FROM bot_revisions WHERE kind IN "
+                                    "('profile','patient_tags','preferences','records','registrations')"))
+        return fingerprint([self.review.app.account_id, task["id"], task["revision"], query, mode, tag,
+                            revisions, today().isoformat()])
+
     def task(self, db, key):
         row = db.execute("SELECT t.payload,s.payload AS state,s.updated_at,s.revision FROM review_page_task t "
                          "JOIN bot_task_state s ON s.task_id=t.task_id WHERE t.task_id=?", (key,)).fetchone()
@@ -261,11 +277,12 @@ class ReviewPages:
         return ("SELECT m.mrn,m.ordinal,m.payload AS member,p.payload,coalesce(p.revision,0) AS item_revision "
                 "FROM review_page_members m LEFT JOIN review_page_patients p ON p.task_id=m.task_id AND p.mrn=m.mrn ")
 
-    def navigation(self, db, key, mrn, where, args):
+    def navigation(self, db, key, mrn, where, args, *, total=None):
         position = db.execute("SELECT count(*) FROM review_page_members m WHERE " + where +
             " AND m.ordinal<(SELECT ordinal FROM review_page_members WHERE task_id=? AND mrn=?)", [*args, key, mrn]).fetchone()[0]
         ordinal = db.execute("SELECT m.ordinal FROM review_page_members m WHERE " + where + " AND m.mrn=?", [*args, mrn]).fetchone()
-        total = db.execute("SELECT count(*) FROM review_page_members m WHERE " + where, args).fetchone()[0]
+        if total is None:
+            total = db.execute("SELECT count(*) FROM review_page_members m WHERE " + where, args).fetchone()[0]
         if not ordinal:
             return {"previous_mrn": None, "next_mrn": None, "position": None, "total": total}
         previous = db.execute("SELECT m.mrn FROM review_page_members m WHERE " + where + " AND m.ordinal<? ORDER BY m.ordinal DESC LIMIT 1", [*args, ordinal[0]]).fetchone()
@@ -274,6 +291,7 @@ class ReviewPages:
                 "position": position, "total": total}
 
     def page(self, values):
+        self.read_flags(values)
         key = values.get("id")
         self.ensure(key)
         query, mode, tag = self.filters(values)
@@ -292,7 +310,7 @@ class ReviewPages:
             total = db.execute("SELECT count(*) FROM review_page_members m WHERE " + where, args).fetchone()[0]
             focus_found = False
             if focus:
-                nav = self.navigation(db, key, focus, where, args)
+                nav = self.navigation(db, key, focus, where, args, total=total)
                 if nav["position"] is not None:
                     offset, focus_found = nav["position"] // limit * limit, True
             offset = min(offset, max(0, (total - 1) // limit * limit))
@@ -304,6 +322,9 @@ class ReviewPages:
                     raise ValueError("病人不在此檢閱任務中。")
                 revision_rows.append(extra)
             profiles, manual = self.overlays(db, [row["mrn"] for row in revision_rows])
+            registrations = {row["id"]: json.loads(row["payload"]) for row in db.execute(
+                "SELECT id,payload FROM bot_documents WHERE kind='registrations' AND id IN (SELECT value FROM json_each(?))",
+                (json.dumps([row["mrn"] for row in rows]),))}
             revisions = self.revisions(revision_rows, profiles, manual, query, mode)
             patients = []
             for row in rows:
@@ -311,6 +332,7 @@ class ReviewPages:
                            {"status": "pending", "record_count": 0, "dates": [], "auto_tags": [], "message": "待處理"})}
                 patient = merge_demographics(patient, profiles.get(row["mrn"], {}))
                 patients.append({**{k: v for k, v in patient.items() if k not in {"registrations", "national_id", "mobile_phone", "home_phone", "phone", "contact", "basic_info_at"}},
+                                 "sequence_no": self.review._registration_sequence(patient, registrations=registrations),
                                  "manual_tags": manual.get(row["mrn"], []), "data_revision": revisions[row["mrn"]]})
             definitions = [category.id for category in self.review.app.settings.categories]
             facet_rows = db.execute("WITH tags AS (SELECT p.mrn,json_extract(a.value,'$.category') AS tag_id FROM review_page_patients p,json_each(p.payload,'$.auto_tags') a WHERE p.task_id=? "
@@ -324,12 +346,14 @@ class ReviewPages:
             result = {"task": task, "patients": patients, "total": total, "all_total": all_total, "offset": offset, "limit": limit,
                       "page": offset // limit, "tag_counts": counts, "scope_issue_count": stats[2], "has_results": bool(stats[1]),
                       "incremental": {"new": task.get("new_count", 0), "reused": task.get("reused_count", 0), "pending": pending} if task.get("base_task_id") else None,
-                      "revision": revision, "patient_revisions": revisions, "focus_found": focus_found}
+                      "revision": revision, "collection_revision": self.collection_revision(db, task, query, mode, tag),
+                      "patient_revisions": revisions, "focus_found": focus_found}
             if selected:
-                result.update(selected_revision=revisions[selected], selected_navigation=self.navigation(db, key, selected, where, args))
+                result.update(selected_revision=revisions[selected], selected_navigation=self.navigation(db, key, selected, where, args, total=total))
             return result
 
     def patient(self, values):
+        prefetch = self.read_flags(values)
         key, mrn = values.get("id"), normalize_mrn(values.get("mrn", ""))
         self.ensure(key)
         query, mode, tag = self.filters(values)
@@ -338,14 +362,20 @@ class ReviewPages:
             row = db.execute(self.row_sql() + "WHERE m.task_id=? AND m.mrn=?", (key, mrn)).fetchone()
             if not row:
                 raise ValueError("病人不在此檢閱任務中。")
+            profiles, manual = self.overlays(db, [mrn])
+            revision = self.revisions([row], profiles, manual, query, mode)[mrn]
+            if prefetch:
+                summary = json.loads(row["payload"]) if row["payload"] else {}
+                if summary.get("status") != "ready" or summary.get("processing") or not summary.get("record_count"):
+                    return {"task_id": key, "mrn": mrn, "patient": None, "revision": revision, "prefetchable": False}
             patient = self.review.db.item(key, mrn)
             if patient is None:
                 source = db.execute("SELECT j.value FROM bot_documents d,json_each(d.payload,'$.members') j WHERE d.kind='task' AND d.id=? AND json_extract(j.value,'$.mrn')=?", (key, mrn)).fetchone()
                 patient = {**json.loads(source[0]), "status": "pending", "records": [], "message": "待處理"}
             if patient.get("mrn") != mrn:
                 raise ValueError("檢閱病人身分不符。")
-            profiles, manual = self.overlays(db, [mrn])
-            revision = self.revisions([row], profiles, manual, query, mode)[mrn]
+            if prefetch and (patient.get("status") != "ready" or patient.get("processing") or not patient.get("records")):
+                return {"task_id": key, "mrn": mrn, "patient": None, "revision": revision, "prefetchable": False}
             patient = merge_demographics(patient, profiles.get(mrn, {}))
             patient["manual_tags"] = manual.get(mrn, [])
             records = patient.get("records", [])
@@ -354,7 +384,8 @@ class ReviewPages:
             for index, record in enumerate(records):
                 record.update(highlights=[list(span) for span in matches.get(index, [])], search_hit=not query or index in matches)
             where, args = self.matching(db, key, query, mode, tag, matches=task_matches)
-            return {"task_id": key, "patient": patient, "revision": revision, **self.navigation(db, key, mrn, where, args)}
+            return {"task_id": key, "patient": patient, "revision": revision, **self.navigation(db, key, mrn, where, args),
+                    **({"mrn": mrn, "prefetchable": True} if prefetch else {})}
 
     def notes(self, values, *, summary=False):
         key = values.get("task_id")

@@ -52,6 +52,17 @@ class SyntheticSheetHandler(BotHandler):
         return super().local_request()
 
 
+class SlowPreparationSDK(BotSyntheticSDK):
+    """Delay a synthetic read so pause and foreground controls can be exercised."""
+    def history(self, mrn, lookback):
+        time.sleep(1.5)
+        return super().history(mrn, lookback)
+
+    def basic_info(self, mrn):
+        result = super().basic_info(mrn)
+        return replace(result, name="合成病人" + mrn[4:]) if mrn.startswith("PAGE") else result
+
+
 class FollowUpSDK(BotSyntheticSDK):
     def _review_rows(self):
         return [replace(row, application_status="Y", processing_status="F",
@@ -251,6 +262,7 @@ def seed_large_review(workspace, count):
         group = workspace.review.db.save("set", {"id": task_id + "-set", "name": f"合成大型檢閱 {count} 位",
             "members": members})
         workspace.review.db.save("task", {"id": task_id, "kind": "review", "name": group["name"],
+            "account_id": workspace.account_id, "categories": workspace.settings.public()["categories"],
             "set_id": group["id"], "members": members, "mode": "latest", "cutoff": today().isoformat(),
             "department_keywords": ["眼科"], "status": "completed", "created_at": observed,
             "finished_at": observed, "force": False, "message": "合成資料已保存；未連線院內"})
@@ -263,7 +275,7 @@ def seed_large_review(workspace, count):
                 "updated_at": observed}
             workspace.store.library.save_record(record, workspace.username, task_id)
             record.update(classification(record, workspace.settings))
-            workspace.review.db.item(task_id, member["mrn"], {**member, "status": "reviewed", "records": [record],
+            workspace.review.db.item(task_id, member["mrn"], {**member, "status": "ready", "records": [record],
                 "checked_at": observed, "index_checked_at": observed, "message": "已取得"})
             if i % 20 == 1:
                 workspace.review.db.save("review_note", {"id": task_id + ":" + member["mrn"],
@@ -282,11 +294,12 @@ def main():
     parser.add_argument("--registrations", action="store_true", help="Complete registration fields, explicit and unknown attendance")
     parser.add_argument("--sheet-management", action="store_true", help="Synthetic online sheet statistics; no Google calls")
     parser.add_argument("--review-patients", type=int, default=0, help="Seed a completed synthetic review with 1-20000 patients")
+    parser.add_argument("--slow-preparation", action="store_true", help="Delay synthetic numeric reads for background preparation UI checks")
     args = parser.parse_args()
     if not 0 <= args.review_patients <= 20000:
         parser.error("--review-patients must be between 0 and 20000")
     with tempfile.TemporaryDirectory(prefix="vghks-bot-synthetic-") as directory:
-        sdk = SessionSDK if args.lookup_failures else RegistrationsSDK if args.registrations else DemographicsSDK if args.demographics else FollowUpSDK if args.followup else BotSyntheticSDK
+        sdk = SessionSDK if args.lookup_failures else RegistrationsSDK if args.registrations else DemographicsSDK if args.demographics else FollowUpSDK if args.followup else SlowPreparationSDK if args.slow_preparation else BotSyntheticSDK
         manager = DatabaseManager(Path(directory), Settings(), sdk)
         app = manager.current
         try:

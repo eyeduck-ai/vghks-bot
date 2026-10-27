@@ -1,91 +1,169 @@
 "use strict";
 const assert=require("node:assert/strict"),fs=require("node:fs"),vm=require("node:vm");
 const {surface,deferred,tick}=require("./review_ui.js");
+const settle=async()=>{for(let index=0;index<80;index++)await Promise.resolve();};
 
-function setup(){
- const s=surface(),c=s.context,$=s.$,calls=[],notes=[],renders=[];
+function setup(count=1000){
+ const s=surface(),c=s.context,$=s.$,calls=[],notes=[],renders=[],timers=new Map(),documentEvents=new Map();let timerId=0;
+ c.setTimeout=(run,delay)=>{const id=++timerId;timers.set(id,{run,delay});return id;};c.clearTimeout=id=>timers.delete(id);
+ c.document.hidden=false;c.document.addEventListener=(name,run)=>documentEvents.set(name,run);
+ $("#reviewPatients").clientHeight=580;
  c.page="review";c.epoch=1;c.currentReview="R1";c.reviewPatient="";c.reviewData=null;c.reviewSignature="";
- c.work={tasks:[],revisions:{profile:0,review_note:0,patient_tags:0}};
+ c.work={tasks:[],revisions:{profile:0,review_note:0,patient_tags:0,registrations:0}};
  c.reviewFilters=()=>({q:$("#reviewQuery").value,search_mode:$("#reviewSearchMode").value||"text",tag:$("#reviewTag").value});
  c.ClinicalUI={loading:label=>s.node("div",label,"clinical-loading")};
  c.badges=items=>s.node("span",JSON.stringify(items||[]));
  c.check=(label,checked,run)=>{const input=s.node("input");input.checked=checked;input.setAttribute("aria-label",label);input.run=run;return input;};
- c.window.ReviewHandoff={updatePatients(){},has:()=>false,toggle(){}};
- let flush=true,noteReady=false;const selections=[];
- c.window.ReviewNotesUI={load:async(id,options)=>{notes.push({id,options});await Promise.resolve();noteReady=true;},flush:async(...args)=>typeof flush==="function"?flush(...args):flush,sequence:()=>noteReady?"001":""};
+ const selection=new Map();c.window.ReviewHandoff={updatePatients(){},has:mrn=>selection.has(mrn),toggle:(patient,checked)=>{if(checked)selection.set(patient.mrn,{mrn:patient.mrn,name:patient.name});else selection.delete(patient.mrn);}};
+ let flush=true;const selections=[],preparations=[];
+ c.window.ReviewNotesUI={load:async(id,options)=>{notes.push({id,options});await Promise.resolve();},flush:async(...args)=>typeof flush==="function"?flush(...args):flush,sequence:()=>""};
  c.window.FileCompare={context:(...args)=>selections.push(args)};
+ c.window.ReviewPreparationUI={context:(...args)=>preparations.push(args)};
  c.renderReviewHeader=()=>{};c.window.ToolWorkspace={adoptReview(){}};
  c.renderReviewDetail=()=>{
   const patient=c.window.ReviewPaging.patient();renders.push(patient.mrn);
-  const panel=$("#reviewDetail"),soap=s.node("section",patient.records[0].soap,"soap-record"),notice=c.window.ReviewPaging.positionNotice();
-  const previous=s.node("button"),next=s.node("button");previous.dataset.reviewMove="-1";next.dataset.reviewMove="1";
-  previous.disabled=!c.window.ReviewPaging.nav(-1);next.disabled=!c.window.ReviewPaging.nav(1);panel.replaceChildren(notice,previous,next,soap);
+  const panel=$("#reviewDetail"),soap=s.node("section",patient.records[0]?.soap||"","soap-record"),notice=c.window.ReviewPaging.positionNotice();
+  const previous=s.node("button"),next=s.node("button"),note=s.node("textarea");note.id="reviewNoteInput";note.value="synthetic note";
+  previous.dataset.reviewMove="-1";next.dataset.reviewMove="1";previous.disabled=!c.window.ReviewPaging.nav(-1);next.disabled=!c.window.ReviewPaging.nav(1);panel.replaceChildren(notice,previous,next,soap,note);
  };
  const source=fs.readFileSync("vghks_bot/static/bot.js","utf8");
  vm.runInContext(source.slice(source.indexOf("function renderReviewPatients("),source.indexOf("function soapNode(")),c);
- const revisions=new Map(),listGates=new Map(),detailGates=new Map();let taskRevision=1,wrongPatient=false;
- const all=Array.from({length:100},(_,index)=>({mrn:"P"+(index+1),name:"合成病人 "+(index+1),status:"ready",dates:["2026-10-01"],auto_tags:[],manual_tags:[],record_count:1}));
- const selected=values=>values.q==="none"?[]:values.q==="late"?all.slice(1):values.q==="last"?[all[99]]:all;
+ const revisions=new Map(),listGates=new Map(),detailGates=new Map(),invalidPrefetch=new Map();let taskRevision=1,wrongPatient=false,prefetchActive=0,maxPrefetchActive=0;
+ const all=Array.from({length:count},(_,index)=>({mrn:"P"+(index+1),name:"合成病人 "+(index+1),status:"ready",dates:["2026-10-01"],auto_tags:[],manual_tags:[],record_count:1,sequence_no:String(index+1).padStart(3,"0")}));
+ const selected=values=>(values.q==="none"?[]:values.q==="late"?all.slice(1):values.q==="last"?[all.at(-1)]:all).filter(row=>!values.tag||row.manual_tags.some(tag=>tag.category===values.tag));
  const revision=mrn=>"detail-"+mrn+"-"+(revisions.get(mrn)||0);
  const navigation=(values,mrn)=>{const rows=selected(values),index=rows.findIndex(row=>row.mrn===mrn);return {previous_mrn:index>0?rows[index-1].mrn:null,next_mrn:index>=0?rows[index+1]?.mrn||null:null,position:index<0?null:index,total:rows.length};};
  c.api=async(path,values)=>{
   calls.push({path,values:JSON.parse(JSON.stringify(values))});
   const selectedAccount=c.account,task=values.id;
   if(path==="/reviews/patients"){
-   if(listGates.has(values.q))await listGates.get(values.q).promise;
-   const rows=selected(values);let offset=values.offset||0;
-   if(values.focus_mrn){const index=rows.findIndex(row=>row.mrn===values.focus_mrn);if(index>=0)offset=Math.floor(index/40)*40;}
-   const patients=rows.slice(offset,offset+40);
-   return {task:{id:task,status:"completed",revision:taskRevision,member_count:100},patients,total:rows.length,all_total:100,offset,limit:40,revision:"list-"+taskRevision,has_results:true,
+   const gate=listGates.get(values.offset)||listGates.get(values.q);if(gate)await gate.promise;
+   const rows=selected(values);let offset=Math.min(values.offset||0,Math.max(0,Math.floor((rows.length-1)/40)*40)),focusFound=false;
+   if(values.focus_mrn){const index=rows.findIndex(row=>row.mrn===values.focus_mrn);if(index>=0){offset=Math.floor(index/40)*40;focusFound=true;}}
+   const patients=JSON.parse(JSON.stringify(rows.slice(offset,offset+40))).map(row=>({...row,data_revision:revision(row.mrn)}));
+   return {task:{id:task,status:"completed",revision:taskRevision,member_count:all.length},patients,total:rows.length,all_total:all.length,offset,limit:40,revision:"list-"+taskRevision+"-"+offset,collection_revision:JSON.stringify([selectedAccount,task,taskRevision,values.q,values.search_mode,values.tag,c.work.revisions.profile,c.work.revisions.patient_tags,c.work.revisions.registrations]),focus_found:focusFound,has_results:true,
     patient_revisions:Object.fromEntries(patients.map(patient=>[patient.mrn,revision(patient.mrn)])),selected_revision:revision(values.selected_mrn),selected_navigation:navigation(values,values.selected_mrn)};
   }
   if(path==="/reviews/patient"){
-   if(detailGates.has(values.mrn))await detailGates.get(values.mrn).promise;
-   return {task_id:task,patient:{...all.find(row=>row.mrn===values.mrn),mrn:wrongPatient?"FOREIGN":values.mrn,records:[{id:"SOAP-"+values.mrn,soap:selectedAccount+" "+task+" "+values.mrn}]},revision:revision(values.mrn),...navigation(values,values.mrn)};
+   if(values.prefetch){prefetchActive++;maxPrefetchActive=Math.max(maxPrefetchActive,prefetchActive);}
+   try{
+    if(detailGates.has(values.mrn))await detailGates.get(values.mrn).promise;
+    const row=all.find(row=>row.mrn===values.mrn),prefetchable=row?.status==="ready"&&!row.processing&&!!row.record_count;
+    const patient={...row,mrn:wrongPatient?"FOREIGN":values.mrn,records:row.record_count?[{id:"SOAP-"+values.mrn,soap:selectedAccount+" "+task+" "+values.mrn}]:[]};
+    let result={task_id:task,patient,revision:revision(values.mrn),...navigation(values,values.mrn)};
+    if(values.prefetch){
+     result={...result,mrn:values.mrn,prefetchable,patient:prefetchable?patient:null};
+     const invalid=invalidPrefetch.get(values.mrn);
+     if(invalid==="revision")result.revision="stale";if(invalid==="patient")result.patient={...patient,mrn:"FOREIGN"};if(invalid==="skip"){result.prefetchable=false;result.patient=null;}
+    }
+    return result;
+   }finally{if(values.prefetch)prefetchActive--;}
   }
   throw new Error("Unexpected whole-task read: "+path);
  };
  s.run("vghks_bot/static/review-paging.js");const ui=c.window.ReviewPaging;
  c.selectReviewPatient=mrn=>ui.select(mrn);
- return {...s,ui,calls,notes,renders,revisions,listGates,detailGates,selections,setTaskRevision:value=>taskRevision=value,setFlush:value=>flush=value,setWrongPatient:value=>wrongPatient=value};
+ const runTimers=async delay=>{for(const [id,timer] of [...timers])if(timer.delay<=delay){timers.delete(id);timer.run();}await settle();};
+ const scroll=async(index,fraction=0)=>{$("#reviewPatients").scrollTop=index*116+fraction;await $("#reviewPatients").emit("scroll");await runTimers(65);};
+ const rows=()=>$("#reviewPatients").querySelectorAll(".review-patient-row");
+ const hide=hidden=>{c.document.hidden=hidden;documentEvents.get("visibilitychange")?.();};
+ return {...s,ui,calls,notes,renders,revisions,listGates,detailGates,selections,selection,all,invalidPrefetch,preparations,scroll,runTimers,rows,hide,maxPrefetch:()=>maxPrefetchActive,setTaskRevision:value=>taskRevision=value,setFlush:value=>flush=value,setWrongPatient:value=>wrongPatient=value};
 }
 
-async function boundedPages(){
+async function continuousWindow(){
  const s=setup(),{ui,context:c,calls,renders,$}=s;
- await ui.load();assert.equal(c.reviewData.patients.length,40);assert.equal(c.reviewPatient,"P1");
- assert.equal(calls.filter(call=>call.path==="/reviews/patient").length,1,"first page eagerly loaded other patients' SOAP");
- assert.equal(s.notes[0].options.mrns.length,40);
- assert.equal($("#reviewPatients").children[0].querySelector(".review-sequence").textContent,"001","initial page did not refresh registration sequence after notes arrived");
- const firstRow=$("#reviewPatients").children[0],soap=$("#reviewDetail").querySelector(".soap-record");
+ await ui.load();assert.ok(c.reviewData.patients.length<=14);assert.equal(c.reviewPatient,"P1");
+ assert.equal(calls.filter(call=>call.path==="/reviews/patient").length,1,"initial viewport eagerly loaded other patients' SOAP");
+ assert.equal(s.notes[0].options.mrns.length,1,"scroll metadata caused all patients' notes to accumulate");
+ assert.equal(s.rows()[0].querySelector(".review-sequence").textContent,"001","initial registration sequence required notes");
+ assert.ok(s.rows().length<=14);assert.equal($("#reviewPager").querySelectorAll("button").length,0,"page buttons remain");
+ assert.equal(s.preparations[0][1].total,1000);
+ const firstRow=s.rows()[0],soap=$("#reviewDetail").querySelector(".soap-record");
  firstRow.querySelector(".patient-select").focus();$("#reviewDetail").scrollTop=73;
  await ui.poll({revision:1,status:"completed"},c.work.revisions);assert.equal(calls.length,2,"unchanged status triggered another read");
- s.setTaskRevision(2);s.revisions.set("P90",1);await ui.poll({revision:2,status:"completed"},c.work.revisions);
+ s.setTaskRevision(2);s.revisions.set("P900",1);await ui.poll({revision:2,status:"completed"},c.work.revisions);
  assert.equal(calls.filter(call=>call.path==="/reviews/patient").length,1,"another patient's update reloaded selected SOAP");
- assert.equal($("#reviewPatients").children[0],firstRow,"unchanged summary row was rebuilt");
- assert.equal(c.document.activeElement,firstRow.querySelector(".patient-select"));assert.equal($("#reviewDetail").querySelector(".soap-record"),soap);assert.equal($("#reviewDetail").scrollTop,73);
- await ui.select("P40");assert.equal(ui.nav(1),"P41");await ui.move(1);
- assert.equal(c.reviewData.offset,40);assert.equal(c.reviewPatient,"P41");assert.equal(ui.patient().mrn,"P41");
- const selectedSoap=$("#reviewDetail").querySelector(".soap-record"),before=renders.length;
- await ui.load({offset:0});assert.equal(c.reviewPatient,"P41","paging silently selected another patient");
- assert.equal(renders.length,before);assert.equal($("#reviewDetail").querySelector(".soap-record"),selectedSoap);
+ assert.equal(s.rows()[0],firstRow,"unchanged summary row was rebuilt");assert.equal(c.document.activeElement,firstRow.querySelector(".patient-select"));
+ assert.equal($("#reviewDetail").querySelector(".soap-record"),soap);assert.equal($("#reviewDetail").scrollTop,73);
+ const note=$("#reviewNoteInput");note.value="still editing";note.focus();const noteCount=s.notes.length,before=renders.length;
+ await s.scroll(400,19);assert.equal(c.reviewPatient,"P1");assert.equal(renders.length,before);assert.equal(s.notes.length,noteCount,"scroll loaded notes");
+ assert.equal($("#reviewNoteInput"),note);assert.equal(note.value,"still editing");assert.equal(c.document.activeElement,note);
+ assert.equal($("#reviewDetail").querySelector(".soap-record"),soap);assert.equal($("#reviewDetail").scrollTop,73);
+ assert.ok(s.rows().some(row=>row.dataset.mrn==="P401"));assert.equal($("#reviewPatients").scrollTop,400*116+19);assert.ok(s.rows().length<=14);
+ assert.match($("#reviewPager").textContent+$("#reviewPager").children.map(node=>node.textContent).join(""),/401/);
+ assert.ok(calls.filter(call=>call.path==="/reviews/patients").length<=4,"thumb jump fetched skipped batches");
+ await s.scroll(800);await s.scroll(995);assert.ok(s.rows().some(row=>row.dataset.mrn==="P1000"));assert.ok(s.rows().length<=14);
+ const height=$("#reviewPatients").children.filter(row=>row.style.position!=="absolute").reduce((sum,row)=>sum+(parseFloat(row.style.height)||0),0);
+ assert.equal(height,1000*116,"full-list scrollbar height changed with loaded windows");
+ const listCount=calls.filter(call=>call.path==="/reviews/patients").length;await s.scroll(0);
+ assert.ok(calls.filter(call=>call.path==="/reviews/patients").length>listCount,"offscreen summaries grew into an unbounded cache");
+ assert.equal(s.rows()[0].dataset.mrn,"P1");assert.equal(s.rows()[0].getAttribute("aria-posinset"),"1");
+ assert.equal(s.rows()[0].getAttribute("aria-setsize"),"1000");assert.ok(calls.every(call=>call.path!=="/reviews/results"));
+}
+
+async function focusSelectionAndNavigation(){
+ const s=setup(),{ui,context:c,$}=s;await ui.load();
+ const focused=s.rows()[1],button=focused.querySelector(".patient-select");button.focus();
+ await s.scroll(400);assert.equal(c.document.activeElement,button);assert.equal($("#reviewPatients").contains(button),true,"virtualization detached keyboard focus");
+ assert.equal(focused.style.position,"absolute");assert.ok(s.rows().length<=14);
+ const selectedRow=s.rows().find(row=>row.dataset.mrn==="P401"),checkbox=selectedRow.querySelector(".review-handoff-check");checkbox.run(true);
+ await s.scroll(0);assert.equal(s.selection.has("P401"),true);assert.deepEqual(Object.keys(s.selection.get("P401")).sort(),["mrn","name"]);
+ await ui.select("P40");assert.equal(ui.nav(1),"P41");await ui.move(1);assert.equal(c.reviewPatient,"P41");assert.equal(ui.patient().mrn,"P41");
+ assert.ok(s.rows().some(row=>row.dataset.mrn==="P41"));assert.equal($("#reviewPatients").scrollTop,40*116);
+ await ui.move(-1);assert.equal(c.reviewPatient,"P40");assert.equal($("#reviewPatients").scrollTop,39*116);
+ const selectedSoap=$("#reviewDetail").querySelector(".soap-record"),before=s.renders.length;
+ await s.scroll(100);assert.equal(c.reviewPatient,"P40");assert.equal(s.renders.length,before);assert.equal($("#reviewDetail").querySelector(".soap-record"),selectedSoap);
  assert.equal($("#reviewDetail").querySelector(".review-page-context").hidden,false);
- $("#reviewQuery").value="none";await ui.load({resetPage:true});assert.equal(c.reviewData.total,0);assert.equal(c.reviewPatient,"P41");assert.equal(ui.nav(1),"");
+ $("#reviewQuery").value="none";await ui.load({resetPage:true});assert.equal(c.reviewData.total,0);assert.equal(c.reviewPatient,"P40");assert.equal(ui.nav(1),"");
  assert.match($("#reviewDetail").querySelector(".review-page-context").textContent,/不符合此篩選/);
- assert.ok(calls.every(call=>call.path!=="/reviews/results"));
- s.setFlush(false);const oldCount=calls.length;await assert.rejects(ui.select("P2"),/備註/);assert.equal(calls.length,oldCount);assert.equal(c.reviewPatient,"P41");
+ s.setFlush(false);const oldCount=s.calls.length;await assert.rejects(ui.select("P2"),/備註/);assert.equal(s.calls.length,oldCount);assert.equal(c.reviewPatient,"P40");
+}
+
+async function anchorAndOverlayRevision(){
+ const s=setup(),{ui,context:c,$}=s;await ui.load();await s.scroll(80,17);
+ s.all.splice(0,10);s.setTaskRevision(2);await ui.poll({revision:2,status:"completed"},c.work.revisions);
+ assert.equal($("#reviewPatients").scrollTop,70*116+17,"collection update lost the visible MRN anchor");
+ assert.ok(s.rows().some(row=>row.dataset.mrn==="P81"));assert.equal(c.reviewPatient,"P1");
+ s.all.find(row=>row.mrn==="P81").sequence_no="REGISTERED";c.work.revisions.registrations++;
+ await ui.poll({revision:2,status:"completed"},c.work.revisions);
+ assert.equal(s.rows().find(row=>row.dataset.mrn==="P81").querySelector(".review-sequence").textContent,"REGISTERED");
+ assert.ok(s.calls.at(-1).values.focus_mrn==="P81");
+ s.all.find(row=>row.mrn==="P81").sequence_no="";c.window.ReviewNotesUI.sequence=()=>"STALE";c.work.revisions.registrations++;
+ await ui.poll({revision:2,status:"completed"},c.work.revisions);assert.equal(s.rows().find(row=>row.dataset.mrn==="P81").querySelector(".review-sequence").textContent,"未提供","old note sequence overrode authoritative blank metadata");
+}
+
+async function changingCollectionDuringScroll(){
+ const s=setup(),{ui,context:c,$}=s;await ui.load();
+ const gate=deferred();s.listGates.set(40,gate);await s.scroll(38,27);
+ assert.equal($("#reviewPatients").getAttribute("aria-busy"),"true");assert.match($("#reviewPager").children[0].textContent,/載入本機資料/);
+ const soap=$("#reviewDetail").querySelector(".soap-record"),notes=s.notes.length;
+ s.all.splice(0,5);s.setTaskRevision(2);gate.resolve();await settle();
+ assert.equal($("#reviewPatients").scrollTop,33*116+27,"neighbor-block collection change lost the current MRN anchor");
+ assert.ok(s.rows().some(row=>row.dataset.mrn==="P39"));assert.equal(c.reviewPatient,"P1");assert.equal(s.notes.length,notes);assert.equal($("#reviewDetail").querySelector(".soap-record"),soap);
+ assert.equal($("#reviewPatients").getAttribute("aria-busy"),"false");assert.ok(s.calls.length<=5,"collection relocation kept reloading indefinitely");
+ const polling=setup();await polling.ui.load();const pollGate=deferred();polling.listGates.set(0,pollGate);polling.setTaskRevision(2);
+ const refresh=polling.ui.poll({revision:2,status:"completed"},polling.context.work.revisions);await tick();await polling.scroll(400,11);pollGate.resolve();await refresh;
+ assert.equal(polling.$("#reviewPatients").scrollTop,400*116+11,"a slow poll restored an obsolete viewport over the user's scroll");assert.ok(polling.rows().some(row=>row.dataset.mrn==="P401"));
 }
 
 async function racingReads(){
  const s=setup(),{ui,context:c,$}=s;await ui.load();
  const listGate=deferred();s.listGates.set("late",listGate);$("#reviewQuery").value="late";const oldList=ui.load({resetPage:true});await tick();
  $("#reviewQuery").value="last";await ui.load({resetPage:true});listGate.resolve();await oldList;
- assert.equal(c.reviewData.total,1);assert.equal(c.reviewData.patients[0].mrn,"P100","late filter response replaced the current page");
+ assert.equal(c.reviewData.total,1);assert.equal(s.rows()[0].dataset.mrn,"P1000","late filter response replaced current window");
  $("#reviewQuery").value="";await ui.load({resetPage:true});
  const gate=deferred();s.detailGates.set("P2",gate);const oldDetail=ui.select("P2");await tick();
  await ui.select("P3");gate.resolve();await oldDetail;assert.equal(ui.patient().mrn,"P3");assert.equal(c.reviewPatient,"P3");
  const oldFlush=deferred(),newFlush=deferred();let flushCalls=0;s.setFlush(()=>++flushCalls===1?oldFlush.promise:newFlush.promise);
  const delayedSelection=ui.select("P7");await tick();const latestSelection=ui.select("P8");await tick();newFlush.resolve(true);await latestSelection;oldFlush.resolve(true);await delayedSelection;
  assert.equal(c.reviewPatient,"P8","late note flush selected an older clicked patient");assert.ok(!s.calls.some(call=>call.path==="/reviews/patient"&&call.values.mrn==="P7"));s.setFlush(true);
+ const filterFlush=deferred();s.setFlush(()=>filterFlush.promise);const oldSelection=ui.select("P9");await tick();
+ $("#reviewQuery").value="last";await ui.load({resetPage:true});filterFlush.resolve(true);await oldSelection;
+ assert.equal(c.reviewPatient,"P8","late note flush overrode a newer filter operation");s.setFlush(true);$("#reviewQuery").value="";await ui.load({resetPage:true});
+ const scrollGate=deferred();s.listGates.set(400,scrollGate);const scrolling=s.scroll(401);await tick();
+ $("#reviewQuery").value="last";await ui.load({resetPage:true});scrollGate.resolve();await scrolling;await settle();
+ assert.equal(s.rows()[0].dataset.mrn,"P1000","late scroll response replaced current filter");assert.equal(c.reviewPatient,"P8");
+ $("#reviewQuery").value="";await ui.load({resetPage:true});
  const late=deferred();s.detailGates.set("P4",late);const abandoned=ui.select("P4");await tick();
  c.account="OTHER";c.epoch++;c.currentReview="R2";c.reviewPatient="";ui.reset();await ui.load();late.resolve();await abandoned;
  assert.equal(c.reviewData.task.id,"R2");assert.equal(ui.patient().mrn,"P1");assert.match(ui.patient().records[0].soap,/OTHER R2/);
@@ -95,16 +173,64 @@ async function racingReads(){
 async function sharedReadsAndBoundedMemory(){
  const s=setup(),{ui,calls,context:c}=s;
  const gate=deferred();s.listGates.set("",gate);const first=ui.load(),second=ui.load();await tick();
- assert.equal(calls.filter(call=>call.path==="/reviews/patients").length,1,"same local page request was not shared");gate.resolve();await Promise.all([first,second]);
+ assert.equal(calls.filter(call=>call.path==="/reviews/patients").length,1,"same local window request was not shared");gate.resolve();await Promise.all([first,second]);
  for(let number=2;number<=10;number++)await ui.select("P"+number);
  const before=calls.filter(call=>call.path==="/reviews/patient").length;await ui.select("P1");
  assert.equal(calls.filter(call=>call.path==="/reviews/patient").length,before+1,"detail cache retained every visited SOAP");
  const previous=calls.length;s.revisions.set("P1",1);s.setTaskRevision(2);await ui.poll({status:"completed",revision:2},c.work.revisions);
- assert.equal(calls.length,previous+2,"selected revision did not refresh its own detail");
- assert.equal(calls.at(-1).values.mrn,"P1");
+ assert.equal(calls.length,previous+2,"selected revision did not refresh its own detail");assert.equal(calls.at(-1).values.mrn,"P1");
  const revisionGate=deferred();s.listGates.set("",revisionGate);const reading=ui.load();await tick();c.work.revisions.profile=1;revisionGate.resolve();await reading;
  const beforeRefresh=calls.length;await ui.poll({status:"completed",revision:2},c.work.revisions);
- assert.equal(calls.length,beforeRefresh+1,"revision arriving during a page read was incorrectly acknowledged without re-reading it");
+ assert.equal(calls.length,beforeRefresh+1,"revision arriving during a read was acknowledged without re-reading it");
 }
 
-(async()=>{await boundedPages();await racingReads();await sharedReadsAndBoundedMemory();process.stdout.write("Review paging: bounded details, cross-page navigation, stable DOM, note guards and stale-context isolation passed\n");})().catch(error=>{console.error(error);process.exitCode=1;});
+async function nearbyLocalPrefetch(){
+ const s=setup(),{ui,calls,context:c,$}=s;await ui.load();await ui.select("P40");
+ const soap=$("#reviewDetail").querySelector(".soap-record"),before=s.renders.length,notes=s.notes.length,scroll=$("#reviewPatients").scrollTop,data=c.reviewData,next=ui.nav(1);
+ await s.runTimers(180);
+ assert.deepEqual(calls.filter(call=>call.values.prefetch).map(call=>call.values.mrn),["P41","P42","P39"],"prefetch exceeded next two / previous one");
+ assert.equal(s.maxPrefetch(),1);assert.ok(calls.filter(call=>call.path==="/reviews/patient").every(call=>call.values.local_only===true));
+ assert.equal(c.reviewPatient,"P40");assert.equal(ui.nav(1),next);assert.equal(s.notes.length,notes);assert.equal(s.renders.length,before);
+ assert.equal($("#reviewDetail").querySelector(".soap-record"),soap);assert.equal($("#reviewPatients").scrollTop,scroll);assert.equal(c.reviewData,data,"prefetch published an offscreen metadata page");
+ const bodyCount=calls.filter(call=>call.path==="/reviews/patient").length;await ui.select("P41");
+ assert.equal(calls.filter(call=>call.path==="/reviews/patient").length,bodyCount,"nearby complete SOAP was not reused");
+ assert.equal(ui.patient().mrn,"P41");
+}
+
+async function prefetchCompletenessAndRevision(){
+ const s=setup(),{ui,calls}=s;
+ s.all[10].status="partial";s.all[11].processing=true;s.all[8].record_count=0;
+ await ui.load();await ui.select("P10");await s.runTimers(180);assert.equal(calls.filter(call=>call.values.prefetch).length,0,"partial/pending/empty SOAP was prefetched");
+ s.all[10].status="ready";s.all[11].processing=false;s.all[8].record_count=1;
+ s.invalidPrefetch.set("P11","skip");s.invalidPrefetch.set("P12","revision");s.invalidPrefetch.set("P9","patient");s.setTaskRevision(2);
+ await ui.poll({status:"completed",revision:2},s.context.work.revisions);await s.runTimers(180);
+ assert.equal(calls.filter(call=>call.values.prefetch).length,3);
+ let before=calls.filter(call=>call.path==="/reviews/patient"&&!call.values.prefetch).length;await ui.select("P11");
+ assert.equal(calls.filter(call=>call.path==="/reviews/patient"&&!call.values.prefetch).length,before+1,"server-skipped SOAP entered the complete cache");
+ before=calls.filter(call=>call.path==="/reviews/patient"&&!call.values.prefetch).length;await ui.select("P12");
+ assert.equal(calls.filter(call=>call.path==="/reviews/patient"&&!call.values.prefetch).length,before+1,"wrong-revision prefetch entered cache");
+ before=calls.filter(call=>call.path==="/reviews/patient"&&!call.values.prefetch).length;await ui.select("P9");
+ assert.equal(calls.filter(call=>call.path==="/reviews/patient"&&!call.values.prefetch).length,before+1,"wrong-patient prefetch entered cache");
+}
+
+async function prefetchCancellationAndSingleLane(){
+ const s=setup(),{ui,calls,context:c}=s;await ui.load();
+ const gate=deferred();s.detailGates.set("P2",gate);await s.runTimers(180);
+ assert.equal(calls.filter(call=>call.values.prefetch).length,1);
+ await ui.select("P10");await s.runTimers(180);
+ assert.equal(calls.filter(call=>call.values.prefetch).length,1,"a new selection opened a second prefetch lane");
+ gate.resolve();await settle();await s.runTimers(180);
+ assert.deepEqual(calls.filter(call=>call.values.prefetch).map(call=>call.values.mrn),["P2","P11","P12","P9"]);assert.equal(s.maxPrefetch(),1);
+ const before=calls.filter(call=>call.path==="/reviews/patient"&&!call.values.prefetch).length;await ui.select("P2");
+ assert.equal(calls.filter(call=>call.path==="/reviews/patient"&&!call.values.prefetch).length,before+1,"abandoned selection's prefetch was reused");
+ const hidden=setup();await hidden.ui.load();hidden.hide(true);await hidden.runTimers(180);assert.equal(hidden.calls.filter(call=>call.values.prefetch).length,0,"hidden tab scheduled local prefetch");
+ hidden.hide(false);const late=deferred();hidden.detailGates.set("P2",late);await hidden.runTimers(180);hidden.hide(true);late.resolve();await settle();
+ assert.equal(hidden.calls.filter(call=>call.values.prefetch).length,1,"hidden tab continued scheduling after an in-flight read");
+ const old=setup();await old.ui.load();const stale=deferred();old.detailGates.set("P2",stale);await old.runTimers(180);
+ old.context.account="SECOND";old.context.epoch++;old.context.currentReview="R2";old.context.reviewPatient="";old.ui.reset();await old.ui.load();stale.resolve();await settle();
+ assert.equal(old.calls.filter(call=>call.values.prefetch).length,1,"late account response scheduled more old-context reads");assert.match(old.ui.patient().records[0].soap,/SECOND R2/);
+ const route=setup();await route.ui.load();route.context.page="patients";route.ui.visibility();await route.runTimers(180);assert.equal(route.calls.filter(call=>call.values.prefetch).length,0,"leaving review continued local prefetch");
+ c.page="patients";ui.visibility();
+}
+
+(async()=>{await continuousWindow();await focusSelectionAndNavigation();await anchorAndOverlayRevision();await changingCollectionDuringScroll();await racingReads();await sharedReadsAndBoundedMemory();await nearbyLocalPrefetch();await prefetchCompletenessAndRevision();await prefetchCancellationAndSingleLane();process.stdout.write("Review continuous list: bounded DOM/cache, full-range scrolling, MRN anchors, selection/note guards and local-only prefetch passed\n");})().catch(error=>{console.error(error);process.exitCode=1;});

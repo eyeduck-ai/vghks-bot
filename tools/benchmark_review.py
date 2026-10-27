@@ -55,6 +55,30 @@ def main():
                         "text_no_match": measure(lambda work=work, key=key: work.review.pages.page({"id": key, "q": "missing synthetic phrase", "limit": 40}))}
                     if count <= 1000:
                         row["legacy_full_results"] = measure(lambda work=work, key=key: work.review.results({"id": key}))
+                    generation, windows = None, []
+                    for offset in (0, 40, 80, 40, max(0, count - 40)):
+                        value = work.review.pages.page({"id": key, "offset": offset, "limit": 40})
+                        generation = generation or value["collection_revision"]
+                        if value["collection_revision"] != generation:
+                            raise AssertionError("Local window reads changed the collection generation")
+                        measured = measure(lambda offset=offset, work=work, key=key:
+                            work.review.pages.page({"id": key, "offset": offset, "limit": 40}))
+                        if measured["soap_documents"] or len(value["patients"]) > 40 or measured["sql_statements"] > 25:
+                            raise AssertionError("Continuous window exceeded its bounded metadata budget")
+                        windows.append({"offset": value["offset"], **measured})
+                    row["continuous_windows"] = windows
+                    row["local_ready_prefetch"] = measure(lambda work=work, key=key:
+                        work.review.pages.patient({"id": key, "mrn": "PAGE000001", "prefetch": True, "local_only": True}))
+                    original = work.review.db.item(key, "PAGE000001")
+                    work.review.db.item(key, "PAGE000001", {**original, "status": "partial", "processing": True})
+                    skipped = work.review.pages.patient({"id": key, "mrn": "PAGE000001", "prefetch": True, "local_only": True})
+                    if skipped.get("patient") is not None or skipped.get("prefetchable") is not False:
+                        raise AssertionError("Local prefetch adopted an incomplete SOAP snapshot")
+                    row["local_partial_prefetch"] = measure(lambda work=work, key=key:
+                        work.review.pages.patient({"id": key, "mrn": "PAGE000001", "prefetch": True, "local_only": True}))
+                    if row["local_partial_prefetch"]["soap_documents"]:
+                        raise AssertionError("Partial prefetch decoded SOAP bodies")
+                    work.review.db.item(key, "PAGE000001", original)
                     if row["page"]["soap_documents"] or row["last_page"]["soap_documents"]:
                         raise AssertionError("Patient list decoded SOAP bodies")
                     if row["detail"]["soap_documents"] != 1:

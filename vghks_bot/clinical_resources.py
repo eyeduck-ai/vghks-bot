@@ -45,6 +45,7 @@ class _Flight:
     order: int
     cancel: threading.Event = field(default_factory=threading.Event)
     subscribers: dict = field(default_factory=dict)
+    defer_probes: dict = field(default_factory=dict)
     priority: bool = False
     started: bool = False
     done: bool = False
@@ -112,6 +113,15 @@ class ClinicalResources:
         if wait and worker and worker is not threading.current_thread():
             worker.join()
 
+    def _should_defer(self, flight):
+        with self.condition:
+            pending_foreground = any(value.priority and not value.cancel.is_set() for value in self.pending)
+            probes = [flight.defer_probes.get(key) for key in flight.subscribers]
+            priority = flight.priority
+        # An idle producer must not impose its policy on an independent consumer.
+        # Evaluate arbitrary scheduler callbacks outside the registry lock.
+        return pending_foreground or bool(not priority and probes and all(probe and probe() for probe in probes))
+
     def _run(self):
         from .bot_gateway import AcquisitionDeferred
 
@@ -141,7 +151,7 @@ class ClinicalResources:
                     with self.gateway.task_context(flight.task.get("task_id", ""),
                             flight.task.get("task_kind", "clinical_resource"), flight.cancel, acquisition_id=flight.id), \
                             self.gateway.query_priority(lambda flight=flight: flight.priority,
-                                lambda: any(value.priority and not value.cancel.is_set() for value in self.pending)):
+                                lambda flight=flight: self._should_defer(flight)):
                         value = flight.fetch()
                     assessment = value.assessment if isinstance(value, Acquisition) else {}
                     if isinstance(value, Acquisition):
@@ -166,6 +176,7 @@ class ClinicalResources:
                     deferred = True
                     flight.started = False
                     self.pending.append(flight)
+                    self.condition.wait(.05)
             except BaseException as exc:
                 with self.condition:
                     flight.error = exc
@@ -238,6 +249,7 @@ class ClinicalResources:
                 self.flights[key] = flight
                 self.pending.append(flight)
             flight.subscribers[subscriber] = foreground
+            flight.defer_probes[subscriber] = getattr(self.gateway.local, "defer_probe", None)
             flight.priority = any(flight.subscribers.values())
             if self.worker is None:
                 self.worker = threading.Thread(target=self._run, name="clinical-resources", daemon=True)
@@ -249,6 +261,7 @@ class ClinicalResources:
                 while not flight.done:
                     if cancel is not None and cancel.is_set():
                         flight.subscribers.pop(subscriber, None)
+                        flight.defer_probes.pop(subscriber, None)
                         flight.priority = any(flight.subscribers.values())
                         if not flight.subscribers:
                             flight.cancel.set()
@@ -273,6 +286,7 @@ class ClinicalResources:
         finally:
             with self.condition:
                 flight.subscribers.pop(subscriber, None)
+                flight.defer_probes.pop(subscriber, None)
                 flight.priority = any(flight.subscribers.values())
                 if not flight.subscribers and not flight.done:
                     flight.cancel.set()
