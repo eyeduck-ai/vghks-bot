@@ -17,7 +17,7 @@ window.JobProgress = (() => {
     if(!embedded||event.origin!==location.origin||event.source!==parent||event.data?.account!==scopedAccount||event.data.type!=="bot:workspace-visibility")return;
     workspaceVisible=!!event.data.visible;resumeVisible();
   });
-  let owner=scopedAccount||"local",card=null,cardSignature="",minimized=false,expanded=false,serial=0,readOnly=false;
+  let owner=scopedAccount||"local",card=null,cardSignature="",minimized=true,expanded=false,serial=0,readOnly=false;
   const dialogStack=[];
   const taskNames={list:"門診清單",review:"病歷檢閱",resolve:"病人基本資料",profile:"病人基本資料",history:"歷史資料",analysis:"進階工具",surgery_schedule:"手術排程",approval_sync:"審查同步",approval_case:"審查明細",earnings_capture:"薪資業績",earnings_options:"薪資期別"};
   function publish(run,account=owner){
@@ -27,7 +27,8 @@ window.JobProgress = (() => {
     const terminal=!activeStatuses.has(run.status);
     const time=Date.parse(run.finished_at||run.updated_at||"");
     const ended=terminal?(old?.status===run.status?old._ended:(Number.isFinite(time)?time:old?Date.now():0)):0;
-    const next={...old,_owner:account,_ended:ended};
+    const started=Date.parse(run.created_at||"");
+    const next={...old,_owner:account,_ended:ended,_clockStart:old?._clockStart??(Number.isFinite(started)?started:Date.now())};
     for(const field of ["id","name","kind","status","source","message","created_at","finished_at","updated_at","read_only","_pending","_claimed"])
       if(field in run)next[field]=run[field];
     if(run.progress)next.progress={done:run.progress.done,total:run.progress.total,failed:run.progress.failed,unit:run.progress.unit,stage:run.progress.stage};
@@ -39,10 +40,10 @@ window.JobProgress = (() => {
     renderCard();
   }
   function pendingRun(name,stage,account=owner){
-    const run={id:"pending-"+(++serial)+"-"+Date.now(),name,status:"queued",_pending:true,progress:{done:0,total:null,unit:"項",stage}};
+    const run={id:"pending-"+(++serial)+"-"+Date.now(),name,status:"queued",created_at:new Date().toISOString(),_pending:true,progress:{done:0,total:null,unit:"項",stage}};
     publish(run,account);return run;
   }
-  function context(account,readonly=false){owner=account;readOnly=readonly;minimized=false;expanded=false;renderCard();}
+  function context(account,readonly=false){owner=account;readOnly=readonly;minimized=true;expanded=false;window.UtilityDock?.context(account);renderCard();}
   function live(run){return activeStatuses.has(run.status)||Date.now()-(run._ended||0)<(run.status==="completed"?5000:15000);}
   function prune(){for(const [key,run] of tasks)if(!live(run))tasks.delete(key);}
   function element(tag,text,cls){const node=document.createElement(tag);if(text!==undefined)node.textContent=text;if(cls)node.className=cls;return node;}
@@ -50,6 +51,7 @@ window.JobProgress = (() => {
   function mountCard(){
     if(embedded||!document.body)return;
     if(!card){card=element("aside",undefined,"floating-job-progress");card.id="floatingJobProgress";card.hidden=true;card.setAttribute("aria-label","資料抓取進度");}
+    if(window.UtilityDock){window.UtilityDock.attach("progress",card,10);return;}
     let dialog=dialogStack.filter(item=>item.open&&item.isConnected).at(-1)||[...document.querySelectorAll("dialog[open]")].at(-1);
     if(!dialog)for(const frame of document.querySelectorAll("#moduleFrame,#cataractFrame")){
       if(frame.hidden||!frame.getClientRects().length||frame.dataset.account!==owner)continue;
@@ -65,16 +67,22 @@ window.JobProgress = (() => {
     prune();if(embedded)return;
     const rows=[...tasks.values()].filter(run=>run._owner===owner&&live(run)).sort((a,b)=>Number(activeStatuses.has(b.status))-Number(activeStatuses.has(a.status)));
     const signature=JSON.stringify([owner,minimized,expanded,readOnly,rows.map(run=>[run.id,run.name,run.kind,run.status,run._pending,run.read_only,run.progress,run.counts,run.message])]);
-    if(card&&cardSignature===signature)return;
+    if(card&&cardSignature===signature){window.UtilityDock?.sync();return;}
     mountCard();if(!card)return;cardSignature=signature;
-    card.hidden=!rows.length;if(!rows.length)return;
+    card.hidden=!rows.length;if(!rows.length){for(const clock of card.querySelectorAll(".clinical-loading-elapsed"))clock.dispose?.();card.replaceChildren();window.UtilityDock?.sync();return;}
     const focused=card.ownerDocument.activeElement;
     const focus=card.contains(focused)?focused.dataset.action:null;
+    for(const clock of card.querySelectorAll(".clinical-loading-elapsed"))clock.dispose?.();
     card.replaceChildren();card.classList.toggle("minimized",minimized);
     const head=element("div",undefined,"floating-job-head");
-    const title=control((rows[0].name||taskNames[rows[0].kind]||"資料抓取")+(rows.length>1?` · ${rows.length} 項`:""),()=>{expanded=!expanded;minimized=false;renderCard();});
-    title.dataset.action="expand";title.setAttribute("aria-expanded",String(expanded));
-    const toggle=control(minimized?"＋":"−",()=>{minimized=!minimized;renderCard();});toggle.dataset.action="minimize";toggle.setAttribute("aria-label",minimized?"展開抓取進度":"縮小抓取進度");head.append(title,toggle);card.append(head);
+    const title=control((rows[0].name||taskNames[rows[0].kind]||"資料抓取")+(rows.length>1?` · ${rows.length} 項`:""),()=>{minimized=!minimized;expanded=!minimized;renderCard();});
+    title.dataset.action="expand";title.setAttribute("aria-expanded",String(!minimized));
+    head.append(title);
+    if(activeStatuses.has(rows[0].status)){
+      const icon=element("span",undefined,"clinical-loading-icon");icon.setAttribute("aria-hidden","true");head.append(icon);
+      if(window.ClinicalUI?.elapsed)head.append(window.ClinicalUI.elapsed({startedAt:rows[0]._clockStart}));
+    }else head.append(element("small",({completed:"完成",partial:"部分完成",failed:"失敗",paused:"已暫停"})[rows[0].status]||rows[0].status));
+    const toggle=control(minimized?"＋":"−",()=>{minimized=!minimized;expanded=!minimized;renderCard();});toggle.dataset.action="minimize";toggle.setAttribute("aria-label",minimized?"展開抓取進度":"縮小抓取進度");head.append(toggle);card.append(head);
     if(!minimized)for(const run of (expanded?rows:rows.slice(0,1))){
       const row=element("div",undefined,"floating-job-row");row.dataset.taskId=run.id;
       if(expanded)row.append(element("strong",run.name||taskNames[run.kind]||"資料抓取"));
@@ -86,6 +94,7 @@ window.JobProgress = (() => {
       if(!run._pending)action("爬蟲紀錄","debug");row.append(actions);card.append(row);
     }
     if(focus)[...card.querySelectorAll("button")].find(button=>button.dataset.action===focus)?.focus({preventScroll:true});
+    window.UtilityDock?.sync();
   }
   function remaining(run) {const end=Date.parse(run.finished_at||"");return Number.isFinite(end)?Math.max(0,5000-(Date.now()-end)):0;}
   const visible=run=>run.status!=="completed"||remaining(run)>0;
@@ -136,7 +145,7 @@ window.JobProgress = (() => {
           if(response.ok){
             removePending(placeholder.id,account);
             const ids=data.run_ids||[data.task_id||data.id].filter(Boolean);
-            for(const id of ids)publish({id,kind,name,status:"queued",source:path==="/tasks/start"?"bot":"run",progress:{done:0,total:null,unit:"項",stage:"任務已送出"}},account);
+            for(const id of ids)publish({id,kind,name,status:"queued",created_at:placeholder.created_at,source:path==="/tasks/start"?"bot":"run",progress:{done:0,total:null,unit:"項",stage:"任務已送出"}},account);
           }else publish({...placeholder,status:"failed",finished_at:new Date().toISOString(),progress:{done:0,total:null,stage:data.error||"操作未完成"}},account);
         }
         if(response.ok){for(const run of data.runs||[])if(run.kind!=="bot")publish({...run,source:"run"},account);for(const run of data.tasks||[])publish({...run,source:"bot"},account);if(path==="/tasks/detail")publish({...data,source:"bot"},account);}
@@ -149,7 +158,7 @@ window.JobProgress = (() => {
     if(event.origin!==location.origin||!frames.some(frame=>frame?.contentWindow===event.source)||event.data?.account!==account)return;
     if(event.data.type==="bot:progress")for(const run of event.data.runs||[])publish({...run,read_only:readOnly},account);
     if(event.data.type==="bot:progress-remove")removePending(event.data.id,account);
-    if(event.data.type==="bot:progress-dialog")renderCard();
+    if(event.data.type==="bot:progress-dialog"){window.UtilityDock?.sync();renderCard();}
   }
   document.addEventListener("DOMContentLoaded",()=>{
     mountCard();

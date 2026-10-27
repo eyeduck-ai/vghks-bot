@@ -1,6 +1,8 @@
 """History browsing keeps patient identity, cached data and auth recovery bounded."""
 from __future__ import annotations
 
+import copy
+import json
 import tempfile
 import threading
 import unittest
@@ -30,7 +32,9 @@ from vghks_sdk.models.documents import HtmlDocument
 from vghks_bot.analysis_fetch import clean
 from vghks_bot.analysis_store import digest
 from vghks_bot.bot import BotApplication
+from vghks_bot.report_cache import result_complete
 from vghks_bot.scanned_records import scan_id
+from vghks_bot.scanner import Cancelled
 from vghks_bot.selftest_bot import BotSyntheticSDK, wait_task
 from vghks_bot.settings import Settings, today
 
@@ -497,6 +501,228 @@ class ReviewHistoryTests(unittest.TestCase):
         # that identity guard is required; successful report branches stay local.
         self.assertEqual([call[1] for call in HistorySDK.calls], ["index", "image"])
         self.assertTrue(self.history.read(self.request("order_report", ref))["complete"])
+
+    def test_report_publishes_each_saved_image_before_the_remaining_download(self):
+        self.fetch("orders")
+        ref = self.history.read(self.request("orders"))["data"][0]["id"]
+        second = replace(IMAGE, uid="IMAGE2")
+        reached, release = threading.Event(), threading.Event()
+        orders = self.work.gateway.connection.orders
+        original = orders.download_pacs_image
+
+        def download(image):
+            if image.uid == "IMAGE2":
+                reached.set()
+                if not release.wait(10):
+                    raise AssertionError("synthetic second image was not released")
+            return BinaryAsset(original(image).content + image.uid.encode(), "image/png")
+
+        with patch.object(orders, "get_pacs_study", return_value=PacsStudy(STUDY, (IMAGE, second))), \
+                patch.object(orders, "download_pacs_image", side_effect=download):
+            key = self.work.review.start({"kind": "history", **self.request("order_report", ref)})["task_id"]
+            try:
+                self.assertTrue(reached.wait(10))
+                partial = self.history.read(self.request("order_report", ref))
+                task = self.work.review.task(key, summary=True)
+                self.assertFalse(partial["complete"])
+                self.assertTrue(partial["data"]["processing"])
+                self.assertEqual(len(partial["data"]["assets"]), 2)
+                manifest = partial["data"]["attachment_items"]
+                self.assertEqual([item["status"] for item in manifest], ["ready", "ready", "downloading"])
+                self.assertEqual(len({item["id"] for item in manifest}), 3)
+                self.assertEqual(task["progress"]["total"], 3)
+                self.assertEqual(task["progress"]["completed"], 2)
+                self.assertEqual(task["progress"]["unit"], "份附件")
+                self.assertGreater(task["revision"], 2)
+                with self.work.store.library.connect() as db:
+                    self.assertEqual(db.execute("SELECT count(*) FROM analysis_versions WHERE mrn=? AND key=?",
+                        (MRN, "history-order:" + ref)).fetchone()[0], 0,
+                        "intermediate gallery snapshots created historical report versions")
+                before_revision = partial["data"]["data_revision"]
+                identities = [item["id"] for item in manifest]
+            finally:
+                release.set()
+            final_task = wait_task(self.work, key)
+            self.assertEqual(final_task["status"], "completed")
+            self.assertEqual(final_task["progress"]["unit"], "份附件")
+            self.assertEqual(final_task["progress"]["done"], 3)
+        completed = self.history.read(self.request("order_report", ref))
+        self.assertTrue(completed["complete"])
+        self.assertFalse(completed["data"]["processing"])
+        self.assertEqual([item["id"] for item in completed["data"]["attachment_items"]], identities)
+        self.assertGreater(completed["data"]["data_revision"], before_revision)
+        self.assertEqual(len(completed["data"]["assets"]), 3)
+        with self.work.store.library.connect() as db:
+            self.assertEqual(db.execute("SELECT count(*) FROM analysis_versions WHERE mrn=? AND key=?",
+                (MRN, "history-order:" + ref)).fetchone()[0], 1)
+        operations = [call[1] for call in HistorySDK.calls]
+        self.assertEqual(operations.count("pdf"), 1)
+        self.assertEqual(operations.count("image"), 2)
+        HistorySDK.calls.clear()
+        self.assertTrue(self.fetch("order_report", ref)["items"][0]["cached"])
+        self.assertEqual(HistorySDK.calls, [])
+
+    def test_report_cancel_saves_current_image_and_never_downloads_the_next(self):
+        self.fetch("orders")
+        ref = self.history.read(self.request("orders"))["data"][0]["id"]
+        second = replace(IMAGE, uid="IMAGE2")
+        reached, release = threading.Event(), threading.Event()
+        orders = self.work.gateway.connection.orders
+        original, downloaded = orders.download_pacs_image, []
+
+        def download(image):
+            downloaded.append(image.uid)
+            reached.set()
+            if not release.wait(10):
+                raise AssertionError("synthetic image was not released")
+            return original(image)
+
+        with patch.object(orders, "get_pacs_study", return_value=PacsStudy(STUDY, (IMAGE, second))), \
+                patch.object(orders, "download_pacs_image", side_effect=download):
+            key = self.work.review.start({"kind": "history", **self.request("order_report", ref)})["task_id"]
+            try:
+                self.assertTrue(reached.wait(10))
+                self.work.review.stop(key)
+            finally:
+                release.set()
+            self.assertEqual(wait_task(self.work, key)["status"], "paused")
+        value = self.history.read(self.request("order_report", ref))
+        self.assertEqual(downloaded, [IMAGE.uid])
+        self.assertFalse(value["complete"])
+        self.assertFalse(value["data"]["processing"])
+        self.assertEqual(len(value["data"]["assets"]), 2)
+        self.assertEqual([item["status"] for item in value["data"]["attachment_items"]], ["ready", "ready", "pending"])
+        self.assertFalse(value["data"]["issues"], "cancellation was recorded as a failed clinical branch")
+        HistorySDK.calls.clear()
+        with patch.object(orders, "get_pacs_study", return_value=PacsStudy(STUDY, (IMAGE, second))):
+            self.assertEqual(self.fetch("order_report", ref)["status"], "completed")
+        self.assertEqual([call[1] for call in HistorySDK.calls], ["image"])
+
+    def test_cancelled_branch_is_rethrown_instead_of_becoming_an_issue(self):
+        self.fetch("orders")
+        ref = self.history.read(self.request("orders"))["data"][0]["id"]
+        orders = self.work.gateway.connection.orders
+        with patch.object(orders, "download_pdf", side_effect=Cancelled()), \
+                patch.object(orders, "download_pacs_image", wraps=orders.download_pacs_image) as image:
+            self.assertEqual(self.fetch("order_report", ref)["status"], "paused")
+        image.assert_not_called()
+        saved = self.history.read(self.request("order_report", ref))["data"]
+        self.assertFalse(saved["processing"])
+        self.assertEqual(saved["issues"], [])
+
+    def test_force_refresh_keeps_prior_files_until_replaced_and_after_failure(self):
+        self.fetch("orders")
+        ref = self.history.read(self.request("orders"))["data"][0]["id"]
+        self.fetch("order_report", ref)
+        previous = self.history.read(self.request("order_report", ref))["data"]
+        reached, release = threading.Event(), threading.Event()
+        orders = self.work.gateway.connection.orders
+
+        def failed_pdf(reference):
+            reached.set()
+            if not release.wait(10):
+                raise AssertionError("synthetic PDF was not released")
+            raise ValueError("synthetic new PDF failure")
+
+        with patch.object(orders, "download_pdf", side_effect=failed_pdf):
+            key = self.work.review.start({"kind": "history", **self.request("order_report", ref), "force": True})["task_id"]
+            try:
+                self.assertTrue(reached.wait(10))
+                refreshing = self.history.read(self.request("order_report", ref))
+                self.assertFalse(refreshing["complete"])
+                self.assertEqual({asset["digest"] for asset in refreshing["data"]["assets"]},
+                                 {asset["digest"] for asset in previous["assets"]})
+                self.assertTrue(refreshing["data"]["texts"])
+                self.assertTrue(all(item.get("retained") for item in refreshing["data"]["attachment_items"]),
+                                "pending force downloads did not identify their prior saved files")
+            finally:
+                release.set()
+            self.assertEqual(wait_task(self.work, key)["status"], "partial")
+        value = self.history.read(self.request("order_report", ref))["data"]
+        self.assertFalse(value["processing"])
+        self.assertEqual({asset["digest"] for asset in value["assets"]}, {asset["digest"] for asset in previous["assets"]})
+        failed = next(item for item in value["attachment_items"] if item["status"] == "failed")
+        self.assertTrue(failed["digest"], "failed update hid its prior successful file")
+        self.assertTrue(failed.get("retained"), "failed force update did not mark its prior file as retained")
+        ready = next(item for item in value["attachment_items"] if item["status"] == "ready")
+        self.assertFalse(ready.get("retained"), "successful new download kept its retained marker")
+        self.assertEqual([item["id"] for item in value["attachment_items"]],
+                         [item["id"] for item in previous["attachment_items"]])
+        with self.work.store.library.connect() as db:
+            versions = [json.loads(row[0]) for row in db.execute(
+                "SELECT payload FROM analysis_versions WHERE mrn=? AND key=?", (MRN, "history-order:" + ref))]
+        self.assertEqual(len(versions), 2, "force refresh stored transient versions or lost the prior final version")
+        self.assertTrue(any(version["status"] == "ready" and version["assets"] == previous["assets"] for version in versions))
+
+    def test_late_partial_checkpoint_cannot_erase_a_newer_complete_report(self):
+        self.fetch("orders")
+        ref = self.history.read(self.request("orders"))["data"][0]["id"]
+        self.fetch("order_report", ref)
+        current = self.history.read(self.request("order_report", ref))["data"]
+        old = copy.deepcopy(current)
+        old.update(processing_run="older-task", processing=True, status="partial", assets=[], attachment_items=[])
+        old["issues"] = [{"branch": "download_pdf", "code": "OLD_FAILURE", "message": "synthetic old failure"}]
+        self.history._publish_order_report({"mrn": MRN, "reference": ref}, old)
+        value = self.history.read(self.request("order_report", ref))
+        self.assertTrue(value["complete"])
+        self.assertEqual(value["data"]["assets"], current["assets"])
+        self.assertEqual(value["data"]["processing_run"], current["processing_run"])
+        self.assertGreater(value["data"]["data_revision"], current["data_revision"])
+
+    def test_late_collector_cannot_restore_an_attachment_retired_by_a_newer_final_result(self):
+        self.fetch("orders")
+        ref = self.history.read(self.request("orders"))["data"][0]["id"]
+        self.fetch("order_report", ref)
+        old = self.history.read(self.request("order_report", ref))["data"]
+        current = copy.deepcopy(old)
+        current.update(processing_run="newer-completed-run", processing=False)
+        current["assets"] = [asset for asset in current["assets"] if asset["kind"] == "image"]
+        current["attachment_items"] = [item for item in current["attachment_items"] if item["kind"] == "image"]
+        self.work.analysis.store.save_step(MRN, "history-order:" + ref, "order_report", current, self.work.username)
+        old.update(status="partial", processing=False)
+        old["issues"] = [{"branch": "get_order_report", "code": "OLD_FAILURE", "message": "synthetic late failure"}]
+        self.history._publish_order_report({"mrn": MRN, "reference": ref}, old)
+        value = self.history.read(self.request("order_report", ref))
+        self.assertTrue(value["complete"])
+        self.assertEqual(value["data"]["assets"], current["assets"])
+        self.assertEqual(value["data"]["attachment_items"], current["attachment_items"])
+        self.assertEqual(value["data"]["processing_run"], "newer-completed-run")
+
+    def test_late_collector_can_only_supply_retained_files_in_the_current_processing_manifest(self):
+        self.fetch("orders")
+        ref = self.history.read(self.request("orders"))["data"][0]["id"]
+        self.fetch("order_report", ref)
+        old = self.history.read(self.request("order_report", ref))["data"]
+        current = copy.deepcopy(old)
+        current.update(processing_run="newer-processing-run", processing=True, status="partial")
+        current["assets"] = [asset for asset in current["assets"] if asset["kind"] == "image"]
+        for item in current["attachment_items"]:
+            if item["kind"] == "pdf":
+                item["status"] = "downloading"
+                for field in ("digest", "mime", "size"):
+                    item.pop(field, None)
+        self.work.analysis.store.save_step(MRN, "history-order:" + ref, "order_report", current,
+                                          self.work.username, version=False)
+        old["assets"].append({**old["assets"][0], "ref_key": "obsolete-ref", "ordinal": 99})
+        self.history._publish_order_report({"mrn": MRN, "reference": ref}, old)
+        value = self.history.read(self.request("order_report", ref))
+        self.assertFalse(value["complete"])
+        self.assertTrue(value["data"]["processing"])
+        self.assertEqual(value["data"]["processing_run"], "newer-processing-run")
+        self.assertEqual(len(value["data"]["assets"]), 2)
+        self.assertFalse(any(item["ref_key"] == "obsolete-ref" for item in value["data"]["attachment_items"]))
+        pdf = next(item for item in value["data"]["attachment_items"] if item["kind"] == "pdf")
+        self.assertEqual(pdf["status"], "downloading")
+        self.assertTrue(pdf["retained"])
+        self.assertTrue(pdf["digest"])
+
+    def test_processing_manifest_is_incomplete_but_legacy_complete_cache_remains_valid(self):
+        store = self.work.analysis.store
+        legacy = {"status": "ready", "assets": [], "texts": [], "report_cache_revision": 1}
+        self.assertTrue(result_complete(legacy, store))
+        self.assertFalse(result_complete({**legacy, "processing": True}, store))
+        self.assertFalse(result_complete({**legacy, "attachment_items": [{"status": "pending"}]}, store))
+        self.assertFalse(result_complete({**legacy, "attachment_items": [{"status": "failed"}]}, store))
 
     def test_legacy_metadata_report_retries_incomplete_text_and_reuses_attachments(self):
         self.fetch("orders")

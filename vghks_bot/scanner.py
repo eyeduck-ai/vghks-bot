@@ -131,7 +131,8 @@ def create_sdk(settings: Settings):
     connections = TLSConnectionManager(sdk_settings)
     connections.apply_all(session)
     transport = ClinicalTransport(policy=policy, verify=sdk_settings.requests_verify,
-        session=session, connections=connections, response_encoding=settings.response_encoding)
+        session=session, connections=connections, response_encoding=settings.response_encoding,
+        attachment_base_url=sdk_settings.prq_base_url)
     return configure_orders(VghksSDK(
         settings=sdk_settings, transport=transport,
         credentials=PortalCredentials(settings.username, settings.password),

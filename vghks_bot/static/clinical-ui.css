@@ -8,6 +8,8 @@
 .patient-copy-badge:hover{background:#deecd5;border-color:#83a876}
 .patient-copy-badge:focus-visible{outline:2px solid #177b86;outline-offset:2px}
 .patient-copy-fallback{width:min(100%,46ch)!important;min-height:25px!important;padding:2px 5px!important;font-size:12px!important}
+.review-identity-line :is(.patient-mrn-copy,.patient-copy-badge,.patient-age-badge){min-height:28px!important;padding:3px 8px!important;font-size:13px!important;font-weight:650;line-height:1.4;white-space:nowrap}
+.review-identity-line .patient-copy-fallback{min-height:28px!important;font-size:13px!important}
 .patient-rail-toggle{align-self:center;justify-self:center;width:16px!important;min-width:16px!important;min-height:38px!important;padding:0!important;border:1px solid #cbd9d7;border-radius:5px!important;background:#fff;font-size:16px!important;color:#47747a;line-height:1;z-index:1}
 .patient-rail-toggle:hover{background:#edf5f3}.patient-rail-toggle .icon{display:none}
 @media(pointer:coarse){.patient-rail-toggle{width:24px!important;min-width:24px!important;min-height:38px!important}}

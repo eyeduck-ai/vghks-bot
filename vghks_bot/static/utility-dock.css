@@ -1,0 +1,14 @@
+.utility-dock{position:fixed;right:max(12px,env(safe-area-inset-right));bottom:max(12px,env(safe-area-inset-bottom));display:grid;gap:7px;width:min(360px,calc(100vw - 24px));max-height:calc(100dvh - 100px);z-index:75;pointer-events:none}
+.utility-dock[hidden]{display:none}.utility-dock>*{pointer-events:auto;min-width:0}
+body.utility-dock-host #content{padding-bottom:calc(var(--utility-dock-height,0px) + 20px)}
+dialog.utility-dock-host:not(.file-compare-dialog):not(.scan-browser-dialog){padding-bottom:calc(var(--utility-dock-height,0px) + 28px)}
+.file-compare-dialog.utility-dock-host .file-compare-workspace,.scan-browser-dialog.utility-dock-host .scan-browser-content{box-sizing:border-box;padding-bottom:calc(var(--utility-dock-height,0px) + 12px)}
+.utility-dock .floating-job-progress{position:static;inset:auto;width:auto;max-width:none;box-sizing:border-box}
+.utility-dock .floating-job-progress.minimized{width:auto;max-width:none}
+.utility-dock .floating-job-progress:not(.minimized){max-height:min(42dvh,360px);overflow:auto}
+.floating-job-head .clinical-loading-elapsed{flex:none;color:#526b61;font-variant-numeric:tabular-nums;white-space:nowrap;font-size:11px}
+.floating-job-head .clinical-loading-icon{width:12px;height:12px;flex:none}
+.clinical-loading-elapsed{font-variant-numeric:tabular-nums;white-space:nowrap}
+dialog:modal,dialog::backdrop{overscroll-behavior:contain}dialog::backdrop{overflow:hidden}
+@media(max-width:780px){.utility-dock{right:8px;bottom:max(8px,env(safe-area-inset-bottom));width:min(330px,calc(100vw - 16px));gap:5px}}
+@media(prefers-reduced-motion:reduce){.clinical-loading-icon{animation:none!important}}

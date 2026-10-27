@@ -1,9 +1,11 @@
 """Launch the real UI with synthetic SDK data, never hospital services."""
 import argparse
 import json
+import struct
 import sys
 import tempfile
 import time
+import zlib
 from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
@@ -22,6 +24,11 @@ from vghks_bot.surgery_schedule import EBOARD_URL  # noqa: E402
 
 class LocalBoardHandler(BotHandler):
     """Explicit synthetic-only board target; never redirects to the hospital."""
+    def local_request(self):
+        if self.command == "GET" and self.path == "/" and self.headers.get("Host") == self.server.origin.removeprefix("http://"):
+            return True
+        return super().local_request()
+
     def reply(self, status, payload, *, mime="application/json; charset=utf-8", cookie=None, **options):
         if self.path == "/" and isinstance(payload, bytes) and mime.startswith("text/html"):
             payload = payload.replace(EBOARD_URL.encode(), (self.server.origin+"/synthetic-board").encode())
@@ -112,12 +119,22 @@ class SessionSDK(DemographicsSDK):
         return super().demographics(mrn)
 
 
-def synthetic_pdf(label):
+def synthetic_pdf(label, *, two_pages=False):
     content = f"BT /F1 18 Tf 50 770 Td ({label}) Tj ET\n".encode("ascii")
+    if two_pages:
+        content += b"BT /F1 16 Tf 50 730 Td (PAGE 1 OF 2 - SYNTHETIC ONLY) Tj ET\n"
     objects = [b"<< /Type /Catalog /Pages 2 0 R >>", b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
         b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
         b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
         f"<< /Length {len(content)} >>\nstream\n".encode()+content+b"endstream"]
+    if two_pages:
+        objects[1] = b"<< /Type /Pages /Kids [3 0 R 6 0 R] /Count 2 >>"
+        second = (b"0.85 0.93 1 rg 50 90 495 580 re f 0 0 0 rg\n"
+                  + f"BT /F1 18 Tf 50 770 Td ({label}) Tj ET\n".encode("ascii")
+                  + b"BT /F1 16 Tf 50 730 Td (PAGE 2 OF 2 - SYNTHETIC ONLY) Tj ET\n")
+        objects.extend([
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 7 0 R >>",
+            f"<< /Length {len(second)} >>\nstream\n".encode()+second+b"endstream"])
     pdf = b"%PDF-1.4\n"
     offsets = []
     for index, value in enumerate(objects, 1):
@@ -129,7 +146,58 @@ def synthetic_pdf(label):
     return pdf+f"trailer\n<< /Size {len(objects)+1} /Root 1 0 R >>\nstartxref\n{start}\n%%EOF\n".encode()
 
 
-def seed_ophthalmic(workspace, mrn="TEST001"):
+def synthetic_png(number):
+    """Create a valid, labelled test grid using only the Python standard library."""
+    width, height = 900, 600
+    pixels = bytearray(bytes((245, 248, 250)) * width * height)
+    accent = ((32, 96, 155), (36, 124, 92), (179, 100, 31))[(number - 1) % 3]
+
+    def rectangle(x, y, wide, tall, color):
+        row = bytes(color) * wide
+        for line in range(y, y + tall):
+            start = (line * width + x) * 3
+            pixels[start:start + wide * 3] = row
+
+    glyphs = {
+        "0": (14, 17, 19, 21, 25, 17, 14), "1": (4, 12, 4, 4, 4, 4, 14),
+        "2": (14, 17, 1, 2, 4, 8, 31), "3": (30, 1, 1, 14, 1, 1, 30),
+        "S": (15, 16, 16, 14, 1, 1, 30), "Y": (17, 17, 10, 4, 4, 4, 4),
+        "N": (17, 25, 25, 21, 19, 19, 17), "T": (31, 4, 4, 4, 4, 4, 4),
+        "H": (17, 17, 17, 31, 17, 17, 17), "E": (31, 16, 16, 30, 16, 16, 31),
+        "I": (14, 4, 4, 4, 4, 4, 14), "C": (14, 17, 16, 16, 16, 17, 14),
+    }
+
+    def label(text, x, y, scale, color):
+        for index, letter in enumerate(text):
+            for line, bits in enumerate(glyphs.get(letter, ())):
+                for column in range(5):
+                    if bits & (1 << (4 - column)):
+                        rectangle(x + (index * 6 + column) * scale, y + line * scale,
+                                  scale, scale, color)
+
+    rectangle(0, 0, width, 98, accent)
+    label(f"SYNTHETIC 0{number}", 30, 25, 7, (255, 255, 255))
+    for row in range(5):
+        for column in range(9):
+            shade = (row + column + number) % 4
+            color = tuple(min(255, channel + shade * 24) for channel in accent)
+            rectangle(34 + column * 94, 132 + row * 78, 80, 64, color)
+            rectangle(66 + column * 94, 148 + row * 78, 16, 32, (255, 255, 255))
+            if (row + column) % 2:
+                rectangle(58 + column * 94, 156 + row * 78, 32, 16, (255, 255, 255))
+    label(f"0{number}", 386, 538, 7, accent)
+
+    def chunk(kind, value):
+        return (struct.pack(">I", len(value)) + kind + value
+                + struct.pack(">I", zlib.crc32(kind + value)))
+
+    raw = b"".join(b"\0" + pixels[y * width * 3:(y + 1) * width * 3] for y in range(height))
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+            + chunk(b"tEXt", b"Description\0Synthetic gallery test grid; not clinical data")
+            + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+
+
+def seed_ophthalmic(workspace, mrn="TEST001", *, report_gallery=False):
     from vghks_sdk.models import BinaryAsset, ClinicalOrder
 
     from vghks_bot.analysis_fetch import clean
@@ -154,9 +222,17 @@ def seed_ophthalmic(workspace, mrn="TEST001"):
         store.save_step(mrn, "orders-history:"+kind, "order_index", clean(orders), workspace.username)
     for row in workspace.review.history._public_orders(workspace.review.history._groups(mrn, clean(orders))):
         count = 2 if row["date"] == "2026-09-11" else 1
-        assets = [store.save_asset(mrn, f"history-asset:download_pdf:synthetic-{row['id']}-{index}",
-            BinaryAsset(synthetic_pdf(f"Synthetic exam {row['date']} - file {index}"), "application/pdf"),
-            workspace.username) for index in range(1, count+1)]
+        if report_gallery and row["date"] == "2026-09-11":
+            samples = [(synthetic_png(1), "image/png"),
+                       (synthetic_pdf("SYNTHETIC GALLERY - FILE 2 - NOT CLINICAL DATA", two_pages=True), "application/pdf"),
+                       (synthetic_png(2), "image/png"), (synthetic_png(3), "image/png")]
+            assets = [store.save_asset(mrn, f"history-asset:synthetic-gallery:{row['id']}-{index}",
+                BinaryAsset(content, mime), workspace.username)
+                for index, (content, mime) in enumerate(samples, 1)]
+        else:
+            assets = [store.save_asset(mrn, f"history-asset:download_pdf:synthetic-{row['id']}-{index}",
+                BinaryAsset(synthetic_pdf(f"Synthetic exam {row['date']} - file {index}"), "application/pdf"),
+                workspace.username) for index in range(1, count+1)]
         store.save_step(mrn, "history-order:"+row["id"], "history_order", {
             "order": row, "assets": assets, "texts": [], "details": [], "issues": [], "status": "complete"}, workspace.username)
 
@@ -167,6 +243,7 @@ def main():
     parser.add_argument("--library", action="store_true")
     parser.add_argument("--local-board", action="store_true")
     parser.add_argument("--ophthalmic", action="store_true", help="Seed signed refraction and dated PDF comparison samples")
+    parser.add_argument("--report-gallery", action="store_true", help="Seed ophthalmic reports with three synthetic PNG grids and one PDF in the first report")
     parser.add_argument("--demographics", action="store_true", help="Synthetic ROC birthdays and a numeric manual MRN")
     parser.add_argument("--lookup-failures", action="store_true", help="Synthetic expired, missing, forbidden and rejected patient queries")
     parser.add_argument("--registrations", action="store_true", help="Complete registration fields, explicit and unknown attendance")
@@ -210,10 +287,10 @@ def main():
                             case = VisitCase(record["mrn"], today()-timedelta(days=1), "O", "SYNTHETIC", "70", "眼科")
                             record.update(soap_snapshot(synthetic_soap(case, user)))
                         workspace.store.library.save_record(record, user, "fixture-library")
-                if args.ophthalmic:
-                    seed_ophthalmic(app.workspace(key))
+                if args.ophthalmic or args.report_gallery:
+                    seed_ophthalmic(app.workspace(key), report_gallery=args.report_gallery)
                     if args.demographics:
-                        seed_ophthalmic(app.workspace(key), "00012345")
+                        seed_ophthalmic(app.workspace(key), "00012345", report_gallery=args.report_gallery)
             with BotServer(0, app, manager) as server:
                 if args.sheet_management:
                     server.RequestHandlerClass = SyntheticSheetHandler

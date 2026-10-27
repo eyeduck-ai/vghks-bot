@@ -6,7 +6,7 @@ const tick=async()=>{for(let i=0;i<12;i++)await Promise.resolve();};
 function surface(){
  const nodes=new Map();let context;
  class Element{
-  constructor(tag="div"){this.tagName=tag;this.children=[];this.dataset={};this.value="";this.textContent="";this.disabled=false;this.hidden=false;this.scrollTop=0;this.events=new Map();this.className="";this.parentElement=null;
+  constructor(tag="div"){this.tagName=tag;this.children=[];this.dataset={};this.value="";this.textContent="";this.disabled=false;this.hidden=false;this.scrollTop=0;this.scrollLeft=0;this.style={};this.events=new Map();this.className="";this.parentElement=null;
    this.classList={add:name=>{this.className+=" "+name;},toggle(){}};}
   set id(value){this._id=value;nodes.set("#"+value,this);}get id(){return this._id;}
   get firstElementChild(){return this.children[0]||null;}
@@ -167,6 +167,30 @@ async function profileTests(){
  const update=()=>$("#dataContent").querySelector("button");
  c.reviewData={task:{id:"R1",status:"completed"},patients:[{...saved,records:[]}]};c.renderReviewDetail();
  let contacts=$("#reviewDetail").querySelector(".review-contact-info");
+ assert.equal(contacts.parentElement,$("#reviewDetail").querySelector(".review-identity-line"),"contact badges moved outside the patient title row");
+ const metadataPatient={checked_at:"2026-10-27T12:00:00+08:00",index_checked_at:"2026-10-27T04:00:00Z",reused:true,reuse_label:"沿用既有檢閱",records:[{date:"2026-10-20",section:"眼科",case_no:"ONE",updated_at:"2026-10-21T08:00:00",first_saved:"2026-10-20T07:00:00",cached:true}]};
+ const metadataRows=info=>{const children=info.querySelector(".review-data-values").children;return Object.fromEntries(children.filter((_,index)=>index%2===0).map((child,index)=>[child.textContent,children[index*2+1].textContent]));};
+ const info=c.reviewDataInfo(metadataPatient),infoRows=metadataRows(info);
+ assert.equal(!!info.open,false,"metadata details expanded by default");assert.match(info.querySelector(".review-data-summary").textContent,/沿用既有檢閱/);
+ assert.equal(Object.keys(infoRows).filter(label=>label.includes("核對")).length,1,"equivalent review/index timestamps were repeated");
+ assert.match(infoRows["SOAP · 2026-10-20 · 眼科 · ONE · 取得"],/^2026-10-21T08:00:00/);
+ assert.doesNotMatch(infoRows["SOAP · 2026-10-20 · 眼科 · ONE · 取得"],/2026-10-27|2026-10-20T07/);
+ const different=metadataRows(c.reviewDataInfo({...metadataPatient,index_checked_at:"2026-10-26T12:00:00+08:00"}));
+ assert.ok(different["檢閱核對"]&&different["索引核對"],"distinct metadata timestamps were collapsed");
+ const noAcquisition=metadataRows(c.reviewDataInfo({...metadataPatient,records:[{...metadataPatient.records[0],updated_at:undefined}]}));
+ assert.equal(Object.keys(noAcquisition).some(label=>label.endsWith("取得")),false,"missing SOAP acquisition time fell back to review or first-save time");
+ c.SOAPView={create:()=>s.node("div","合成 SOAP")};
+ vm.runInContext(source.split("\n").find(line=>line.startsWith("function soapNode(")),c);
+ for(const cached of [true,false]){
+  const record={...metadataPatient.records[0],id:"SOAP1",doctor:"合成醫師",cached};
+  c.reviewData.patients[0]={...saved,...metadataPatient,records:[record]};c.renderReviewDetail();
+  const caption=$("#reviewDetail").querySelector(".soap-record").querySelector(".caption");
+  assert.equal(caption.textContent,"合成醫師 · ONE · "+(cached?"沿用本機版本":"已保存")+" · 取得 2026-10-21T08:00:00","SOAP caption omitted its source, reuse state or acquisition time");
+  assert.doesNotMatch(caption.textContent,/2026-10-27|2026-10-20T07/,"SOAP caption used patient verification or first-save time");
+ }
+ c.reviewData.patients[0]={...saved,...metadataPatient,records:[{...metadataPatient.records[0],doctor:"合成醫師",updated_at:undefined}]};c.renderReviewDetail();
+ assert.equal($("#reviewDetail").querySelector(".soap-record").querySelector(".caption").textContent,"合成醫師 · ONE · 沿用本機版本","missing SOAP acquisition time gained a fallback timestamp");
+ c.reviewData.patients[0]={...saved,records:[]};c.renderReviewDetail();contacts=$("#reviewDetail").querySelector(".review-contact-info");
  assert.deepEqual(contacts.children.map(child=>child.textContent),["身分證 A123456789","手機 0912000000","住家電話 07-0000000","電話 07-1111111"]);
  assert.equal(calls.length,0,"rendering saved patient identity contacted the server");
  assert.ok(contacts.children.every(child=>child.tagName==="button"&&child.className.includes("patient-copy-badge")),"contact fields are not copyable badges");
@@ -289,7 +313,7 @@ async function historyLoadingTests(){
  c.api=async path=>{
   if(path==="/reviews/history/read"){if(readGate)await readGate.promise;if(readFailure)throw readFailure;return {data,complete,updated_at:updated,issues};}
   if(path==="/tasks/start"){starts++;if(startGate)await startGate.promise;if(startFailure)throw startFailure;return {task_id:"H1"};}
-  if(path.startsWith("/tasks/detail")){details++;if(detailGate)await detailGate.promise;return {status,updated_at:status+revision,message:"合成查詢結果"};}
+  if(path.startsWith("/tasks/detail")){details++;if(detailGate)await detailGate.promise;return {status,revision,updated_at:"same-second",message:"合成查詢結果"};}
   throw new Error(path);
  };
  s.run("vghks_bot/static/review-history.js");const ui=c.window.ReviewHistoryUI;
@@ -300,23 +324,23 @@ async function historyLoadingTests(){
  assert.match(spinner().querySelector(".clinical-loading-label").textContent,/讀取/);
  readGate.resolve();await reading;readGate=null;assert.ok(spinner(),"running query lost loading");
  const waiting=spinner();revision++;await ui.poll();assert.equal(spinner(),waiting,"progress-only update restarted spinner");
- assert.match(waiting.querySelector(".clinical-loading-elapsed").textContent,/已等待 \d+ 秒/);
+ assert.match(waiting.querySelector(".clinical-loading-elapsed").textContent,/(?:已等待 )?\d+ 秒/);
  detailGate=deferred();revision++;const beforeDetails=details,firstPoll=ui.poll(),secondPoll=ui.poll();
  detailGate.resolve();await Promise.all([firstPoll,secondPoll]);detailGate=null;
  assert.equal(details-beforeDetails,1,"overlapping polling duplicated history requests");
  data={tables:[{title:"先顯示已取得資料"}]};updated="saved-second";issues=[{code:"TEST_PARSE"}];revision++;await ui.poll();
- assert.ok($("#dataContent").children.some(child=>child.textContent==="先顯示已取得資料"),"partial result was hidden while fetching");
+ assert.ok($("#dataContent").all().some(child=>child.textContent==="先顯示已取得資料"),"partial result was hidden while fetching");
  assert.ok(spinner(),"remaining query did not show waiting state");
  assert.match($("#dataContent").querySelector(".history-index-issues").textContent,/1 項未能確認/);
  const partialSpinner=spinner();revision++;await ui.poll();assert.equal(spinner(),partialSpinner,"unchanged partial result was rebuilt");
  issues=[];
  status="completed";complete=true;data={tables:[{title:"合成數值結果"}]};await ui.poll();
- assert.equal(spinner(),null,"completed report kept loading");assert.ok($("#dataContent").children.some(child=>child.textContent==="合成數值結果"));
+ assert.equal(spinner(),null,"completed report kept loading");assert.ok($("#dataContent").all().some(child=>child.textContent==="合成數值結果"));
  status="running";complete=false;data=null;await ui.open("numeric","P1");
  status="completed";complete=true;data={tables:[{title:"恢復後的合成數值"}]};readFailure=new Error("synthetic polling failure");
  await assert.rejects(ui.poll(),/polling failure/);assert.equal(spinner(),null,"polling read failure kept loading");
  await assert.rejects(ui.poll(),/polling failure/);assert.equal($("#dataContent").querySelectorAll(".history-load-error").length,1,"repeated failure duplicated errors");
- readFailure=null;await ui.poll();assert.ok($("#dataContent").children.some(child=>child.textContent==="恢復後的合成數值"),"failed read consumed task update before result loaded");
+ readFailure=null;await ui.poll();assert.ok($("#dataContent").all().some(child=>child.textContent==="恢復後的合成數值"),"failed read consumed task update before result loaded");
  for(const terminal of ["failed","paused","partial","cancelled","completed"]){
   status=terminal;complete=false;data=null;await ui.open("order_report","P1","ORDER1");
   assert.equal(spinner(),null,terminal+" report kept loading");
@@ -584,4 +608,5 @@ function syncDetailsTests(){
  assert.ok(batch);assert.equal(batch.open,false);assert.deepEqual(batch.querySelectorAll("pre").map(node=>node.textContent),[
   "SOAP1 · SOAP_VERSION_A","SOAP2 · SOAP_VERSION_B"]);
 }
-(async()=>{await noteTests();await activityTests();await profileTests();await historyLoadingTests();layoutTests();await toolSelectionTests();await handoffTests();await sheetSyncTests();await destinationTests();await fuTests();syncDetailsTests();process.stdout.write("Review UI race, hierarchy, patient profile, loading, viewport, handoff, FU and sheet sync checks passed\n");})().catch(error=>{console.error(error);process.exitCode=1;});
+module.exports={surface,deferred,tick};
+if(require.main===module)(async()=>{await noteTests();await activityTests();await profileTests();await historyLoadingTests();layoutTests();await toolSelectionTests();await handoffTests();await sheetSyncTests();await destinationTests();await fuTests();syncDetailsTests();process.stdout.write("Review UI race, hierarchy, patient profile, loading, viewport, handoff, FU and sheet sync checks passed\n");})().catch(error=>{console.error(error);process.exitCode=1;});

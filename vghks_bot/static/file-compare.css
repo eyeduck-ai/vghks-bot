@@ -33,6 +33,12 @@
 .scan-icon{position:relative;display:inline-flex;vertical-align:middle}.scan-icon img{width:36px;height:36px}.scan-clock{position:absolute;right:-3px;bottom:-1px;background:#fff;color:#225666;border-radius:50%;font-size:19px;line-height:18px;font-weight:700}.scan-labelled{display:inline-flex;align-items:center;gap:4px}
 #analysisScans .scan-icon img{width:24px;height:24px}#analysisScans .scan-clock{font-size:14px;line-height:13px}
 @media(max-width:760px){.scan-browser-dialog{width:100vw;height:100dvh;border-radius:0}.scan-browser-head{flex-wrap:wrap}.scan-browser-workspace{display:flex;flex-direction:column;overflow:auto}.scan-browser-catalog{flex:none;max-height:45dvh;border-right:0;border-bottom:1px solid #d4dfe2}.scan-browser-preview-host{flex:none;min-height:50dvh}.scan-preview{min-height:60dvh}.scan-preview iframe{min-height:54dvh}.scan-row-actions{white-space:normal}}
+.compare-tray-group{display:flex;gap:0;align-items:stretch;border:1px solid #24765f;border-radius:6px;background:#fff;box-shadow:0 3px 14px #183f3124}
+.compare-tray-group[hidden]{display:none}.compare-tray-group .compare-tray{position:static;flex:1;box-shadow:none;border:0;border-radius:0;min-height:36px;margin:0}
+.compare-clear{position:relative;flex:none;width:38px;min-width:38px;min-height:36px;border:0;border-left:1px solid #d6e3dc;border-radius:0 5px 5px 0;padding:3px 9px;background:#fff;color:#45685c;font-size:18px}
+.compare-clear-label{display:none;position:absolute;right:0;bottom:calc(100% + 5px);z-index:2;background:#a83030;color:#fff;border-radius:4px;padding:5px 8px;font-size:12px;white-space:nowrap;pointer-events:none}.compare-clear:hover,.compare-clear:focus-visible{background:#a83030;color:#fff}.compare-clear:hover .compare-clear-label,.compare-clear:focus-visible .compare-clear-label{display:block}
+.compare-clear-dialog{width:min(420px,calc(100vw - 32px));padding:24px;border:1px solid #cbdad1;border-radius:8px}.compare-clear-dialog h2{font-size:18px}.compare-clear-dialog p{font-size:14px;line-height:1.6}.compare-clear-dialog::backdrop{background:#0005}
+.utility-dock .compare-feedback{position:static;inset:auto;max-width:none;box-sizing:border-box}
 .file-compare-title-group,.scan-browser-title-group{flex:1;min-width:0}
 .file-compare-title-group .dialog-patient,.scan-browser-title-group .dialog-patient{margin:3px 0 0;color:#536e77;font-size:.78rem;font-weight:600;line-height:1.35;overflow-wrap:anywhere}
 .file-compare-heading button{margin-left:0}

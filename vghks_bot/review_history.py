@@ -1,6 +1,8 @@
 """Cached, account-scoped history browsing for a SOAP review patient."""
 from __future__ import annotations
 
+import copy
+import uuid
 from datetime import timedelta
 
 from vghks_sdk import AuthenticationError, SoapRecord, VisitCase
@@ -19,6 +21,9 @@ from vghks_sdk.models import (
 from .analysis_fetch import clean, model, order_identity, unique_refs, validate_patient
 from .analysis_store import digest
 from .connection_state import should_pause
+from .encoding import report_attachment_downloads
+from .order_display import display_group
+from .progress import progress
 from .report_cache import branch_complete, result_complete
 from .scanner import Cancelled, safe_failure
 from .sdk_orders import assess_order_index, order_index_complete
@@ -201,8 +206,10 @@ class ReviewHistory:
             rows.append({"id": key, "name": order.get("name", ""), "date": order.get("execution_date") or order.get("order_date") or "",
                          "execution_date": order.get("execution_date", ""), "order_date": order.get("order_date", ""),
                          "case_no": order.get("case_no", ""), "case_type": order.get("case_type", ""),
-                         "status": order.get("status", ""), "requester": order.get("requester", "")})
-        return sorted(rows, key=lambda row: (row["date"], row["name"], row["id"]), reverse=True)
+                         "status": order.get("status", ""), "requester": order.get("requester", ""),
+                         **display_group(order.get("name", ""))})
+        rows.sort(key=lambda row: (row["date"], row["name"], row["id"]), reverse=True)
+        return sorted(rows, key=lambda row: not row["ophthalmic"])
 
     def order(self, mrn, reference, *, cataract=False):
         if cataract:
@@ -261,7 +268,7 @@ class ReviewHistory:
             def complete(saved):
                 return bool(saved and result_complete(saved["payload"], self.store))
 
-            if step and (complete(step) or not complete(old)):
+            if step and (step["payload"].get("data_revision") or complete(step) or not complete(old)):
                 return step["payload"], step["saved_at"]
             if old:
                 value = old["payload"]
@@ -397,11 +404,78 @@ class ReviewHistory:
                               "doctor": case.doctor_name, "doctor_card": case.doctor_card, **soap_snapshot(soap)}
                     self.app.store.library.save_record(record, self.app.username, task["id"])
         else:
-            result = self._collect_order_report(task)
+            result = self._collect_order_report(task, state)
             return {"status": result["status"], "cached": False, "resource": resource, "reference": reference}
         return {"status": "ready", "cached": False, "resource": resource, "reference": reference}
 
-    def _collect_order_report(self, task):
+    def _publish_order_report(self, task, value, state=None, *, start=False):
+        """Publish only durable files, merging late checkpoints under one transaction."""
+        mrn, key = task["mrn"], "history-order:" + task["reference"]
+        with self.app.store.library.batch():
+            saved = self.store.step(mrn, key)
+            previous = saved["payload"] if saved else {}
+            owns = start or previous.get("processing_run") in {None, value["processing_run"]}
+            snapshot = copy.deepcopy(value if owns else previous)
+            retain = not owns or snapshot.get("processing") or snapshot.get("status") == "partial"
+            incoming = {item["ref_key"]: copy.deepcopy(item) for item in value.get("attachment_items", [])}
+            old_items = {item["ref_key"]: copy.deepcopy(item) for item in previous.get("attachment_items", [])}
+            items = incoming if owns else old_items
+            assets = {asset.get("ref_key") or "legacy:" + asset["digest"]: copy.deepcopy(asset)
+                      for asset in (previous.get("assets", []) if retain else [])}
+            for asset in value.get("assets", []):
+                identity = asset.get("ref_key") or "legacy:" + asset["digest"]
+                if not owns and (not previous.get("processing") or identity not in old_items):
+                    # The current attempt alone owns its manifest. An older
+                    # collector cannot restore files retired by a newer result.
+                    continue
+                if owns or identity not in assets:
+                    assets[identity] = copy.deepcopy(asset)
+            if retain:
+                for identity, asset in list(assets.items()):
+                    if start:
+                        try:
+                            self.store.asset(asset["digest"])
+                        except (KeyError, ValueError):
+                            assets.pop(identity)
+                            continue
+                    if identity not in items:
+                        items[identity] = {"id": identity, "ref_key": identity,
+                            "ordinal": asset.get("ordinal") or len(items) + 1,
+                            "kind": "pdf" if asset.get("mime") == "application/pdf" else "image",
+                            "status": "ready", "retained": True, **asset}
+                    else:
+                        for field in ("digest", "mime", "size"):
+                            if field not in items[identity] and field in asset:
+                                items[identity][field] = asset[field]
+                        if items[identity].get("status") != "ready":
+                            items[identity]["retained"] = True
+                        elif owns:
+                            items[identity].pop("retained", None)
+                for field in ("details", "texts"):
+                    if owns and not snapshot.get(field):
+                        snapshot[field] = copy.deepcopy(previous.get(field, []))
+            # A legacy composition has no stable reference IDs. Once a matching
+            # file is observed, replace its legacy tile with the reference tile.
+            stable_digests = {asset["digest"] for identity, asset in assets.items()
+                              if not identity.startswith("legacy:")}
+            for identity in list(assets):
+                if identity.startswith("legacy:") and assets[identity]["digest"] in stable_digests:
+                    assets.pop(identity)
+                    items.pop(identity, None)
+            snapshot["attachment_items"] = sorted(items.values(), key=lambda item: (item["ordinal"], item["id"]))
+            snapshot["assets"] = sorted(assets.values(), key=lambda asset: (asset.get("ordinal", 0), asset.get("ref_key", "")))
+            snapshot["data_revision"] = previous.get("data_revision", 0) + 1
+            self.store.save_step(mrn, key, "order_report", snapshot, self.app.username,
+                                 version=owns and not value.get("processing"))
+            value["data_revision"] = snapshot["data_revision"]
+            if state:
+                task["progress"] = copy.deepcopy(value["progress"])
+                self.review.db.update_task(task["id"], {"progress": value["progress"],
+                    "message": value["progress"]["stage"]})
+        if state:
+            state.update(progress=value["progress"], message=value["progress"]["stage"])
+
+    def _collect_order_report(self, task, state=None):
         mrn, reference = task["mrn"], task["reference"]
         if task.get("cohort_id"):
             sources, visits = self.app.analysis.cataract_sources(mrn)
@@ -412,14 +486,51 @@ class ReviewHistory:
             visits = None
             variants = self.order(mrn, reference)
         allowed = self._allowed_mrns(mrn, visits=visits)
+        previous, _ = self._stored(mrn, "order_report", reference)
+        previous = previous or {}
+        old_ordinals = {item["ref_key"]: item["ordinal"] for item in previous.get("attachment_items", [])}
         result = {"id": reference, "order": self._public_orders({reference: variants})[0],
-                  "details": [], "texts": [], "assets": [], "issues": [], "status": "ready", "report_cache_revision": 1}
+                  "details": [], "texts": [], "assets": [], "attachment_items": [], "issues": [],
+                  "status": "partial", "processing": True, "processing_run": uuid.uuid4().hex,
+                  "report_cache_revision": 2}
         details = [order.get("detail_ref") for order in variants]
         reports = [order.get("report_ref") for order in variants]
         pdfs = [ref for order in variants for ref in order.get("pdf_refs") or []]
         studies = [order.get("pacs_ref") for order in variants]
+        discovered = False
 
-        def fetch(cls, method, ref, *, binary=False):
+        def check_cancel():
+            if state:
+                state.check_cancel()
+
+        def discover_attachments():
+            known = {item["id"] for item in result["attachment_items"]}
+            for method, refs, kind in (("download_pdf", pdfs, "pdf"), ("download_pacs_image", images, "image")):
+                for ref in unique_refs(refs):
+                    identity = digest([method, ref])
+                    if identity in known:
+                        continue
+                    ordinal = old_ordinals.get(identity) or max([*old_ordinals.values(),
+                        *(item["ordinal"] for item in result["attachment_items"]), 0]) + 1
+                    result["attachment_items"].append({"id": identity, "ref_key": identity,
+                        "ordinal": ordinal, "kind": kind, "status": "pending"})
+                    known.add(identity)
+
+        def publish(phase="discovery", *, start=False):
+            discover_attachments()
+            items = result["attachment_items"]
+            completed = sum(item["status"] == "ready" for item in items)
+            failed = sum(item["status"] == "failed" for item in items)
+            total = len(items) if discovered else None
+            stage = ("取得醫囑報告與附件清單" if phase == "discovery" else
+                     "已暫停，保留已取得附件" if phase == "paused" else
+                     f"已取得 {completed} / {total} 份附件" + (f"，{failed} 份未取得" if failed else ""))
+            result["progress"] = {**progress(completed + failed, total, unit="份附件", failed=failed, stage=stage),
+                                  "phase": phase, "discovered": len(items), "completed": completed}
+            self._publish_order_report(task, result, state, start=start)
+
+        def fetch(cls, method, ref, *, binary=False, item=None):
+            check_cancel()
             source = ref.get("mrn", "")
             if source not in allowed:
                 raise ValueError("醫囑參照病歷號未經就診清單核對。")
@@ -435,8 +546,14 @@ class ReviewHistory:
                         return saved["payload"]
                     except (KeyError, ValueError):
                         pass
-            with self.app.sdk_factory(self.app.settings) as sdk:
-                value = getattr(sdk.orders, method)(model(cls, ref))
+            if binary:
+                item["status"] = "downloading"
+                publish("attachments")
+                with report_attachment_downloads(), self.app.sdk_factory(self.app.settings) as sdk:
+                    value = getattr(sdk.orders, method)(model(cls, ref))
+            else:
+                with self.app.sdk_factory(self.app.settings) as sdk:
+                    value = getattr(sdk.orders, method)(model(cls, ref))
             if binary:
                 return self.store.save_asset(mrn, key, value, self.app.username)
             from vghks_sdk import assess_data
@@ -447,30 +564,39 @@ class ReviewHistory:
             self.store.save_step(mrn, key, "report", payload, self.app.username, assessment=assessment)
             return payload
 
-        def collect(cls, method, refs, target, *, binary=False):
+        def collect(cls, method, refs, accept, *, binary=False):
             for ref in unique_refs(refs):
+                check_cancel()
+                item = None
+                if binary:
+                    identity = digest([method, ref])
+                    item = next(item for item in result["attachment_items"] if item["id"] == identity)
                 try:
-                    value = fetch(cls, method, ref, binary=binary)
+                    value = fetch(cls, method, ref, binary=binary, item=item)
                     if value:
-                        target.append(value)
-                except (AuthenticationError, StorageError):
+                        if binary:
+                            asset = {**value, "ref_key": item["id"], "ordinal": item["ordinal"], "kind": item["kind"]}
+                            item.update(asset, status="ready")
+                            result["assets"].append(asset)
+                        else:
+                            accept(value)
+                except (Cancelled, AuthenticationError, StorageError):
                     raise
                 except Exception as exc:
                     if should_pause(exc):
                         raise
                     message, code = safe_failure(exc)
                     result["issues"].append({"branch": method, "code": code, "message": message})
+                    if item is not None:
+                        item.update(status="failed", message=message)
+                publish("attachments" if binary else "discovery")
 
-        collected_details = []
-        collect(OrderDetailRef, "get_order_detail", details, collected_details)
-        for detail in collected_details:
+        def accept_detail(detail):
             reports.extend(detail.get("report_refs") or [])
             pdfs.extend(detail.get("pdf_refs") or [])
             studies.extend(detail.get("pacs_refs") or [])
             result["details"].append({"fields": detail.get("fields", {})})
-        collected_reports = []
-        collect(OrderReportRef, "get_order_report", reports, collected_reports)
-        for report in collected_reports:
+        def accept_report(report):
             if report.get("report_text") or report.get("fields"):
                 result["texts"].append({"text": report.get("report_text", ""), "fields": report.get("fields", {}),
                                         "status": report.get("report_data_status", ""),
@@ -480,14 +606,36 @@ class ReviewHistory:
                                          "message": "已保留可讀內容；部分文字尚未完整解析。"})
             pdfs.extend(report.get("pdf_refs") or [])
             studies.extend(report.get("pacs_refs") or [])
-        collected_studies = []
-        collect(PacsStudyRef, "get_pacs_study", studies, collected_studies)
-        images = [image for study in collected_studies for image in study.get("images") or []]
-        collect(PdfAttachmentRef, "download_pdf", pdfs, result["assets"], binary=True)
-        collect(PacsImageRef, "download_pacs_image", images, result["assets"], binary=True)
+        images = []
+        check_cancel()
+        for field in ("details", "texts", "assets"):
+            result[field] = copy.deepcopy(previous.get(field, []))
+        publish(start=True)
+        for field in ("details", "texts", "assets"):
+            result[field] = []
+        try:
+            collect(OrderDetailRef, "get_order_detail", details, accept_detail)
+            collect(OrderReportRef, "get_order_report", reports, accept_report)
+            collect(PacsStudyRef, "get_pacs_study", studies, lambda study: images.extend(study.get("images") or []))
+            discovered = True
+            publish("attachments")
+            collect(PdfAttachmentRef, "download_pdf", pdfs, None, binary=True)
+            collect(PacsImageRef, "download_pacs_image", images, None, binary=True)
+        except StorageError:
+            raise
+        except Exception:
+            result.update(processing=False, status="partial")
+            for item in result["attachment_items"]:
+                if item["status"] == "downloading":
+                    item["status"] = "pending"
+            publish("paused")
+            raise
+        result["processing"] = False
         if result["issues"]:
             result["status"] = "partial"
         elif not (result["details"] or result["texts"] or result["assets"]):
             result["status"] = "missing"
-        self.store.save_step(mrn, "history-order:" + reference, "order_report", result, self.app.username)
+        else:
+            result["status"] = "ready"
+        publish("completed")
         return result

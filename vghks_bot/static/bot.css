@@ -261,21 +261,28 @@ button.panel-toggle.icon-button:hover{background:#dce8d7;border-color:#c4d4bd}
 #reviewPatientsToggle:hover{background:var(--soft)!important}
 .review-layout.patients-collapsed #reviewPatientsToggle{left:2px}
 .review-layout.patients-collapsed .detail-meta{padding-left:10px}
-.review-detail .detail-meta{display:flex;flex-direction:row;align-items:center;justify-content:flex-start;gap:6px 14px;flex-wrap:wrap}
+.review-detail .detail-meta{display:flex;flex-direction:row;align-items:center;justify-content:flex-start;gap:6px 10px;flex-wrap:wrap;margin-bottom:8px}
 .review-detail .detail-meta h2{line-height:1.25;overflow-wrap:anywhere}
-.review-detail .detail-meta .review-demographics{display:flex;align-items:center;flex-wrap:wrap;gap:5px 10px;font-size:12px}
-.review-contact-info{display:flex;flex-wrap:wrap;gap:5px 8px;margin:5px 0;color:var(--muted);font-size:12px;overflow-wrap:anywhere}
+.review-detail .review-identity-line .review-demographics,.review-detail .review-identity-line .review-contact-info{display:contents}
+.review-identity-line .patient-age-label,.review-identity-line .review-sex{display:inline-flex;align-items:center;min-height:28px;font-size:13px;line-height:1.4;white-space:nowrap}
 .review-detail button.review-name-copy{display:inline-block;min-height:28px;max-width:100%;padding:0;border:0;border-radius:2px;background:transparent;color:inherit;font:inherit;text-align:left;white-space:normal;overflow-wrap:anywhere;vertical-align:baseline}
 .review-detail button.review-name-copy:hover{text-decoration:underline;text-underline-offset:3px}
 .review-detail button.review-mrn-copy{display:inline-flex;align-items:center;width:auto;min-height:25px;padding:2px 8px;border:1px solid #c4d6bc;border-radius:4px;background:#eff6e9;color:#406334;font-size:12px;font-weight:650;text-decoration:none}
 .review-mrn-copy:hover{background:#deecd5;border-color:#83a876}
+.review-data-info{margin:0 0 10px;color:var(--muted);font-size:12px}
+.review-data-info>summary{cursor:pointer;min-height:24px;line-height:24px}
+.review-data-summary{color:var(--muted);font-size:12px;overflow-wrap:anywhere}
+.review-data-label{margin-left:12px;color:var(--green);text-decoration:underline;text-underline-offset:3px;white-space:nowrap}
+.review-data-values{display:grid;grid-template-columns:minmax(140px,auto) minmax(0,1fr);gap:6px 14px;margin:8px 0 0;padding:10px 12px;border-left:2px solid var(--line);background:var(--soft);line-height:1.5}
+.review-data-values dt,.review-data-values dd{margin:0;overflow-wrap:anywhere}.review-data-values dd{color:var(--ink)}
+#dataDialogActions{display:flex;align-items:center;gap:6px;margin-left:auto;flex:none}
+#dataDialogActions .data-dialog-refresh{min-height:32px;width:32px;min-width:32px;padding:6px;border:1px solid var(--line);background:#fff}
 @media(min-width:781px) and (max-width:1150px){.review-layout{--review-patient-width:190px}}
 @media(max-width:780px){.review-layout{display:flex;flex-direction:column}#reviewPatientsToggle,.review-layout.patients-collapsed #reviewPatientsToggle{position:relative;left:auto;top:auto;align-self:center;margin:-9px 0;flex:none}.review-layout.patients-collapsed .detail-meta{padding-left:0}.review-page .review-detail{padding-top:23px}}
 @media(pointer:coarse){#reviewPatientsToggle{width:22px;min-width:22px;height:26px;min-height:26px;flex-basis:22px;left:calc(var(--review-patient-width) + 1px)}}
 @media(max-width:780px) and (pointer:coarse){#reviewPatientsToggle,.review-layout.patients-collapsed #reviewPatientsToggle{left:auto}}
-@media(max-width:480px){.review-detail .detail-meta{gap:4px}.review-detail .detail-meta h2{font-size:16px}.review-detail .detail-meta .review-demographics{font-size:10px;gap:2px 5px;flex-wrap:nowrap}.review-detail button.review-mrn-copy{min-height:22px;padding:1px 5px;font-size:10px}}
-@media(max-width:380px){.review-detail .detail-meta h2{font-size:14px}.review-detail button.review-mrn-copy{padding-inline:3px}}
-@media(max-width:480px){.review-demographics .patient-age-badge{min-height:22px;padding:1px 5px;font-size:10px}}
+@media(max-width:480px){.review-detail .detail-meta{gap:5px 7px}.review-detail .detail-meta h2{font-size:16px}.review-data-values{grid-template-columns:minmax(0,1fr);gap:2px}.review-data-values dd{margin-bottom:6px}}
+@media(max-width:380px){.review-detail .detail-meta h2{font-size:14px}}
 .history-controls,.history-filter,.history-visit-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .history-current-choices{display:grid;gap:7px;margin-top:12px}
 .history-current-choices button{text-align:left;white-space:normal;border:1px solid var(--line);background:#f8faf6}
@@ -496,7 +503,7 @@ button.patient-chip .patient-chip-remove{flex:none;color:#738973;font-size:14px;
 #dataDialog[data-view=registrations]{width:min(1240px,calc(100vw - 30px))}
 .registration-filters{display:flex;flex-wrap:wrap;align-items:end;gap:10px;margin:16px 0 8px}.registration-filters label{margin:0;min-width:160px}.registration-filters label:first-child{flex:1}.registration-filters input,.registration-filters select{min-height:34px;font-size:13px}
 .registration-history .registration-table{max-width:100%;max-height:60vh;overflow:auto;border:1px solid var(--line);border-radius:4px}.registration-table>.patient-table{min-width:1050px}.registration-table>.patient-table>thead>tr>th{position:sticky;top:0;z-index:1;white-space:nowrap}.registration-table>.patient-table>tbody>tr>td{vertical-align:top;font-size:12px;padding:9px;min-width:90px}.registration-table>.patient-table>tbody>tr>td:first-child{width:auto;min-width:145px}.registration-table>.patient-table>tbody>tr>td:nth-child(6){min-width:200px}
-.registration-lines{display:grid;gap:5px;overflow-wrap:anywhere}.registration-notes{min-width:170px;max-width:300px;white-space:pre-wrap;overflow-wrap:anywhere}.registration-no-show,.registration-cancelled{display:inline-block;color:#8a491f;background:#fff2e3;padding:3px 5px;border-radius:3px;font-weight:600}.registration-cancelled{color:var(--danger);background:#fff0ee;justify-self:start}.registration-legacy{color:#8a491f;font-size:12px}.registration-original{margin-top:8px}.registration-original>summary{cursor:pointer;min-height:28px;line-height:28px;color:var(--green)}.registration-original .table-wrap{max-width:300px}.registration-original table{min-width:0;width:100%}.registration-original td{white-space:pre-wrap;overflow-wrap:anywhere}
+.registration-lines{display:grid;gap:5px;overflow-wrap:anywhere}.registration-notes{min-width:170px;max-width:300px;white-space:pre-wrap;overflow-wrap:anywhere}.registration-no-show,.registration-cancelled{display:inline-block;color:#8a491f;background:#fff2e3;padding:3px 5px;border-radius:3px;font-weight:600}.registration-cancelled{color:var(--danger);background:#fff0ee;justify-self:start}
 .task-search .task-search-filters input[type=date]{width:100%;min-width:0}
 .task-note-tools{display:flex;align-items:center;gap:10px;margin-left:auto;padding-left:12px;border-left:1px solid var(--line);min-height:32px}
 .task-note-tools label.check{min-width:0;white-space:nowrap;font-size:12px}

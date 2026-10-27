@@ -1,11 +1,45 @@
 "use strict";
 window.ClinicalUI = (() => {
-  function loading(label = "正在載入報告…") {
+  const clocks = new Set();
+  let clockTimer = null;
+  const clockNow = () => typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
+  function updateClocks() {
+    const now = clockNow();
+    for (const clock of clocks) {
+      const dialog = clock.node.closest?.("dialog");
+      if (clock.node.isConnected === false || (dialog && !dialog.open)) {
+        clocks.delete(clock);
+        continue;
+      }
+      clock.node.textContent = Math.floor((clock.elapsed + Math.max(0, now - clock.anchor)) / 1000) + " 秒";
+    }
+    if (!clocks.size && clockTimer !== null) {
+      clearInterval(clockTimer);
+      clockTimer = null;
+    }
+  }
+  function elapsed({startedAt = Date.now()} = {}) {
+    const node = document.createElement("span");
+    node.className = "clinical-loading-elapsed";
+    node.setAttribute("aria-hidden", "true");
+    const elapsed = Math.max(0, Date.now() - (Number.isFinite(startedAt) ? startedAt : Date.now()));
+    node.textContent = Math.floor(elapsed / 1000) + " 秒";
+    const clock = {node, elapsed, anchor:clockNow()};
+    clocks.add(clock);
+    node.dispose = () => {
+      clocks.delete(clock);
+      if (!clocks.size && clockTimer !== null) {clearInterval(clockTimer);clockTimer = null;}
+    };
+    if (clockTimer === null && typeof setInterval === "function") clockTimer = setInterval(updateClocks, 1000);
+    return node;
+  }
+  function loading(label = "載入中", {startedAt} = {}) {
     const area = document.createElement("div"), icon = document.createElement("span"), text = document.createElement("span");
     area.className = "clinical-loading";area.setAttribute("role", "status");
     icon.className = "clinical-loading-icon";icon.setAttribute("aria-hidden", "true");
     text.className = "clinical-loading-label";text.textContent = label;
-    area.append(icon, text);return area;
+    const seconds = elapsed({startedAt});
+    area.append(icon, text, seconds);area.dispose = () => seconds.dispose();return area;
   }
   function pdfURL(path) {
     const url = new URL(path, location.href);
@@ -190,5 +224,5 @@ window.ClinicalUI = (() => {
     return date + (multiple ? ` · 檔案 ${index}` : "");
   }
   window.addEventListener("filecomparechange", syncComparison);
-  return {loading, pdfURL, copyButton, mrnBadge, patientAge, ageBadge, fileName, downloadLink, saveBlob, reportText, textDownload, assetTools, comparisonChoice, comparisonName};
+  return {loading, elapsed, pdfURL, copyButton, mrnBadge, patientAge, ageBadge, fileName, downloadLink, saveBlob, reportText, textDownload, assetTools, comparisonChoice, comparisonName};
 })();

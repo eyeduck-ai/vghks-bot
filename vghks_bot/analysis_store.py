@@ -235,11 +235,12 @@ class AnalysisStore:
             value["payload"] = json.loads(value["payload"])
         return {"steps": self.steps(mrn), "versions": versions}
 
-    def save_step(self, mrn, key, kind, payload, account, *, assessment=None):
+    def save_step(self, mrn, key, kind, payload, account, *, assessment=None, version=True):
         content, saved = encoded(payload), timestamp()
         with self.library.connect() as db:
-            db.execute("INSERT OR IGNORE INTO analysis_versions VALUES(?,?,?,?,?)",
-                       (mrn, key, digest(payload), content, saved))
+            if version:
+                db.execute("INSERT OR IGNORE INTO analysis_versions VALUES(?,?,?,?,?)",
+                           (mrn, key, digest(payload), content, saved))
             db.execute("INSERT OR REPLACE INTO analysis_steps(mrn,key,kind,payload,saved_at,account,assessment) VALUES(?,?,?,?,?,?,?)",
                        (mrn, key, kind, content, saved, account, encoded(assessment or {})))
             if kind == "numeric":

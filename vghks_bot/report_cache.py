@@ -12,7 +12,9 @@ def branch_complete(payload, assessment=None):
 
 
 def result_complete(payload, store, *, asset_available=None):
-    if (payload.get("status") not in {
+    if (payload.get("processing") or any(item.get("status") != "ready"
+                                        for item in payload.get("attachment_items", [])) or
+            payload.get("status") not in {
         "ready", "complete", "missing", "not_executed", "no_data", "no_links"
     } or payload.get("issues") or
             any(branch.get("status") != "ok" for branch in payload.get("branches", [])) or

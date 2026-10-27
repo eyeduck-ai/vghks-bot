@@ -67,7 +67,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("Cross-Origin-Resource-Policy", "same-origin")
-        self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+        self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
         if cookie:
             self.send_header("Set-Cookie", cookie)
         self.end_headers()
@@ -121,6 +121,10 @@ class Handler(BaseHTTPRequestHandler):
             "/scan-browser.js": ("scan-browser.js", "text/javascript; charset=utf-8"),
             "/soap-view.js": ("soap-view.js", "text/javascript; charset=utf-8"),
             "/file-compare.js": ("file-compare.js", "text/javascript; charset=utf-8"),
+            "/utility-dock.js": ("utility-dock.js", "text/javascript; charset=utf-8"),
+            "/utility-dock.css": ("utility-dock.css", "text/css; charset=utf-8"),
+            "/report-gallery.js": ("report-gallery.js", "text/javascript; charset=utf-8"),
+            "/report-gallery.css": ("report-gallery.css", "text/css; charset=utf-8"),
             "/clinical-ui.js": ("clinical-ui.js", "text/javascript; charset=utf-8"),
             "/clinical-ui.css": ("clinical-ui.css", "text/css; charset=utf-8"),
             "/library-data.js": ("library-data.js", "text/javascript; charset=utf-8"),

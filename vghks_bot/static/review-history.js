@@ -3,14 +3,15 @@
 window.ReviewHistoryUI=(()=>{
  const titles={numeric:"歷年數值類報告",orders:"歷年醫囑清單",visits:"歷次就診紀錄",
   case_numeric:"該次數值類報告",case_orders:"該次醫囑清單",order_report:"醫囑報告內容",visit_soap:"歷史 SOAP"};
- let context=null,stack=[],taskId="",sequence=0,signature="",renderSignature="",polling=null,loadingStarted=0,orderQuery="",orderGroup="date",orderPage=0,visitPage=0;
+ let context=null,stack=[],taskId="",sequence=0,signature="",renderSignature="",polling=null,loadingStarted=0,orderQuery="",orderGroup="date",orderCategory="all",orderPage=0,visitPage=0,frame=null,orderView=null,reportView=null;
  const panel=()=>$("#dataContent"),modal=()=>$("#dataDialog");
  const scans=new Set(["scans","case_scans"]);
  const openScans=next=>window.ScanBrowser.open({...next,account,
   patient_name:reviewPatientIdentity(next.mrn,next.review_task_id).name,
   request:api,allowFetch:()=>!!work?.online&&!root.read_only});
- const same=(a,b)=>a&&b&&a.review_task_id===b.review_task_id&&a.mrn===b.mrn&&a.resource===b.resource&&a.reference===b.reference;
- function reset(){context=null;stack=[];taskId="";signature=renderSignature="";loadingStarted=0;sequence++;}
+ const same=(a,b)=>a&&b&&a.review_task_id===b.review_task_id&&a.cohort_id===b.cohort_id&&a.mrn===b.mrn&&a.resource===b.resource&&a.reference===b.reference;
+ function clearView(){reportView?.gallery.dispose();frame=orderView=reportView=null;}
+ function reset(){clearView();context=null;stack=[];taskId="";signature=renderSignature="";loadingStarted=0;sequence++;}
  function active(){return modal().open&&modal().dataset.view==="history"&&context;}
  function assetUrl(asset){return "/api/accounts/"+encodeURIComponent(account)+"/analysis/asset?id="+encodeURIComponent(asset.digest);}
  function action(label,callback){const button=btn(label,callback,"quiet");button.classList.add("history-action");return button;}
@@ -21,13 +22,14 @@ window.ReviewHistoryUI=(()=>{
  }
  async function load(next,{push=false,force=false}={}){
   if(push&&context)stack.push(context);
-  if(!same(context,next)){orderQuery="";orderGroup=next.resource==="orders"?"name":"date";orderPage=visitPage=0;}
+  const retaining=same(context,next)&&frame;
+  if(!same(context,next)){clearView();orderQuery="";orderGroup=next.resource==="orders"?"name":"date";orderCategory="all";orderPage=visitPage=0;}
   context=next;taskId="";signature=renderSignature="";loadingStarted=Date.now();const request=++sequence;
   extensionTask="";
   window.FileCompare?.context(account,next.mrn,reviewPatientIdentity(next.mrn,next.review_task_id).name);
   dialog("dataDialog");modal().dataset.view="history";$("#dataTitle").textContent=titles[next.resource];
   setPatientDialogContext("dataDialog",next.mrn,"",next.review_task_id);
-  panel().replaceChildren(ClinicalUI.loading("正在讀取已存報告…"));
+  if(!retaining)panel().replaceChildren(ClinicalUI.loading("正在讀取已存報告…",{startedAt:loadingStarted}));
   try{
    const result=await api("/reviews/history/read",next);
    if(request!==sequence||!active())return;
@@ -73,6 +75,7 @@ window.ReviewHistoryUI=(()=>{
   if(stack.length)controls.append(action("← 返回清單",goBack));
   controls.append(node("span",result.updated_at?"已存資料 · "+time(result.updated_at):"尚無已存資料","caption"));
   if(work?.online&&!root.read_only)controls.append(action("更新資料",()=>load(context,{force:true})));
+  if(!result.complete&&work?.online&&!root.read_only)controls.append(action("重試未完成",()=>load(context)));
   content.append(controls);
  }
  function coverage(content,result){
@@ -82,55 +85,65 @@ window.ReviewHistoryUI=(()=>{
  }
  function render(result,{loading=false}={}){
   if(!active())return;
-  const next=JSON.stringify([result.updated_at,result.complete,result.issues, result.data===null,loading]);
-  if(next===renderSignature){updateWaiting();return;}
+  const next=JSON.stringify([result.updated_at,result.data_revision,result.complete,result.issues,result.data,loading]);
+  if(next===renderSignature)return;
   renderSignature=next;
-  const content=panel();content.replaceChildren();navigation(content,result);coverage(content,result);
-  if(result.issues?.length)content.append(node("p",`已顯示可確認的資料；另有 ${result.issues.length} 項未能確認，可按「更新資料」重試。`,"error history-index-issues"));
+  panel().querySelector(".history-load-error")?.remove();
+  if(!frame){const content=panel();content.replaceChildren();frame={navigation:node("div"),coverage:node("div"),issues:node("p",undefined,"error history-index-issues"),body:node("div",undefined,"history-report-content"),waiting:node("div")};content.append(frame.navigation,frame.coverage,frame.issues,frame.body,frame.waiting);}
+  frame.navigation.replaceChildren();navigation(frame.navigation,result);frame.coverage.replaceChildren();coverage(frame.coverage,result);
+  frame.issues.textContent=result.issues?.length?`已顯示可確認的資料；另有 ${result.issues.length} 項未能確認，可按「重試未完成」重試。`:"";frame.issues.hidden=!result.issues?.length;
+  const content=frame.body;
   const data=result.data;
   if(data===null){
-   content.append(loading?ClinicalUI.loading():empty(result.complete?"沒有可顯示的資料。":root.read_only?"沒有已存資料；此資料庫為唯讀。":work?.online?"尚未取得資料，可按「更新資料」重試。":"沒有已存資料；重新連線後可查詢。"));updateWaiting();return;
+   if(!reportView){content.replaceChildren();if(!loading)content.append(empty(result.complete?"沒有可顯示的資料。":root.read_only?"沒有已存資料；此資料庫為唯讀。":work?.online?"尚未取得資料，可按「重試未完成」重試。":"沒有已存資料；重新連線後可查詢。"));}
+   waiting(loading);return;
   }
   if(context.resource==="numeric"||context.resource==="case_numeric"){
+   content.replaceChildren();
    appendNumericTables(content,data.tables||[]);
    if(context.resource==="numeric")content.append(action("從歷次就診選擇更早報告",()=>jump("visits")));
   }else if(context.resource==="orders"||context.resource==="case_orders"){
-   renderOrders(content,data);
-   if(context.resource==="orders")content.append(action("從歷次就診選擇更早醫囑",()=>jump("visits")));
-  }else if(context.resource==="visits")renderVisits(content,data);
+   if(!orderView){content.replaceChildren();orderView=renderOrders(content);if(context.resource==="orders")content.append(action("從歷次就診選擇更早醫囑",()=>jump("visits")));}
+   orderView.update(data);
+  }else if(context.resource==="visits"){content.replaceChildren();renderVisits(content,data);}
   else if(context.resource==="visit_soap"){
+   content.replaceChildren();
    content.append(node("p",[data.date,data.section,data.case_no].filter(Boolean).join(" · "),"caption"),SOAPView.create(data));
   }else renderOrderReport(content,data);
-  if(loading){const waiting=ClinicalUI.loading("正在取得其他資料，已存結果可先檢閱…");waiting.classList.add("is-compact");content.append(waiting);}
-  updateWaiting();
+  waiting(loading);
  }
- function updateWaiting(){
-  const waiting=panel().querySelector(".clinical-loading");if(!waiting||!loadingStarted)return;
-  let elapsed=waiting.querySelector(".clinical-loading-elapsed");
-  if(!elapsed){elapsed=node("span",undefined,"clinical-loading-elapsed");elapsed.setAttribute("aria-hidden","true");waiting.append(elapsed);}
-  elapsed.textContent=`已等待 ${Math.floor((Date.now()-loadingStarted)/1000)} 秒`;
+ function waiting(loading){
+  if(!loading){frame.waiting.replaceChildren();return;}
+  if(!frame.waiting.querySelector(".clinical-loading")){const value=ClinicalUI.loading("正在取得其他資料，已存結果可先檢閱…",{startedAt:loadingStarted});value.classList.add("is-compact");frame.waiting.append(value);}
  }
- function renderOrders(content,rows){
-  const controls=node("div",undefined,"history-filter"),search=node("input"),group=node("select"),results=node("div"),pager=node("div");
-  search.type="search";search.placeholder="搜尋醫囑名稱";search.setAttribute("aria-label","搜尋醫囑名稱");search.value=orderQuery;
+ function renderOrders(content){
+  let rows=[];const controls=node("div",undefined,"history-filter"),categories=node("div",undefined,"history-order-classification"),search=node("input"),group=node("select"),results=node("div"),pager=node("div"),summary=node("p",undefined,"caption");
+  search.type="search";search.placeholder="搜尋醫囑名稱或日期";search.setAttribute("aria-label","搜尋醫囑名稱或日期");search.value=orderQuery;
   group.setAttribute("aria-label","醫囑分類排序");group.append(new Option("依日期分類（新到舊）","date"),new Option("依名稱分類","name"));group.value=orderGroup;
   function draw(){
-   let visible=rows.filter(row=>!orderQuery||row.name.toLocaleLowerCase().includes(orderQuery.toLocaleLowerCase()));
-   if(orderGroup==="name")visible=[...visible].sort((a,b)=>a.name.localeCompare(b.name,"zh-Hant")||b.date.localeCompare(a.date));
+   categories.replaceChildren();
+   for(const [key,label] of [["all","全部"],["ophthalmic","眼科檢查"],["other","其他"]]){const count=rows.filter(row=>key==="all"||!!row.ophthalmic===(key==="ophthalmic")).length,choose=action(`${label}（${count}）`,()=>{orderCategory=key;orderPage=0;draw();});choose.setAttribute("aria-pressed",String(orderCategory===key));categories.append(choose);}
+   let visible=rows.filter(row=>(orderCategory==="all"||!!row.ophthalmic===(orderCategory==="ophthalmic"))&&(!orderQuery||[row.name,row.date,row.order_date,row.execution_date].filter(Boolean).join(" ").toLocaleLowerCase().includes(orderQuery.toLocaleLowerCase())));
+   visible=[...visible].sort((a,b)=>Number(!!b.ophthalmic)-Number(!!a.ophthalmic)||(orderGroup==="name"?String(a.name||"").localeCompare(String(b.name||""),"zh-Hant")||String(b.date||"").localeCompare(String(a.date||"")):String(b.date||"").localeCompare(String(a.date||""))));
+   orderPage=Math.max(0,Math.min(orderPage,Math.ceil(visible.length/40)-1));
    const pageRows=visible.slice(orderPage*40,orderPage*40+40),groups=new Map();
-   for(const row of pageRows){const key=orderGroup==="name"?(row.name||"未命名醫囑"):(row.date.slice(0,7)||"日期未提供");if(!groups.has(key))groups.set(key,[]);groups.get(key).push(row);}
+   for(const row of pageRows){const category=row.ophthalmic?"眼科檢查":"其他",key=orderGroup==="name"?(row.name||"未命名醫囑"):(String(row.date||"").slice(0,7)||"日期未提供");if(!groups.has(category))groups.set(category,new Map());const classified=groups.get(category);if(!classified.has(key))classified.set(key,[]);classified.get(key).push(row);}
    results.replaceChildren();
-   for(const [name,items] of groups){const section=node("section",undefined,"history-group");section.append(node("h3",name));
-    section.append(table(["使用／開單日期","醫囑名稱","就診案例","報告"],items.map(row=>{
+   for(const [category,classified] of groups){const categorySection=node("section",undefined,"history-order-category");categorySection.append(node("h3",category));
+    for(const [name,items] of classified){const section=node("section",undefined,"history-group");section.append(node("h4",name));
+     section.append(table(["使用／開單日期","醫囑名稱","就診案例","報告"],items.map(row=>{
      const date=[row.execution_date||row.order_date||"日期未提供",row.execution_date&&row.order_date&&row.execution_date!==row.order_date?"開單 "+row.order_date:""].filter(Boolean).join(" · ");
      return [date,row.name||"未命名醫囑",row.case_no||"—",action("查看內容",()=>jump("order_report",row.id))];
-    })));results.append(section);}
+     })));categorySection.append(section);}
+    results.append(categorySection);
+   }
    if(!pageRows.length)results.append(empty("沒有符合的醫囑。"));
    paginate(pager,orderPage,visible.length,index=>{orderPage=index;draw();modal().scrollTop=0;panel().scrollTop=0;});
   }
   search.addEventListener("input",()=>{orderQuery=search.value;orderPage=0;draw();});
   group.addEventListener("change",()=>{orderGroup=group.value;orderPage=0;draw();});
-  controls.append(search,group);content.append(controls,node("p",rows.length+" 筆醫囑 · 點選後才讀取報告內容","caption"),results,pager);draw();
+  controls.append(search,group);content.append(controls,categories,summary,results,pager);
+  return {update(next){rows=next;summary.textContent=rows.length+" 筆醫囑 · 點選後才讀取報告內容";draw();}};
  }
  function renderVisits(content,rows){
   const results=node("div"),pager=node("div");
@@ -149,31 +162,23 @@ window.ReviewHistoryUI=(()=>{
  }
  function renderOrderReport(content,data){
   const order=data.order||{};
-  content.append(node("p",[order.date,order.name,order.case_no].filter(Boolean).join(" · "),"caption"));
-  const openCompare=action("查看比較",()=>window.FileCompare.open());
-  openCompare.classList.add("history-compare-open");
-  const syncCompare=()=>{const count=window.FileCompare.count();openCompare.textContent=`查看比較（${count} / 6）`;openCompare.disabled=!count;};
-  if(data.assets?.length){syncCompare();content.append(openCompare);}
-  if(data.assets?.length)content.append(node("h3","報告附件"));
-  for(const [index,asset] of (data.assets||[]).entries()){
-   const wrapper=node("div",undefined,"history-asset"),link=node("a","在獨立檢視器開啟附件 "+(index+1));link.href=assetUrl(asset);link.target="_blank";link.rel="noopener";
-   const file=node(asset.mime==="application/pdf"?"iframe":"img");
-   file.src=asset.mime==="application/pdf"?ClinicalUI.pdfURL(link.href):link.href;
-   file.title="醫囑報告 "+(index+1);file.loading="lazy";
-   if(file.tagName==="IMG")file.alt=file.title;
-   wrapper.append(file);
-   const name=[order.date,order.name||"醫囑附件",index+1].filter(Boolean).join(" ");
-   const controls=node("div",undefined,"attachment-toolbar");
-   controls.append(ClinicalUI.comparisonChoice({account,mrn:context.mrn,digest:asset.digest,mime:asset.mime,
-     name:order.name||"醫囑附件",source:"醫囑報告",date:order.date||"",fileIndex:index+1,fileCount:data.assets.length,reportId:order.id}),ClinicalUI.assetTools({url:link.href,asset,name,image:file}),link);
-   controls.addEventListener("change",syncCompare);
-   wrapper.append(controls);content.append(wrapper);
+  if(!reportView){
+   content.replaceChildren();
+   const meta=node("p",undefined,"caption"),text=node("div"),issues=node("p",undefined,"error"),blank=empty("此醫囑沒有可顯示的報告內容。");
+   const gallery=window.ReportGallery.create({urlFor:assetUrl,identity:{account,mrn:context.mrn}});
+   reportView={meta,text,issues,blank,gallery,textSignature:""};content.append(meta,gallery.element,text,issues,blank);
   }
-  if(data.texts?.length||data.details?.length)content.append(ClinicalUI.textDownload(data,[order.date,order.name||"醫囑報告"].filter(Boolean).join(" ")));
-  for(const report of data.texts||[]){content.append(node("h3","文字報告"));if(report.text)content.append(node("pre",report.text,"history-report-text"));if(Object.keys(report.fields||{}).length)content.append(table(["欄位","內容"],Object.entries(report.fields).map(([key,value])=>[key,String(value??"")])));}
-  if(data.details?.length){content.append(node("h3","醫囑明細"));for(const detail of data.details)if(Object.keys(detail.fields||{}).length)content.append(table(["欄位","內容"],Object.entries(detail.fields).map(([key,value])=>[key,String(value??"")])));}
-  if(data.issues?.length)content.append(node("p",data.issues.map(issue=>issue.branch+"："+issue.message).join("；"),"error"));
-  if(!data.details?.length&&!data.texts?.length&&!data.assets?.length)content.append(empty("此醫囑沒有可顯示的報告內容。"));
+  reportView.meta.textContent=[order.date,order.name,order.case_no].filter(Boolean).join(" · ");
+  reportView.gallery.update(data);
+  const textSignature=JSON.stringify([order,data.texts,data.details]);
+  if(textSignature!==reportView.textSignature){
+   reportView.textSignature=textSignature;const text=reportView.text;text.replaceChildren();
+   if(data.texts?.length||data.details?.length)text.append(ClinicalUI.textDownload(data,[order.date,order.name||"醫囑報告"].filter(Boolean).join(" ")));
+   for(const report of data.texts||[]){text.append(node("h3","文字報告"));if(report.text)text.append(node("pre",report.text,"history-report-text"));if(Object.keys(report.fields||{}).length)text.append(table(["欄位","內容"],Object.entries(report.fields).map(([key,value])=>[key,String(value??"")])));}
+   if(data.details?.length){text.append(node("h3","醫囑明細"));for(const detail of data.details)if(Object.keys(detail.fields||{}).length)text.append(table(["欄位","內容"],Object.entries(detail.fields).map(([key,value])=>[key,String(value??"")])));}
+  }
+  reportView.issues.textContent=(data.issues||[]).map(issue=>issue.branch+"："+issue.message).join("；");reportView.issues.hidden=!data.issues?.length;
+  reportView.blank.hidden=!!(data.details?.length||data.texts?.length||data.assets?.length||data.attachment_items?.length);
  }
  function poll(){
   if(polling?.sequence===sequence)return polling.promise;
@@ -182,12 +187,12 @@ window.ReviewHistoryUI=(()=>{
  }
  async function pollOnce(){
   if(!taskId||!active())return;
-  const id=taskId,request=sequence;updateWaiting();
+  const id=taskId,request=sequence;
   try{
    const task=await api("/tasks/detail?summary=1&id="+encodeURIComponent(id));
    if(request!==sequence||id!==taskId||!active())return;
    JobProgress.publish(task);
-   const current=task.status+"/"+task.updated_at;
+   const current=JSON.stringify([task.status,task.revision??task.updated_at]);
    if(current===signature)return;
    const result=await api("/reviews/history/read",context);
    if(request!==sequence||id!==taskId||!active())return;
@@ -203,6 +208,5 @@ window.ReviewHistoryUI=(()=>{
   }
  }
  modal().addEventListener("close",reset);
- window.addEventListener("filecomparechange",()=>{const button=active()&&panel().querySelector(".history-compare-open");if(button){const count=window.FileCompare.count();button.textContent=`查看比較（${count} / 6）`;button.disabled=!count;}});
  return {open,openCurrent,openTask,poll,reset,dismiss:reset};
 })();

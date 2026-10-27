@@ -498,6 +498,12 @@ class Review:
 
     def task_progress(self, task, *, stage=None):
         kind, unit, counter = task["kind"], "項", "default"
+        if (kind == "history" and task.get("resource") == "order_report"
+                and task.get("progress", {}).get("unit") == "份附件"):
+            value = dict(task["progress"])
+            if stage is not None:
+                value["stage"] = stage
+            return value
         total, checked_at, failed_counted = 1, None, False
 
         def count(field):

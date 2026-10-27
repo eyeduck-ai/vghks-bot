@@ -104,7 +104,7 @@ function setPatientDialogContext(id,mrn,name="",taskId=currentReview){
  context.textContent=(name||patient.name)+" · 病歷號 "+mrn;
  context.hidden=false;dialogElement.setAttribute("aria-describedby",context.id);
 }
-function dialog(id){Choices.sync();if(id==="dataDialog"){extensionTask="";extensionContext=null;$("#dataDialog").dataset.view="general";setPatientDialogContext(id,"");}if(!$("#"+id).open)$("#"+id).showModal();}
+function dialog(id){Choices.sync();if(id==="dataDialog"){extensionTask="";extensionContext=null;$("#dataDialogActions")?.replaceChildren();$("#dataDialog").dataset.view="general";setPatientDialogContext(id,"");}if(!$("#"+id).open)$("#"+id).showModal();}
 function confirmDelete(text,{title="確認刪除",label="刪除"}={}){$("#confirmText").textContent=text;const d=$("#confirmDialog");d.querySelector("h2").textContent=title;d.querySelector('button[value="delete"]').textContent=label;d.returnValue="";d.showModal();return new Promise(resolve=>d.addEventListener("close",()=>resolve(d.returnValue==="delete"),{once:true}));}
 
 function renderAccounts(){
@@ -372,6 +372,26 @@ function patientClipboardRow(patient){
  return [patient.mrn,patient.name,patient.mobile_phone]
   .map(value=>String(value??"").replace(/[\t\r\n]+/g," ").trim()).join("\t");
 }
+function reviewDataInfo(patient){
+ const records=patient.records||[],checked=patient.checked_at,index=patient.index_checked_at;
+ const info=node("details",undefined,"review-data-info"),summary=node("summary");
+ const label=patient.reused?patient.reuse_label||"沿用已存結果":"已保存 "+records.length+" 份 SOAP";
+ summary.append(node("span",[label,checked?"檢閱核對 "+time(checked):index?"索引核對 "+time(index):""].filter(Boolean).join(" · "),"review-data-summary"),node("span","資料資訊","review-data-label"));
+ const rows=[],sameTime=(a,b)=>a===b||!!a&&!!b&&Number.isFinite(Date.parse(a))&&Date.parse(a)===Date.parse(b);
+ if(checked&&index&&sameTime(checked,index))rows.push(["檢閱／索引核對",time(checked)]);
+ else{if(checked)rows.push(["檢閱核對",time(checked)]);if(index)rows.push(["索引核對",time(index)]);}
+ for(const record of records){
+  const title=["SOAP",record.date,record.section,record.case_no].filter(Boolean).join(" · ");
+  if(record.updated_at)rows.push([title+" · 取得",time(record.updated_at)+(record.cached?" · 沿用本機版本":"")]);
+  else if(record.cached)rows.push([title,"沿用本機版本"]);
+  if(record.first_saved&&!sameTime(record.first_saved,record.updated_at))rows.push([title+" · 首次保存",time(record.first_saved)]);
+  if(record.saved_at&&!sameTime(record.saved_at,record.first_saved))rows.push([title+" · 版本保存",time(record.saved_at)]);
+ }
+ if(!rows.length)return node("p",label,"review-data-summary");
+ const values=node("dl",undefined,"review-data-values");
+ for(const [name,value] of rows)values.append(node("dt",name),node("dd",value));
+ info.append(summary,values);return info;
+}
 function renderReviewDetail(){
  const panel=$("#reviewDetail"),icons=new Map();
  for(const image of panel.querySelectorAll(".review-controls .review-icon")){
@@ -387,15 +407,15 @@ function renderReviewDetail(){
   for(const target of soap.querySelectorAll("[data-tag-categories]")){
    for(const category of JSON.parse(target.dataset.tagCategories))if(!tagTargets.has(category))tagTargets.set(category,target);
   }
-  section.append(node("h3",record.date+" · "+record.section),node("p",[record.doctor,record.case_no,record.cached?"使用本機版本":"已保存",time(record.updated_at)].filter(Boolean).join(" · "),"caption"));
+  section.append(node("h3",record.date+" · "+record.section),node("p",[record.doctor,record.case_no,record.cached?"沿用本機版本":"已保存",record.updated_at?"取得 "+time(record.updated_at):""].filter(Boolean).join(" · "),"caption"));
   for(const mark of soap.querySelectorAll(".soap-original mark[data-search-hit], .soap-view > .soap mark[data-search-hit]")){
    searchTargets.push({mark,date:record.date,hit:mark.textContent.trim().replace(/\s+/g," ").slice(0,24)||"命中內容"});
   }
   section.append(soap);recordSections.push(section);
  }
- const name=node("div",undefined,"detail-meta"),demographics=node("div",undefined,"review-demographics");
+ const name=node("div",undefined,"detail-meta review-identity-line"),demographics=node("div",undefined,"review-demographics");
  const mrn=ClinicalUI.mrnBadge(p.mrn,message=>say(message));
- demographics.append(mrn,ClinicalUI.ageBadge(p,{highlightBelow:55}),node("span","性別 "+(p.sex||"未提供"),"muted"));
+ demographics.append(mrn,ClinicalUI.ageBadge(p,{highlightBelow:55}),node("span","性別 "+(p.sex||"未提供"),"muted review-sex"));
  const noteControl=window.ReviewNotesUI.control(p);
  const copyName=ClinicalUI.copyButton(patientClipboardRow(p),{label:"刀表資料",text:p.name||"姓名未提供",className:"review-name-copy",announce:message=>say(message)});
  copyName.title="點擊複製病歷號、姓名與手機（Tab 分隔）";
@@ -408,9 +428,9 @@ function renderReviewDetail(){
    const badge=ClinicalUI.copyButton(value,{label,text:label+" "+value,announce:message=>say(message)});
    badge.setAttribute("aria-label","複製"+label+" "+value);contacts.append(badge);
   }
-  panel.append(contacts);
+  name.append(contacts);
  }
- if(p.checked_at)panel.append(node("p",[p.reused?p.reuse_label||"沿用已存結果":"最後查詢",time(p.checked_at)].join(" · "),"caption"));
+ panel.append(reviewDataInfo(p));
  const controls=node("div",undefined,"review-controls"),shortcuts=node("div",undefined,"detail-shortcuts");
  shortcuts.append(btn("該次數值類報告",()=>window.ReviewHistoryUI.openCurrent("case_numeric",p.mrn,p.records)),
   btn("歷年數值類報告",()=>window.ReviewHistoryUI.open("numeric",p.mrn)),
@@ -464,7 +484,7 @@ function renderReviewDetail(){
  }
  if(summary.childElementCount)panel.append(summary);
  if(["error","partial","forbidden"].includes(p.status)&&!inProgress.has(reviewData.task.status))panel.append(btn("重試此病人",async()=>{await api("/tasks/start",{resume:currentReview,retry_only:[p.mrn]});await loadReview();}));
- if(p.message)panel.append(node("p",p.message,"attempts"));if(p.index_checked_at)panel.append(node("p","索引核對 "+time(p.index_checked_at),"caption"));
+ if(p.message)panel.append(node("p",p.message,"attempts"));
  if(p.attempts?.some(a=>a.status!=="ready")){const d=node("details",undefined,"attempts"),list=node("ul");d.append(node("summary","較新紀錄／未取得項目"));for(const a of p.attempts.filter(a=>a.status!=="ready"))list.append(node("li",`${a.date} · ${a.case_no} · ${a.status==="empty"?"SOAP 空白":labels[a.status]||a.status} ${a.message||""}`));d.append(list);panel.append(d);}
  panel.append(...recordSections);
  if(!recordSections.length)panel.append(empty(labels[p.status]||"尚未取得 SOAP"));
@@ -518,13 +538,19 @@ async function extension(kind,mrn,recordId="",force=false){
  const revision=epoch,current=()=>revision===epoch&&extensionContext===context&&$("#dataDialog").open;
  $("#dataTitle").textContent={numeric:"本次數值報告",profile:"病人基本資料"}[kind]||"掛號紀錄";
  $("#dataContent").replaceChildren(ClinicalUI.loading("正在讀取已保存資料…"));dialog("dataDialog");extensionContext=context;setPatientDialogContext("dataDialog",mrn);
- const {data}=await api("/extensions/read",context);if(!current())return;
+ if(kind==="registrations"){$("#dataDialog").dataset.view="registrations";registrationRefresh(context,true);}
+ let data;
+ try{({data}=await api("/extensions/read",context));}
+ catch(error){if(current()&&kind==="registrations"){registrationRefresh(context);$("#dataContent").replaceChildren(empty("無法讀取已保存掛號紀錄，可按更新重試。"));}throw error;}
+ if(!current())return;
  if(data)renderExtension(data,kind);
  if(kind==="profile"&&data?.basic_info_at&&!force)return;
  if(!work.online||root.read_only){
   if(!data)$("#dataContent").replaceChildren(empty(root.read_only?"沒有已保存資料；唯讀資料庫無法查詢。":"沒有已保存資料，請登入後再查詢。"));
+  if(kind==="registrations")registrationRefresh(context);
   return;
  }
+ if(kind==="registrations")registrationRefresh(context,true);
  if(kind==="profile"){
   const content=$("#dataContent");if(!data)content.replaceChildren();
   for(const button of content.querySelectorAll("button"))button.disabled=true;
@@ -534,6 +560,9 @@ async function extension(kind,mrn,recordId="",force=false){
   const task=await api("/tasks/start",{...context,force});if(!current())return;
   extensionTask=task.task_id;await showExtensionTask(extensionTask,kind,false);
  }catch(error){
+  if(current()&&kind==="registrations"){
+   if(data)renderExtension(data,kind);else{$("#dataContent").replaceChildren(empty("未取得掛號紀錄，可按更新重試。"));registrationRefresh(context);}
+  }
   if(current()&&kind==="profile"){
    if(data)renderExtension(data,kind);else $("#dataContent").replaceChildren(empty("未取得基本資料，可關閉後重新查詢。"));
   }
@@ -545,21 +574,36 @@ async function showExtensionTask(id,kind,open=true){
   window.ReviewHistoryUI?.dismiss();
   $("#dataTitle").textContent={numeric:"本次數值報告",profile:"病人基本資料"}[kind]||"掛號紀錄";
   $("#dataContent").replaceChildren(ClinicalUI.loading("正在讀取已保存資料…"));dialog("dataDialog");extensionTask=id;extensionContext={kind};
+  if(kind==="registrations"){$("#dataDialog").dataset.view="registrations";registrationRefresh(extensionContext,true);}
  }
  const previous=extensionContext,revision=epoch;
  const current=()=>revision===epoch&&extensionTask===id&&extensionContext===previous&&$("#dataDialog").open;
- let task=await api("/tasks/detail?summary=1&id="+encodeURIComponent(id));if(!current())return;
- if(!inProgress.has(task.status))task=await api("/tasks/detail?id="+encodeURIComponent(id));
+ let task;
+ try{
+  task=await api("/tasks/detail?summary=1&id="+encodeURIComponent(id));if(!current())return;
+  if(!inProgress.has(task.status))task=await api("/tasks/detail?id="+encodeURIComponent(id));
+ }catch(error){if(current()&&kind==="registrations"){registrationRefresh(previous);if($("#dataContent").querySelector(".clinical-loading"))$("#dataContent").replaceChildren(empty("掛號紀錄暫時無法讀取，可按更新重試。"));}throw error;}
  if(!current())return;extensionTask=id;
  extensionContext={kind:kind||task.kind,mrn:task.mrn,record_id:task.record_id||"",...(task.review_task_id?{review_task_id:task.review_task_id}:{})};
  if(open){$("#dataTitle").textContent=task.name;setPatientDialogContext("dataDialog",task.mrn);}
- if(task.items?.length)renderExtension(task.items[0],kind||task.kind);
+ if(task.items?.length)renderExtension(task.items[0],kind||task.kind,{loading:inProgress.has(task.status)});
  else $("#dataContent").replaceChildren(inProgress.has(task.status)?ClinicalUI.loading(task.message||"正在取得資料…"):node("p",task.message||labels[task.status],"muted"));
+ if((kind||task.kind)==="registrations")registrationRefresh(extensionContext,inProgress.has(task.status));
  JobProgress.publish(task);
  if(!inProgress.has(task.status)){
   extensionTask="";
   if(["registrations","profile"].includes(kind||task.kind)&&page==="review"&&currentReview){await window.ReviewNotesUI.load(currentReview,{force:true});await loadReview();}
  }
+}
+function registrationRefresh(context,busy=false){
+ const area=$("#dataDialogActions");if(!area)return;
+ const revision=epoch,button=btn("更新掛號紀錄",()=>{
+  if(revision!==epoch||extensionContext!==context||!context?.mrn||!$("#dataDialog").open||root.read_only||!work?.online||busy)return;
+  return extension("registrations",context.mrn,context.record_id||"",true);
+ });
+ setIcon(button,"refresh","更新掛號紀錄");button.classList.add("data-dialog-refresh");
+ button.disabled=busy||!!root.read_only||!work?.online||!context?.mrn;
+ button.setAttribute("aria-busy",String(busy));area.replaceChildren(button);
 }
 const eyeNumericPatterns=[/(?<![a-z0-9])va(?![a-z0-9])/i,/(?<![a-z0-9])vacc(?![a-z0-9])/i,/驗光\s*-\s*散瞳前/i,/(?<![a-z0-9])iop\s*-\s*pneumo(?![a-z0-9])/i,/(?<![a-z0-9])endothelial\s+no(?![a-z0-9])/i,/(?<![a-z0-9])km(?![a-z0-9])/i,/(?<![a-z0-9])iop\s*-\s*recheck(?![a-z0-9])/i,/驗光\s*-\s*散瞳後/i,/配鏡/,/(?<![a-z0-9])cct(?![a-z0-9])/i,/(?<![a-z0-9])acd(?![a-z0-9])/i,/(?<![a-z0-9])lt(?![a-z0-9])/i,/(?<![a-z0-9])axl(?![a-z0-9])/i,/(?<![a-z0-9])basic\s+schirmer(?![a-z0-9])/i,/(?<![a-z0-9])ishihara(?![a-z0-9])/i];
 function eyeNumericRank(t){const rank=text=>eyeNumericPatterns.findIndex(pattern=>pattern.test(String(text).normalize("NFKC").replace(/[–－−]/g,"-")));const title=rank(t.title||t.name||"");if(title>=0)return title;const headers=rank([...(t.headers||[]),...(t.column_paths||[]).flat()].join(" "));return headers<0?eyeNumericPatterns.length:headers;}
@@ -578,7 +622,7 @@ function appendNumericTables(c,tables){for(const {table:t} of tables.map((table,
   if(t.header_rows?.length)c.append(node("p","來源表頭："+t.header_rows.map(parts=>parts.join(" / ")).join("；"),"caption"));
   if(t.parsing_issues?.length)c.append(node("p","來源解析提示："+t.parsing_issues.join("、"),"caption"));
  }if(!tables.length)c.append(empty("沒有可顯示的數值表。"));}
-function renderExtension(data,kind){const c=$("#dataContent");c.replaceChildren(node("p",`${data.cached?"本機資料 · ":""}最後取得 ${time(kind==="profile"?data.basic_info_at||data.updated_at:data.updated_at)}`,"caption"));const update=btn("更新資料",()=>extension(kind,extensionContext.mrn,extensionContext.record_id,true));update.disabled=!!root.read_only||!work?.online;c.append(update);if(data.status==="deleted"){c.append(empty("資料已刪除。"));return;}
+function renderExtension(data,kind,{loading=false}={}){const c=$("#dataContent");c.replaceChildren(node("p",`${data.cached?"本機資料 · ":""}最後取得 ${time(kind==="profile"?data.basic_info_at||data.updated_at:data.updated_at)}`,"caption"));$("#dataDialogActions")?.replaceChildren();if(kind==="registrations")registrationRefresh(extensionContext,loading);else{const update=btn("更新資料",()=>extension(kind,extensionContext.mrn,extensionContext.record_id,true));update.disabled=!!root.read_only||!work?.online;c.append(update);}if(data.status==="deleted"){c.append(empty("資料已刪除。"));return;}
  if(kind==="profile"){
   c.append(table(["欄位","資料"],[["姓名",data.name||"未提供"],["病歷號",data.mrn],
    ["身分證",data.national_id||(data.basic_info_at?"院方未提供":"尚未查詢")],["生日",data.birthday||"未提供"],
@@ -735,7 +779,7 @@ $("#rulesForm").addEventListener("submit",e=>{e.preventDefault();act(async()=>{
  say("檢閱設定已保存。");
 });});
 $("#rulesDialog").addEventListener("close",()=>window.ToolWorkspace?.cancelSettings());
-$("#dataDialog").addEventListener("close",()=>{extensionTask="";extensionContext=null;});
+$("#dataDialog").addEventListener("close",()=>{extensionTask="";extensionContext=null;$("#dataDialogActions")?.replaceChildren();});
 $("#rulesForm").addEventListener("invalid",e=>{for(let p=e.target.parentElement;p&&p!==e.currentTarget;p=p.parentElement)if(p.tagName==="DETAILS")p.open=true;},true);
 for(const button of $$("button[data-icon]"))setIcon(button,button.dataset.icon,button.dataset.iconLabel||button.textContent,button.dataset.iconText!=="true");
 for(const [id,name,label] of [["refreshTasks","refresh","更新爬蟲紀錄"],["refreshList","refresh","更新門診清單"],["previousDay","left","前一天"],["nextDay","right","後一天"]])setIcon($("#"+id),name,label);

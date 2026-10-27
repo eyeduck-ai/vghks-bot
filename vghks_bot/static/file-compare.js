@@ -6,7 +6,8 @@ window.FileCompare = (() => {
   const limit = 6;
   let account = "", mrn = "", patientName = "", items = [], activeIndex = 0, remoteCount = 0, feedbackTimer = 0, linkedFrame = null;
   let remoteDigests = new Set(), remoteItems = [], inlineHost = null, inlineActive = 0, inlineActiveDigest = "";
-  let numericKey = "";
+  let numericKey = "", clearing = null, selectionRevision = 0, compareTrigger = null;
+  let trayNode = null, trayGroupNode = null, feedbackNode = null;
   const embedded = window.parent !== window;
   const make = (tag, label, cls) => {
     const el = document.createElement(tag);
@@ -44,6 +45,8 @@ window.FileCompare = (() => {
     account = nextAccount || "";
     mrn = nextMrn || "";
     patientName = nextName || "";
+    compareTrigger = null;
+    selectionRevision++;
     items = [];
     activeIndex = 0;
     numericKey = "";
@@ -63,12 +66,13 @@ window.FileCompare = (() => {
       window.dispatchEvent(new CustomEvent("filecomparemessage", {detail:value}));
       return;
     }
-    const feedback = document.getElementById("fileCompareFeedback");
+    const feedback = feedbackNode;
     if (!feedback) return;
     feedback.textContent = value;
     feedback.hidden = false;
     clearTimeout(feedbackTimer);
-    feedbackTimer = setTimeout(() => {feedback.hidden = true;}, 3500);
+    feedbackTimer = setTimeout(() => {feedback.hidden = true;window.UtilityDock?.sync();}, 3500);
+    window.UtilityDock?.sync();
   }
   function add(value) {
     if (!valid(value)) throw new Error("附件資訊不完整，無法加入比較。");
@@ -80,6 +84,7 @@ window.FileCompare = (() => {
     if (items.some(item => item.digest === value.digest)) {announce("此檔案已在比較清單中。"); return false;}
     if (items.length >= limit) {announce("比較清單最多可加入 6 份檔案。"); throw new Error("比較清單最多可加入 6 份檔案。");}
     items.push({...value, zoom:1, selectionOrder:Math.max(0, ...items.map(item => item.selectionOrder)) + 1});
+    selectionRevision++;
     activeIndex = items.length - 1;
     render();
     announce(`已加入比較清單（${items.length} / ${limit}）。`);
@@ -107,6 +112,9 @@ window.FileCompare = (() => {
       if (event.data.account !== activeAccount || event.data.mrn !== mrn) return;
       removeDigest(event.data.digest);
       sendState(expectedFrame);
+    } else if (event.data?.type === "bot:compare-clear") {
+      if (event.data.account !== activeAccount || event.data.mrn !== mrn) return;
+      void requestClear();
     } else if (event.data?.type === "bot:compare-move") {
       if (event.data.account !== activeAccount || event.data.mrn !== mrn) return;
       const index = items.findIndex(item => item.digest === event.data.digest);
@@ -131,11 +139,21 @@ window.FileCompare = (() => {
   function mount() {
     if (embedded || document.getElementById("fileCompareDialog")) return;
     const tray = make("button", "檔案比較", "compare-tray");
+    trayNode = tray;
     tray.id = "fileCompareTray";
     tray.type = "button";
     tray.hidden = true;
     tray.addEventListener("click", open);
+    const trayGroup = make("div", undefined, "compare-tray-group");
+    trayGroupNode = trayGroup;
+    trayGroup.id = "fileCompareTrayGroup";trayGroup.hidden = true;
+    const clearSelection = button("×", () => {void requestClear();});
+    clearSelection.id = "fileCompareClear";clearSelection.className = "compare-clear";
+    clearSelection.setAttribute("aria-label", "清除比較");clearSelection.title = "清除比較";
+    const clearLabel = make("span", "清除比較", "compare-clear-label");clearSelection.append(clearLabel);
+    trayGroup.append(tray, clearSelection);
     const feedback = make("div", "", "compare-feedback");
+    feedbackNode = feedback;
     feedback.id = "fileCompareFeedback";
     feedback.setAttribute("role", "status");
     feedback.hidden = true;
@@ -163,7 +181,9 @@ window.FileCompare = (() => {
     numericToggle.hidden = true;
     const close = button("×", () => dialog.close());
     close.setAttribute("aria-label", "關閉檢查檔案比較");close.title="關閉";
-    heading.append(titleGroup, count, numericToggle, close);
+    const clearAll = button("清除比較", () => {void requestClear();});
+    clearAll.id = "fileCompareClearAll";
+    heading.append(titleGroup, count, numericToggle, clearAll, close);
     dialog.setAttribute("aria-describedby", "fileComparePatient");
     const tabs = make("div", undefined, "file-compare-tabs");
     tabs.id = "fileCompareTabs";
@@ -179,15 +199,56 @@ window.FileCompare = (() => {
     workspace.append(numeric, panes);
     dialog.append(heading, tabs, workspace);
     dialog.addEventListener("click", event => {if (event.target === dialog) dialog.close();});
-    dialog.addEventListener("close", () => {numericKey = ""; render();});
-    document.body.append(tray, feedback, dialog);
+    dialog.addEventListener("close", () => {
+      numericKey = "";render();
+      const trigger = compareTrigger;compareTrigger = null;
+      // Moving the dock back into an iframe/reader can interrupt native focus restoration.
+      if (trigger?.isConnected && !trigger.disabled && !trigger.hidden &&
+          (!trigger.getClientRects || trigger.getClientRects().length)) trigger.focus({preventScroll:true});
+    });
+    const confirmation = make("dialog", undefined, "compare-clear-dialog");
+    confirmation.id = "fileCompareClearDialog";confirmation.dataset.utilityDock = "hide";
+    confirmation.setAttribute("aria-labelledby", "fileCompareClearTitle");
+    confirmation.setAttribute("aria-describedby", "fileCompareClearMessage");
+    const form = make("form");form.method = "dialog";
+    const clearTitle = make("h2", "清除比較");clearTitle.id = "fileCompareClearTitle";
+    const clearMessage = make("p");clearMessage.id = "fileCompareClearMessage";
+    const actions = make("div", undefined, "actions");
+    const cancel = make("button", "取消");cancel.type = "submit";cancel.value = "cancel";cancel.autofocus = true;
+    const confirm = make("button", "清除比較", "danger");confirm.type = "submit";confirm.value = "clear";
+    actions.append(cancel, confirm);form.append(clearTitle, clearMessage, actions);confirmation.append(form);
+    document.body.append(trayGroup, feedback, dialog, confirmation);
+    if(window.UtilityDock){window.UtilityDock.attach("comparison",trayGroup,20);window.UtilityDock.attach("feedback",feedback,30);}
   }
-  function open() {
+  function requestClear() {
+    if (embedded) {window.parent.postMessage({type:"bot:compare-clear",account,mrn},location.origin);return Promise.resolve(false);}
+    if (clearing) return clearing;
+    mount();
+    if (!items.length) return Promise.resolve(false);
+    const selectedAccount = account, selectedMrn = mrn, revision = selectionRevision;
+    const prompt = document.getElementById("fileCompareClearDialog");
+    document.getElementById("fileCompareClearMessage").textContent = "清除 " + items.length + " 份比較檔案？只會移出比較佇列，已保存的報告與附件會保留。";
+    prompt.returnValue = "";
+    clearing = new Promise(resolve => {
+      prompt.addEventListener("close", () => {
+        const confirmed = prompt.returnValue === "clear";prompt.returnValue = "";clearing = null;
+        const same = account === selectedAccount && mrn === selectedMrn && selectionRevision === revision;
+        if (confirmed && same) {clear();announce("已清除比較佇列，已保存附件仍保留。");}
+        else if (confirmed) announce("比較清單已更新，請重新確認清除。");
+        window.UtilityDock?.sync();resolve(confirmed && same);
+      }, {once:true});
+    });
+    prompt.showModal();window.UtilityDock?.sync();return clearing;
+  }
+  function open(event) {
     if (embedded) {window.parent.postMessage({type:"bot:compare-open"}, location.origin); return;}
     mount();
     if (!items.length) {announce("請先加入要比較的檔案。"); return;}
     const dialog = document.getElementById("fileCompareDialog");
-    if (!dialog.open) dialog.showModal();
+    if (!dialog.open) {
+      compareTrigger = event?.currentTarget || trayNode?.ownerDocument?.activeElement || document.activeElement;
+      dialog.showModal();
+    }
     render();
     void loadNumeric();
   }
@@ -219,12 +280,14 @@ window.FileCompare = (() => {
     const other = index + delta;
     if (other < 0 || other >= items.length) return;
     [items[index], items[other]] = [items[other], items[index]];
+    selectionRevision++;
     if (activeIndex === index) activeIndex = other;
     else if (activeIndex === other) activeIndex = index;
     render();
   }
   function remove(index) {
     items.splice(index, 1);
+    selectionRevision++;
     activeIndex = Math.min(activeIndex, Math.max(0, items.length - 1));
     if (!items.length) document.getElementById("fileCompareDialog")?.close();
     render();
@@ -314,14 +377,17 @@ window.FileCompare = (() => {
   function render() {
     if (embedded) return;
     mount();
-    const tray = document.getElementById("fileCompareTray");
+    const tray = trayNode;
     tray.hidden = !items.length;
     tray.textContent = `查看比較 · ${items.length} / ${limit}`;
+    trayGroupNode.hidden = !items.length;
+    document.getElementById("fileCompareClearAll").disabled = !items.length;
     document.getElementById("fileComparePatient").textContent = (patientName || "姓名未提供") + " · 病歷號 " + mrn;
     document.getElementById("fileCompareCount").textContent = `${items.length} / ${limit} 份`;
     const tabs = document.getElementById("fileCompareTabs"), panes = document.getElementById("fileComparePanes");
     tabs.replaceChildren();
     changed();
+    window.UtilityDock?.sync();
     if (!document.getElementById("fileCompareDialog").open) {
       if (!items.length) panes.replaceChildren();
       sendState(linkedFrame); return;
@@ -371,6 +437,6 @@ window.FileCompare = (() => {
     if (event.data.error) announce(event.data.error);
   });
   document.addEventListener("DOMContentLoaded", mount);
-  function clear(){items=[];remoteItems=[];remoteDigests.clear();remoteCount=0;numericKey="";document.getElementById("fileCompareDialog")?.close();render();changed();}
-  return {add, context, count, has, remove:removeDigest, open, receive, renderInline, clear, patient:()=>mrn};
+  function clear(){selectionRevision++;items=[];remoteItems=[];remoteDigests.clear();remoteCount=0;numericKey="";document.getElementById("fileCompareDialog")?.close();render();if(embedded)changed();}
+  return {add, context, count, has, remove:removeDigest, open, receive, renderInline, clear, requestClear, patient:()=>mrn};
 })();
