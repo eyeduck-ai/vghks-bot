@@ -114,7 +114,7 @@ def check_workflows(contract):
                 "rows": [[literal(value) for value in row] for row in item["rows"]], "merges": []}
                 for item in contract[phase]]}
         monitoring = scan(book)
-        if monitoring["issues"]:
+        if monitoring["issues"] or monitoring["row_issues"]:
             raise ValueError(f"GAS {phase} creates monitor diagnostics")
         found = [item for item in monitoring["patients"] if item["uid"] == contract["patient_sync_id"]]
         planned = [item for sheet in book["sheets"] for item in entries(sheet)
