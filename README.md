@@ -2,7 +2,7 @@
 
 [![Windows build](https://github.com/eyeduck-ai/vghks-bot/actions/workflows/windows.yml/badge.svg)](https://github.com/eyeduck-ai/vghks-bot/actions/workflows/windows.yml)
 
-VGHKS 院內系統的本機工作台：Windows 單檔 EXE、瀏覽器介面與 SQLite，透過 [vghks-sdk](https://github.com/eyeduck-ai/vghks-sdk) 存取院內功能。版本 **6.12.5**，共用刀表契約 **1.2.2**。
+VGHKS 院內系統的本機工作台：Windows 單檔 EXE、瀏覽器介面與 SQLite，透過 [vghks-sdk](https://github.com/eyeduck-ai/vghks-sdk) 存取院內功能。版本 **6.15.0**，共用刀表契約 **1.3.0**。
 
 ## 下載與更新
 
@@ -12,7 +12,7 @@ VGHKS 院內系統的本機工作台：Windows 單檔 EXE、瀏覽器介面與 S
 
 關閉瀏覽器不會停止程式；再次執行 EXE 可開啟現有介面。多帳號各自保存資料、任務與院內 session。
 
-**日曆監控已移至 [vghks-sheet2cal](https://github.com/eyeduck-ai/vghks-sheet2cal)**，由指定主機常駐執行；本 repo 與發行包只包含主程式。舊監控資料目錄請保留，移機依獨立 repo 的交接流程處理。
+**日曆監控已移至 [vghks-sheet2cal](https://github.com/eyeduck-ai/vghks-sheet2cal)**，由指定主機常駐執行；本 repo 與發行包只包含主程式。
 
 ## 功能
 

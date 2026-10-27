@@ -142,6 +142,19 @@ class SheetContractTests(unittest.TestCase):
         self.assertEqual(report["parsing"]["mismatches"], [{"row": "202610!3", "code": "route_mismatch"}])
         self.assertNotIn(SECRET, json.dumps(report, ensure_ascii=False))
 
+    def test_isolated_fu_date_issue_is_reported_without_patient_values(self):
+        fu = {"properties": {"title": "FU", "sheetId": 2,
+                              "gridProperties": {"rowCount": 20, "columnCount": len(FU_HEADERS)}},
+              "rows": [list(map(cell, FU_HEADERS)),
+                       row(FU_HEADERS, **{"病歷號": SECRET, "姓名": SECRET, "日期": SECRET,
+                                          "ScheduleSyncId": "f" * 32})]}
+        report = check.analyze_book(workbook(monthly(), fu))
+        self.assertFalse(report["compatible"])
+        self.assertEqual(report["parsing"]["monitor_issue_count"], 0)
+        self.assertEqual(report["parsing"]["monitor_row_issue_count"], 1)
+        self.assertEqual(report["parsing"]["monitor_row_issues"], [{"code": "invalid_fu_date", "count": 1}])
+        self.assertNotIn(SECRET, json.dumps(report, ensure_ascii=False))
+
     def test_drive_unavailable_never_claims_edit_permission_and_calendar_reader_is_not_writer(self):
         fake = FakeSession(drive_status=403, role="reader")
         session = check.ReadOnlySession(fake)
