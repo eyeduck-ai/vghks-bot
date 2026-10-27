@@ -45,7 +45,21 @@ class JobTests(unittest.TestCase):
     def test_accounts_have_independent_date_ranges_and_sessions(self):
         a = self.account("DOC1","2026-09-17","2026-09-18")
         b = self.account("DOC2","2026-09-19","2026-09-19")
-        first, second = self.start([a,b])
+        second_started = threading.Event()
+        original_factory = self.app.sdk_factory
+
+        def factory(settings):
+            if settings.username == "DOC2":
+                second_started.set()
+            return original_factory(settings)
+
+        self.app.sdk_factory = factory
+        ids = self.app.start({"account_ids": [a, b]})["run_ids"]
+        # Keep one real batch while giving each account its own eight-second
+        # bound. DOC2 enters its factory only after DOC1's queued job finishes.
+        self.assertTrue(second_started.wait(8))
+        self.assertTrue(self.app.idle.wait(8))
+        first, second = [self.app.snapshot(key) for key in ids]
         self.assertEqual([first["status"],second["status"]],["completed","completed"])
         self.assertEqual(first["counts"]["soap_read"],6)
         self.assertEqual(second["counts"]["soap_read"],3)
@@ -89,10 +103,15 @@ class JobTests(unittest.TestCase):
     def test_cancel_queued_account_without_starting_its_sdk(self):
         gate, entered = threading.Event(), threading.Event()
         original_factory = self.app.sdk_factory
+        factory_entries = []
 
         def factory(settings):
+            factory_entries.append(settings.username)
             entered.set()
-            gate.wait(4)
+            # Only the test's finally block releases the SDK. This watchdog
+            # covers real queued-state journal I/O, not a product time limit.
+            if not gate.wait(60):
+                raise AssertionError("synthetic SDK factory was not released")
             return original_factory(settings)
 
         self.app.sdk_factory = factory
@@ -100,15 +119,18 @@ class JobTests(unittest.TestCase):
         ids = self.app.start({"account_ids":[a,b]})["run_ids"]
         try:
             self.assertTrue(entered.wait(2))
+            self.assertEqual(factory_entries, ["DOC1"])
             self.assertEqual(self.app.snapshot(ids[1])["status"],"queued")
             with self.assertRaises(BusyError):
                 self.app.start({"account_ids":[a]})
             self.app.stop(ids[1])
+            self.assertEqual(self.instances, [], "the held SDK factory advanced before cancellation")
         finally:
             gate.set()
         self.assertTrue(self.app.idle.wait(6))
         self.assertEqual(self.app.snapshot(ids[1])["status"],"cancelled")
         self.assertEqual([s.card for s in self.instances],["DOC1"])
+        self.assertEqual(factory_entries, ["DOC1"])
 
     def test_account_failure_does_not_block_next_account(self):
         original_factory = self.app.sdk_factory

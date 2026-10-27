@@ -82,6 +82,8 @@ Python 虛擬環境的啟動腳本與部分命令列程式含建立時的絕對�
 
 6.10.1 的 CI 將完整測試拆成四組並行，彙總核對覆蓋名單；PR 不重複打包，main 才建置主程式 EXE，標籤沿用同一成功 main commit 的已驗證產物。本機完整流程不變，來源自測可單獨用 `--source-only` 執行。[CI 與發布細節](RELEASING.md)
 
+Windows CI 的合成測試將 `TEMP`、`TMP`、`TMPDIR` 指向該 job 的 `runner.temp` 工作磁碟；各測試仍建立獨立暫存目錄，保留真實 SQLite／WAL／FULL 同步與原子檔案寫入。測試失敗或例外會立即輸出名稱與 traceback，完整日誌、JUnit 與測試名單仍照常保存；工作時間上限及完整驗證門檻不變。
+
 ## 清理與本機檔案
 
 ```powershell

@@ -101,6 +101,26 @@ class Result(unittest.TextTestResult):
         self.test_started = time.monotonic()
         super().startTest(test)
 
+    def addFailure(self, test, err):
+        super().addFailure(test, err)
+        print(f"FAIL: {test.id()}\n{self.failures[-1][1]}", flush=True)
+
+    def addError(self, test, err):
+        super().addError(test, err)
+        print(f"ERROR: {test.id()}\n{self.errors[-1][1]}", flush=True)
+
+    def addSubTest(self, test, subtest, err):
+        super().addSubTest(test, subtest, err)
+        if err is not None:
+            failure = issubclass(err[0], test.failureException)
+            records = self.failures if failure else self.errors
+            label = "FAIL" if failure else "ERROR"
+            print(f"{label}: {subtest.id()}\n{records[-1][1]}", flush=True)
+
+    def addUnexpectedSuccess(self, test):
+        super().addUnexpectedSuccess(test)
+        print(f"UNEXPECTED SUCCESS: {test.id()}", flush=True)
+
     def stopTest(self, test):
         self.timings[test.id()] = round(time.monotonic() - self.test_started, 3)
         super().stopTest(test)
