@@ -353,6 +353,18 @@ class ReviewHistoryTests(unittest.TestCase):
     def fetch(self, resource, reference="", **options):
         return self.run_task(kind="history", **self.request(resource, reference), **options)
 
+    def seed_non_image_report_branches(self):
+        # Keep cold detail/report/PACS/PDF setup outside image barrier deadlines.
+        # These use real identity-checked cache writes; both images stay cold.
+        visits, _ = self.history._visits(MRN)
+        for cls, method, reference in ((OrderDetailRef, "get_order_detail", DETAIL),
+                (OrderReportRef, "get_order_report", REPORT), (PacsStudyRef, "get_pacs_study", STUDY),
+                (PdfAttachmentRef, "download_pdf", PDF)):
+            self.work.resources.branch(MRN, cls, method, clean(reference), verified_cases=visits,
+                                       fast_attachment=method == "download_pdf")
+        self.assertFalse(any(call[1] == "image" for call in HistorySDK.calls),
+                         "fixture setup downloaded an image under test")
+
     def test_real_order_parser_keeps_verified_alias_and_partial_rows_then_retries_only_partial_category(self):
         from test_sdk_orders import order_page
 
@@ -519,9 +531,12 @@ class ReviewHistoryTests(unittest.TestCase):
 
         with patch.object(orders, "get_pacs_study", return_value=PacsStudy(STUDY, (IMAGE, second))), \
                 patch.object(orders, "download_pacs_image", side_effect=download):
+            self.seed_non_image_report_branches()
             key = self.work.review.start({"kind": "history", **self.request("order_report", ref)})["task_id"]
             try:
-                self.assertTrue(reached.wait(10))
+                if not reached.wait(10):
+                    self.fail(str({"task": self.work.review.db.task_summaries(key=key),
+                        "operations": [call[1] for call in HistorySDK.calls]}))
                 partial = self.history.read(self.request("order_report", ref))
                 task = self.work.review.task(key, summary=True)
                 self.assertFalse(partial["complete"])
@@ -579,9 +594,12 @@ class ReviewHistoryTests(unittest.TestCase):
 
         with patch.object(orders, "get_pacs_study", return_value=PacsStudy(STUDY, (IMAGE, second))), \
                 patch.object(orders, "download_pacs_image", side_effect=download):
+            self.seed_non_image_report_branches()
             key = self.work.review.start({"kind": "history", **self.request("order_report", ref)})["task_id"]
             try:
-                self.assertTrue(reached.wait(10))
+                if not reached.wait(10):
+                    self.fail(str({"task": self.work.review.db.task_summaries(key=key),
+                        "operations": [call[1] for call in HistorySDK.calls]}))
                 self.work.review.stop(key)
             finally:
                 release.set()
