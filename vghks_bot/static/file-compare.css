@@ -55,6 +55,8 @@
 .file-compare-pane-head{gap:3px 6px;padding:4px 6px;font-size:.78rem}
 .file-compare-pane-actions{gap:2px}.file-compare-pane-actions button{min-width:26px;min-height:26px;padding:1px 4px;font-size:.8rem}
 .file-compare-pane-actions span{font-size:.72rem}
+.file-compare-pane-actions .file-compare-zoom{min-width:44px;font-size:.72rem;font-variant-numeric:tabular-nums;text-align:center;color:#345d69}
+.file-compare-pane-actions .file-compare-zoom:hover,.file-compare-pane-actions .file-compare-zoom:focus-visible{background:#e5f1f3;border-color:#83aab4}
 .file-compare-workspace.numeric-closed>.file-compare-numeric{display:none}
 
 /* The same numeric table is used in the embedded tool and comparison dialog. */

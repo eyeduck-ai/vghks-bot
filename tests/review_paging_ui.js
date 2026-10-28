@@ -9,6 +9,8 @@ function setup(count=1000){
  c.setTimeout=(run,delay)=>{const id=++timerId;timers.set(id,{run,delay});return id;};c.clearTimeout=id=>timers.delete(id);
  c.document.hidden=false;c.document.addEventListener=(name,run)=>documentEvents.set(name,run);
  $("#reviewPatients").clientHeight=580;
+ const panel=$("#reviewPatientPanel"),header=s.node("div",undefined,"review-patient-header"),actions=s.node("div",undefined,"review-selection-toolbar"),summary=s.node("div",undefined,"review-list-summary");
+ actions.append($("#reviewHandoffSelected"),$("#reviewSelectionClear"));summary.append($("#reviewSelectionCount"),$("#reviewPager"));header.append(actions,summary);panel.append(header,$("#reviewPatients"));
  c.page="review";c.epoch=1;c.currentReview="R1";c.reviewPatient="";c.reviewData=null;c.reviewSignature="";
  c.work={tasks:[],revisions:{profile:0,review_note:0,patient_tags:0,registrations:0}};
  c.reviewFilters=()=>({q:$("#reviewQuery").value,search_mode:$("#reviewSearchMode").value||"text",tag:$("#reviewTag").value});
@@ -27,7 +29,9 @@ function setup(count=1000){
   previous.dataset.reviewMove="-1";next.dataset.reviewMove="1";previous.disabled=!c.window.ReviewPaging.nav(-1);next.disabled=!c.window.ReviewPaging.nav(1);panel.replaceChildren(notice,previous,next,soap,note);
  };
  const source=fs.readFileSync("vghks_bot/static/bot.js","utf8");
+ vm.runInContext(source.split("\n").find(line=>line.startsWith("function toggleReviewPatients(")),c);
  vm.runInContext(source.slice(source.indexOf("function renderReviewPatients("),source.indexOf("function soapNode(")),c);
+ Object.assign(c.labels,{ready:"已取得",pending:"待處理",error:"未取得"});
  const revisions=new Map(),listGates=new Map(),detailGates=new Map(),invalidPrefetch=new Map();let taskRevision=1,wrongPatient=false,prefetchActive=0,maxPrefetchActive=0;
  const all=Array.from({length:count},(_,index)=>({mrn:"P"+(index+1),name:"合成病人 "+(index+1),status:"ready",dates:["2026-10-01"],auto_tags:[],manual_tags:[],record_count:1,sequence_no:String(index+1).padStart(3,"0")}));
  const selected=values=>(values.q==="none"?[]:values.q==="late"?all.slice(1):values.q==="last"?[all.at(-1)]:all).filter(row=>!values.tag||row.manual_tags.some(tag=>tag.category===values.tag));
@@ -64,7 +68,7 @@ function setup(count=1000){
  s.run("vghks_bot/static/review-paging.js");const ui=c.window.ReviewPaging;
  c.selectReviewPatient=mrn=>ui.select(mrn);
  const runTimers=async delay=>{for(const [id,timer] of [...timers])if(timer.delay<=delay){timers.delete(id);timer.run();}await settle();};
- const scroll=async(index,fraction=0)=>{$("#reviewPatients").scrollTop=index*84+fraction;await $("#reviewPatients").emit("scroll");await runTimers(65);};
+ const scroll=async(index,fraction=0)=>{$("#reviewPatients").scrollTop=index*72+fraction;await $("#reviewPatients").emit("scroll");await runTimers(65);};
  const rows=()=>$("#reviewPatients").querySelectorAll(".review-patient-row");
  const hide=hidden=>{c.document.hidden=hidden;documentEvents.get("visibilitychange")?.();};
  const sample={...s,ui,calls,notes,renders,revisions,listGates,detailGates,selections,selection,all,invalidPrefetch,scroll,runTimers,rows,hide,maxPrefetch:()=>maxPrefetchActive,setTaskRevision:value=>taskRevision=value,setFlush:value=>flush=value,setWrongPatient:value=>wrongPatient=value};
@@ -87,23 +91,50 @@ async function compactRailContract(){
  const s=setup(),row=s.all[0];row.name="合成姓名很長仍需完整提供";row.dates=["2026-10-28","2026-10-27","2026-10-26"];
  row.auto_tags=Array.from({length:4},(_,index)=>({category:"AUTO"+index,category_name:"合成眼科分類"+index}));row.manual_tags=[{name:"手動重要分類"}];
  await s.ui.load();
- for(const element of s.rows())assert.equal(element.style.height,"84px","virtual row geometry diverged from the compact rail");
+ for(const element of s.rows())assert.equal(element.style.height,"72px","virtual row geometry diverged from the compact rail");
  const button=s.rows()[0].querySelector(".patient-select"),label=button.getAttribute("aria-label");
  assert.match(label,/合成姓名很長仍需完整提供/);assert.match(label,/2026-10-26/);assert.match(label,/合成眼科分類3/);assert.match(label,/手動重要分類/);
  assert.equal(button.title,label,"ellipsis removed complete patient metadata from the tooltip");
  const css=fs.readFileSync("vghks_bot/static/bot.css","utf8");
- assert.match(css,/--review-patient-row-height:84px/);assert.match(css,/grid-template-rows:20px 16px 18px/);
- assert.deepEqual([...css.matchAll(/--review-patient-width:(\d+)px/g)].map(match=>Number(match[1])),[344,304],"an old responsive rule narrowed the expanded rail");
+ assert.match(css,/--review-patient-row-height:72px/);assert.match(css,/grid-template-rows:18px 14px 16px/);
+ assert.deepEqual([...css.matchAll(/--review-patient-width:(\d+)px/g)].map(match=>Number(match[1])),[248,232],"an old responsive rule narrowed the expanded rail");
  assert.match(css,/:root\[data-density\] \.review-patients\.is-virtual \.patient-select/,"compact density can override the fixed row spacing");
+}
+
+async function persistentHeaderAndAttention(){
+ const s=setup(),{context:c,$}=s;s.all[1].status="pending";s.all[2].status="error";s.all[3].processing=true;
+ await s.ui.load();
+ const header=$("#reviewPatientPanel").children[0],count=$("#reviewSelectionCount"),soap=$("#reviewDetail").querySelector(".soap-record");count.textContent="已選 2 位";
+ assert.equal(s.rows()[0].querySelector(".review-patient-id").textContent,"P1","completed status wasted a line in the patient rail");
+ assert.doesNotMatch(s.rows()[0].querySelector(".patient-select").title,/已取得/);
+ assert.match(s.rows()[1].querySelector(".review-patient-id").textContent,/待處理/);assert.match(s.rows()[2].querySelector(".review-patient-id").textContent,/未取得/);assert.match(s.rows()[3].querySelector(".review-patient-id").textContent,/載入中/);
+ s.all[3].processing=false;s.setTaskRevision(2);await s.ui.poll({revision:2,status:"completed"},c.work.revisions);assert.equal(s.rows()[3].querySelector(".review-patient-id").textContent,"P4","loading status did not clear on completion");
+ await s.scroll(400);assert.equal($("#reviewPatientPanel").children[0],header);assert.equal($("#reviewPatients").contains(header),false);assert.equal(count.textContent,"已選 2 位");assert.equal(header.contains($("#reviewPager")),true);
+ assert.match($("#reviewPager").children[0].textContent,/401/);assert.equal($("#reviewDetail").querySelector(".soap-record"),soap);
+ const scroll=$("#reviewPatients").scrollTop,reads=s.calls.length;c.toggleReviewPatients();assert.equal($("#reviewPatientPanel").hidden,true);assert.equal($("#reviewPatients").hidden,true);assert.equal($("#reviewPager").hidden,true);assert.equal($("#reviewPatientsToggle").getAttribute("aria-expanded"),"false");
+ c.toggleReviewPatients();assert.equal($("#reviewPatientPanel").hidden,false);assert.equal($("#reviewPatients").scrollTop,scroll);assert.equal($("#reviewPatientPanel").children[0],header);assert.equal(s.calls.length,reads);assert.equal($("#reviewDetail").querySelector(".soap-record"),soap);
+ const html=fs.readFileSync("vghks_bot/static/bot.html","utf8"),start=html.indexOf('id="reviewPatientPanel"'),end=html.indexOf("</aside>",start),list=html.indexOf('id="reviewPatients"',start);
+ for(const id of ["reviewHandoffSelected","reviewSelectionClear","reviewSelectionCount","reviewPager"]){const position=html.indexOf('id="'+id+'"');assert.ok(position>start&&position<list&&position<end,"patient controls escaped their fixed left header: "+id);}
+ assert.match(html,/aria-controls="reviewPatientPanel"/);
+ const css=fs.readFileSync("vghks_bot/static/bot.css","utf8");assert.match(css,/\.review-patient-header\{flex:none/);assert.match(css,/\.review-pager\{[^}]*margin:0;min-height:16px/);assert.match(css,/\.review-patient-panel>\.review-patients\{[^}]*flex:1[^}]*height:auto/);
+}
+
+async function initialResultLayout(){
+ const s=setup(),{context:c,$}=s,layouts=[];c.reviewSetupExpanded=false;$("#reviewPatients").clientHeight=360;
+ c.document.body={classList:{toggle(name,on){assert.equal(name,"review-result-compact");layouts.push(on);$("#reviewPatients").clientHeight=on?720:360;}}};
+ const source=fs.readFileSync("vghks_bot/static/bot.js","utf8");vm.runInContext(source.split("\n").find(line=>line.startsWith("function updateReviewLayout(")),c);
+ c.renderReviewHeader=()=>c.updateReviewLayout();await s.ui.load();
+ assert.equal(layouts[0],true,"first result header did not enter the full-height review layout");assert.equal(s.rows().length,14,"initial window used the old rail height before the result layout was applied");assert.match($("#reviewPager").children[0].textContent,/1–10 \/ 1000/);
+ c.reviewSetupExpanded=true;await s.ui.load();assert.equal(layouts.at(-1),false,"publishing result metadata overrode the source editor's expanded layout");assert.equal(s.rows().length,9);
 }
 
 async function continuousWindow(){
  const s=setup(),{ui,context:c,calls,renders,$}=s;
- await ui.load();assert.ok(c.reviewData.patients.length<=16);assert.equal(c.reviewPatient,"P1");
+ await ui.load();assert.ok(c.reviewData.patients.length<=18);assert.equal(c.reviewPatient,"P1");
  assert.equal(calls.filter(call=>call.path==="/reviews/patient").length,1,"initial viewport eagerly loaded other patients' SOAP");
  assert.equal(s.notes[0].options.mrns.length,1,"scroll metadata caused all patients' notes to accumulate");
  assert.equal(s.rows()[0].querySelector(".review-sequence").textContent,"001","initial registration sequence required notes");
- assert.ok(s.rows().length<=16);assert.equal($("#reviewPager").querySelectorAll("button").length,0,"page buttons remain");
+ assert.ok(s.rows().length<=18);assert.equal($("#reviewPager").querySelectorAll("button").length,0,"page buttons remain");
  const firstRow=s.rows()[0],soap=$("#reviewDetail").querySelector(".soap-record");
  firstRow.querySelector(".patient-select").focus();$("#reviewDetail").scrollTop=73;
  await ui.poll({revision:1,status:"completed"},c.work.revisions);assert.equal(calls.length,2,"unchanged status triggered another read");
@@ -115,12 +146,12 @@ async function continuousWindow(){
  await s.scroll(400,19);assert.equal(c.reviewPatient,"P1");assert.equal(renders.length,before);assert.equal(s.notes.length,noteCount,"scroll loaded notes");
  assert.equal($("#reviewNoteInput"),note);assert.equal(note.value,"still editing");assert.equal(c.document.activeElement,note);
  assert.equal($("#reviewDetail").querySelector(".soap-record"),soap);assert.equal($("#reviewDetail").scrollTop,73);
- assert.ok(s.rows().some(row=>row.dataset.mrn==="P401"));assert.equal($("#reviewPatients").scrollTop,400*84+19);assert.ok(s.rows().length<=16);
+ assert.ok(s.rows().some(row=>row.dataset.mrn==="P401"));assert.equal($("#reviewPatients").scrollTop,400*72+19);assert.ok(s.rows().length<=18);
  assert.match($("#reviewPager").textContent+$("#reviewPager").children.map(node=>node.textContent).join(""),/401/);
  assert.ok(calls.filter(call=>call.path==="/reviews/patients").length<=4,"thumb jump fetched skipped batches");
- await s.scroll(800);await s.scroll(995);assert.ok(s.rows().some(row=>row.dataset.mrn==="P1000"));assert.ok(s.rows().length<=16);
+ await s.scroll(800);await s.scroll(995);assert.ok(s.rows().some(row=>row.dataset.mrn==="P1000"));assert.ok(s.rows().length<=18);
  const height=$("#reviewPatients").children.filter(row=>row.style.position!=="absolute").reduce((sum,row)=>sum+(parseFloat(row.style.height)||0),0);
- assert.equal(height,1000*84,"full-list scrollbar height changed with loaded windows");
+ assert.equal(height,1000*72,"full-list scrollbar height changed with loaded windows");
  const listCount=calls.filter(call=>call.path==="/reviews/patients").length;await s.scroll(0);
  assert.ok(calls.filter(call=>call.path==="/reviews/patients").length>listCount,"offscreen summaries grew into an unbounded cache");
  assert.equal(s.rows()[0].dataset.mrn,"P1");assert.equal(s.rows()[0].getAttribute("aria-posinset"),"1");
@@ -131,12 +162,12 @@ async function focusSelectionAndNavigation(){
  const s=setup(),{ui,context:c,$}=s;await ui.load();
  const focused=s.rows()[1],button=focused.querySelector(".patient-select");button.focus();
  await s.scroll(400);assert.equal(c.document.activeElement,button);assert.equal($("#reviewPatients").contains(button),true,"virtualization detached keyboard focus");
- assert.equal(focused.style.position,"absolute");assert.ok(s.rows().length<=16);
+ assert.equal(focused.style.position,"absolute");assert.ok(s.rows().length<=18);
  const selectedRow=s.rows().find(row=>row.dataset.mrn==="P401"),checkbox=selectedRow.querySelector(".review-handoff-check");checkbox.run(true);
  await s.scroll(0);assert.equal(s.selection.has("P401"),true);assert.deepEqual(Object.keys(s.selection.get("P401")).sort(),["mrn","name"]);
  await ui.select("P40");assert.equal(ui.nav(1),"P41");await ui.move(1);assert.equal(c.reviewPatient,"P41");assert.equal(ui.patient().mrn,"P41");
- assert.ok(s.rows().some(row=>row.dataset.mrn==="P41"));assert.equal($("#reviewPatients").scrollTop,40*84);
- await ui.move(-1);assert.equal(c.reviewPatient,"P40");assert.equal($("#reviewPatients").scrollTop,39*84);
+ assert.ok(s.rows().some(row=>row.dataset.mrn==="P41"));assert.equal($("#reviewPatients").scrollTop,40*72);
+ await ui.move(-1);assert.equal(c.reviewPatient,"P40");assert.equal($("#reviewPatients").scrollTop,39*72);
  const selectedSoap=$("#reviewDetail").querySelector(".soap-record"),before=s.renders.length;
  await s.scroll(100);assert.equal(c.reviewPatient,"P40");assert.equal(s.renders.length,before);assert.equal($("#reviewDetail").querySelector(".soap-record"),selectedSoap);
  assert.equal($("#reviewDetail").querySelector(".review-page-context").hidden,false);
@@ -148,7 +179,7 @@ async function focusSelectionAndNavigation(){
 async function anchorAndOverlayRevision(){
  const s=setup(),{ui,context:c,$}=s;await ui.load();await s.scroll(80,17);
  s.all.splice(0,10);s.setTaskRevision(2);await ui.poll({revision:2,status:"completed"},c.work.revisions);
- assert.equal($("#reviewPatients").scrollTop,70*84+17,"collection update lost the visible MRN anchor");
+ assert.equal($("#reviewPatients").scrollTop,70*72+17,"collection update lost the visible MRN anchor");
  assert.ok(s.rows().some(row=>row.dataset.mrn==="P81"));assert.equal(c.reviewPatient,"P1");
  s.all.find(row=>row.mrn==="P81").sequence_no="REGISTERED";c.work.revisions.registrations++;const beforeRegistration=s.calls.length;
  await ui.poll({revision:2,status:"completed"},c.work.revisions);
@@ -161,15 +192,15 @@ async function anchorAndOverlayRevision(){
 async function changingCollectionDuringScroll(){
  const s=setup(),{ui,context:c,$}=s;await ui.load();
  const gate=deferred();s.listGates.set(40,gate);await s.scroll(38,27);
- assert.equal($("#reviewPatients").getAttribute("aria-busy"),"true");assert.match($("#reviewPager").children[0].textContent,/載入本機資料/);
+ assert.equal($("#reviewPatients").getAttribute("aria-busy"),"true");assert.match($("#reviewPager").children[0].textContent,/載入中/);
  const soap=$("#reviewDetail").querySelector(".soap-record"),notes=s.notes.length;
  s.all.splice(0,5);s.setTaskRevision(2);gate.resolve();await settle();
- assert.equal($("#reviewPatients").scrollTop,33*84+27,"neighbor-block collection change lost the current MRN anchor");
+ assert.equal($("#reviewPatients").scrollTop,33*72+27,"neighbor-block collection change lost the current MRN anchor");
  assert.ok(s.rows().some(row=>row.dataset.mrn==="P39"));assert.equal(c.reviewPatient,"P1");assert.equal(s.notes.length,notes);assert.equal($("#reviewDetail").querySelector(".soap-record"),soap);
  assert.equal($("#reviewPatients").getAttribute("aria-busy"),"false");assert.ok(s.calls.length<=5,"collection relocation kept reloading indefinitely");
  const polling=setup();await polling.ui.load();const pollGate=deferred();polling.listGates.set(0,pollGate);polling.setTaskRevision(2);
  const refresh=polling.ui.poll({revision:2,status:"completed"},polling.context.work.revisions);await tick();await polling.scroll(400,11);pollGate.resolve();await refresh;
- assert.equal(polling.$("#reviewPatients").scrollTop,400*84+11,"a slow poll restored an obsolete viewport over the user's scroll");assert.ok(polling.rows().some(row=>row.dataset.mrn==="P401"));
+ assert.equal(polling.$("#reviewPatients").scrollTop,400*72+11,"a slow poll restored an obsolete viewport over the user's scroll");assert.ok(polling.rows().some(row=>row.dataset.mrn==="P401"));
 }
 
 async function racingReads(){
@@ -259,4 +290,4 @@ async function prefetchCancellationAndSingleLane(){
  c.page="patients";ui.visibility();
 }
 
-(async()=>{await continuousWindow();await compactRailContract();await focusSelectionAndNavigation();await anchorAndOverlayRevision();await changingCollectionDuringScroll();await racingReads();await sharedReadsAndBoundedMemory();await nearbyLocalPrefetch();await prefetchCompletenessAndRevision();await prefetchCancellationAndSingleLane();localReadContract();process.stdout.write("Review compact continuous list: bounded DOM/cache, full-range scrolling, MRN anchors, selection/note guards and local-only prefetch without automatic clinical queries passed\n");})().catch(error=>{console.error(error);process.exitCode=1;});
+(async()=>{await continuousWindow();await compactRailContract();await persistentHeaderAndAttention();await initialResultLayout();await focusSelectionAndNavigation();await anchorAndOverlayRevision();await changingCollectionDuringScroll();await racingReads();await sharedReadsAndBoundedMemory();await nearbyLocalPrefetch();await prefetchCompletenessAndRevision();await prefetchCancellationAndSingleLane();localReadContract();process.stdout.write("Review compact continuous list: initial full-height layout, fixed left controls, bounded DOM/cache, MRN anchors and local-only prefetch passed\n");})().catch(error=>{console.error(error);process.exitCode=1;});

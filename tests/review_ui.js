@@ -201,11 +201,14 @@ async function profileTests(){
  const metadataRows=info=>{const children=info.querySelector(".review-data-values").children;return Object.fromEntries(children.filter((_,index)=>index%2===0).map((child,index)=>[child.textContent,children[index*2+1].textContent]));};
  const info=c.reviewDataInfo(metadataPatient),infoRows=metadataRows(info);
  assert.equal(!!info.open,false,"metadata details expanded by default");assert.match(info.querySelector(".review-data-summary").textContent,/沿用既有檢閱/);
+ assert.doesNotMatch(info.querySelector(".review-data-summary").textContent,/2026-|核對/,"metadata summary repeated timestamps outside its disclosure");
  assert.equal(Object.keys(infoRows).filter(label=>label.includes("核對")).length,1,"equivalent review/index timestamps were repeated");
- assert.match(infoRows["SOAP · 2026-10-20 · 眼科 · ONE · 取得"],/^2026-10-21T08:00:00/);
- assert.doesNotMatch(infoRows["SOAP · 2026-10-20 · 眼科 · ONE · 取得"],/2026-10-27|2026-10-20T07/);
+ assert.match(infoRows["SOAP · 2026-10-20 · 眼科 · ONE · 內容取得"],/^2026-10-21T08:00:00/);
+ assert.doesNotMatch(infoRows["SOAP · 2026-10-20 · 眼科 · ONE · 內容取得"],/2026-10-27|2026-10-20T07/);
  const different=metadataRows(c.reviewDataInfo({...metadataPatient,index_checked_at:"2026-10-26T12:00:00+08:00"}));
- assert.ok(different["檢閱核對"]&&different["索引核對"],"distinct metadata timestamps were collapsed");
+ assert.ok(different["檢閱核對"]&&different["就診索引核對"],"distinct metadata timestamps were collapsed");
+ const noRepeatedVersion=metadataRows(c.reviewDataInfo({...metadataPatient,records:[{...metadataPatient.records[0],saved_at:metadataPatient.records[0].updated_at}]}));
+ assert.equal(Object.keys(noRepeatedVersion).some(label=>label.endsWith("版本保存")),false,"version save repeated the same acquisition timestamp");
  const noAcquisition=metadataRows(c.reviewDataInfo({...metadataPatient,records:[{...metadataPatient.records[0],updated_at:undefined}]}));
  assert.equal(Object.keys(noAcquisition).some(label=>label.endsWith("取得")),false,"missing SOAP acquisition time fell back to review or first-save time");
  c.SOAPView={create:()=>s.node("div","合成 SOAP")};
@@ -214,7 +217,8 @@ async function profileTests(){
   const record={...metadataPatient.records[0],id:"SOAP1",doctor:"合成醫師",cached};
   c.reviewData.patients[0]={...saved,...metadataPatient,records:[record]};c.renderReviewDetail();
   const caption=$("#reviewDetail").querySelector(".soap-record").querySelector(".caption");
-  assert.equal(caption.textContent,"合成醫師 · ONE · "+(cached?"沿用本機版本":"已保存")+" · 取得 2026-10-21T08:00:00","SOAP caption omitted its source, reuse state or acquisition time");
+  assert.equal(caption.textContent,"合成醫師 · ONE · "+(cached?"沿用本機版本":"已保存"),"SOAP caption omitted its source/reuse state or repeated the acquisition timestamp");
+  assert.match(metadataRows($("#reviewDetail").querySelector(".review-data-info"))["SOAP · 2026-10-20 · 眼科 · ONE · 內容取得"],/^2026-10-21T08:00:00/,"SOAP acquisition time was lost from data information");
   assert.doesNotMatch(caption.textContent,/2026-10-27|2026-10-20T07/,"SOAP caption used patient verification or first-save time");
   const section=$("#reviewDetail").querySelector(".soap-record"),original=s.node("details");original.open=true;section.append(original);
   c.reviewData.patients[0].national_id="C123456789";c.renderReviewDetail();

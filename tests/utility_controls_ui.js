@@ -16,7 +16,7 @@ function environment() {
     constructor(tag,doc){super();this.tagName=tag.toUpperCase();this.ownerDocument=doc;this.children=[];this.parentElement=null;this.dataset={};this.attributes={};this.className="";this.hidden=false;this._text="";this._open=false;this.returnValue="";this.showCount=0;this.scrollTop=0;this.scrollLeft=0;
       const property=name=>name.startsWith("--")?name:name.replace(/-([a-z])/g,(_whole,letter)=>letter.toUpperCase());
       this.style={setProperty(name,value){this[property(name)]=String(value);},removeProperty(name){delete this[property(name)];}};
-      this.classList={contains:name=>this.className.split(/\s+/).includes(name),add:(...names)=>{this.className=[...new Set([...this.className.split(/\s+/).filter(Boolean),...names])].join(" ");},remove:name=>{this.className=this.className.split(/\s+/).filter(value=>value!==name).join(" ");},toggle:(name,force)=>{const present=force??!this.classList.contains(name);if(present)this.classList.add(name);else this.classList.remove(name);return present;}};
+      this.classList={contains:name=>this.className.split(/\s+/).includes(name),add:(...names)=>{this.className=[...new Set([...this.className.split(/\s+/).filter(Boolean),...names])].join(" ");},remove:(...names)=>{this.className=this.className.split(/\s+/).filter(value=>!names.includes(value)).join(" ");},toggle:(name,force)=>{const present=force??!this.classList.contains(name);if(present)this.classList.add(name);else this.classList.remove(name);return present;}};
     }
     get textContent(){return this._text+this.children.map(child=>child.textContent).join("");}
     set textContent(value){this.replaceChildren();this._text=String(value);writes.push(this);}
@@ -128,11 +128,13 @@ function dockPlacement(){
   const reader=s.element("dialog"),nested=s.element("dialog");reader.id="reader";nested.id="nested";
   reader.rect={left:200,top:100,right:800,bottom:600,width:600,height:500};
   reader.showModal();s.flush();assert.equal(dock.parentElement,reader);focus.focus();
-  assert.ok(1280-parseFloat(dock.style.right)<=reader.rect.right,"dock extends beyond the small dialog's right edge");
-  assert.ok(900-parseFloat(dock.style.bottom)<=reader.rect.bottom,"dock extends below the small dialog");
-  assert.ok(parseFloat(dock.style.maxWidth)<=reader.rect.width,"dock is wider than the modal containing it");
+  assert.equal(reader.children.at(-1),dock,"modal controls must occupy a dedicated trailing footer");
+  assert.equal(dock.classList.contains("utility-dock-modal"),true);
+  assert.equal(reader.classList.contains("utility-dock-active"),true);
+  assert.equal(dock.style.right,undefined);assert.equal(dock.style.bottom,undefined);assert.equal(dock.style.maxWidth,undefined,"fixed modal coordinates would overlay report content");
   const reserve=reader.style["--utility-dock-height"];assert.match(reserve,/^[1-9]\d*px$/);
   nested.showModal();s.flush();assert.equal(dock.parentElement,nested,"controls did not follow the most recently opened modal");
+  assert.equal(reader.classList.contains("utility-dock-active"),false,"underlying reader cannot retain an active footer after it moves");
   assert.equal(reader.style["--utility-dock-height"],reserve,"an overlay collapsed the still-open reader's reserved area");
   assert.equal(comparison.scrollTop,87,"moving the dock recreated or reset its contents");
   focus.focus();dockUI.sync();assert.equal(s.document.activeElement,focus,"unchanged host update lost focus");
@@ -142,6 +144,7 @@ function dockPlacement(){
   assert.equal(dock.hidden,true,"confirmation left clinical controls actionable above it");assert.equal(reader.style["--utility-dock-height"],reserve);
   confirmation.close();s.flush();assert.equal(dock.hidden,false);assert.equal(dock.parentElement,reader);assert.equal(dock.children.find(value=>value.id==="selection"),comparison);
   reader.close();s.flush();assert.equal(dock.parentElement,s.document.body);assert.equal(reader.style["--utility-dock-height"],undefined);assert.equal(reader.classList.contains("utility-dock-host"),false);
+  assert.equal(dock.classList.contains("utility-dock-modal"),false,"body dock retained its modal flow layout");
   assert.equal(dock.style.right,undefined);assert.equal(dock.style.bottom,undefined);assert.equal(dock.style.maxWidth,undefined,"dialog bounds leaked into the body dock");
   comparison.hidden=progress.hidden=feedback.hidden=true;dockUI.sync();assert.equal(dock.hidden,true);assert.equal(s.document.body.style["--utility-dock-height"],"0px");
 
@@ -175,8 +178,10 @@ function progressClockCleanup(){
   assert.equal(s.requests.length,0);
 }
 
-function compareSetup(){
-  const s=environment();s.load("vghks_bot/static/utility-dock.js");
+function compareSetup({embedded=false}={}){
+  const s=environment();s.messages=[];
+  if(embedded)s.window.parent={postMessage:(value,origin)=>s.messages.push({value,origin})};
+  s.load("vghks_bot/static/utility-dock.js");
   const download=(url,name)=>{const link=s.document.createElement("a");link.className="attachment-control";link.href=url;link.download=name+".pdf";return link;};
   s.context.ClinicalUI={comparisonName:item=>item.date,pdfURL:url=>url,fileName:name=>name+".pdf",downloadLink:download,
     assetTools:({url,name})=>{const tools=s.document.createElement("span");tools.append(download(url,name));return tools;}};
@@ -184,6 +189,37 @@ function compareSetup(){
   const ui=s.window.FileCompare;s.window.UtilityDock.context(accountA);ui.context(accountA,"SYN001","合成病人");
   const item=(digit,overrides={})=>({account:accountA,mrn:"SYN001",digest:digit.repeat(64),mime:"application/pdf",name:"合成附件 "+digit,date:"2026-10-27",...overrides});
   return {...s,ui,item,prompt:()=>s.document.getElementById("fileCompareClearDialog")};
+}
+
+function comparisonZoomReset(){
+  const s=compareSetup(),{ui,item}=s;ui.add(item("1"));ui.add(item("2",{mime:"image/png"}));ui.open();
+  const panes=s.document.getElementById("fileComparePanes"),pdf=panes.children[0].querySelector("iframe"),image=panes.children[1].querySelector("img");
+  const scroll=pdf.parentElement,reset=panes.children[0].querySelector(".file-compare-zoom");scroll.scrollTop=173;scroll.scrollLeft=31;reset.focus();
+  panes.children[0].querySelectorAll(".file-compare-pane-actions button")[4].dispatchEvent({type:"click"});
+  assert.equal(reset.textContent,"125%");assert.equal(pdf.style.width,"125%");assert.equal(pdf.style.height,"125%");
+  reset.dispatchEvent({type:"click"});assert.equal(reset.textContent,"100%");assert.equal(reset.tagName,"BUTTON");assert.equal(reset.type,"button");assert.match(reset.getAttribute("aria-label"),/100%/);
+  assert.equal(pdf.style.width,"100%");assert.equal(pdf.style.height,"100%");assert.equal(panes.children[0].querySelector("iframe"),pdf,"reset recreated the PDF browsing context");
+  assert.equal(scroll.scrollTop,173);assert.equal(scroll.scrollLeft,31);assert.equal(s.document.activeElement,reset,"zoom dropped the reset button's focus");
+  panes.children[1].querySelectorAll(".file-compare-pane-actions button")[2].dispatchEvent({type:"click"});
+  panes.children[1].querySelector(".file-compare-zoom").dispatchEvent({type:"click"});assert.equal(image.style.width,"100%");assert.equal(image.style.height,"auto");
+  const frame={contentWindow:{postMessage(){}}},message={origin:s.context.location.origin,source:null,data:{type:"bot:compare-zoom",account:accountA,mrn:"SYN001",digest:item("1").digest,reset:true}};
+  panes.children[0].querySelectorAll(".file-compare-pane-actions button")[4].dispatchEvent({type:"click"});
+  ui.receive(message,frame,accountA);assert.equal(reset.textContent,"125%","untrusted source reset a comparison");
+  message.source=frame.contentWindow;message.data.mrn="OTHER";ui.receive(message,frame,accountA);assert.equal(reset.textContent,"125%");
+  message.data.mrn="SYN001";message.data.account=accountB;ui.receive(message,frame,accountA);assert.equal(reset.textContent,"125%");
+  message.data.account=accountA;ui.receive(message,frame,accountA);assert.equal(reset.textContent,"100%");assert.equal(s.requests.length,0);
+
+  const inner=compareSetup({embedded:true}),host=inner.element("div"),emit=(rows,overrides={})=>inner.window.dispatchEvent({type:"message",origin:inner.context.location.origin,source:inner.window.parent,data:{type:"bot:compare-state",account:accountA,mrn:"SYN001",items:rows,...overrides}});
+  inner.ui.renderInline(host);const one=inner.item("3",{zoom:1.5}),two=inner.item("4",{mime:"image/png",zoom:1});emit([one,two]);
+  const inlinePane=host.querySelectorAll(".file-compare-pane")[0],inlinePDF=inlinePane.querySelector("iframe"),inlineReset=inlinePane.querySelector(".file-compare-zoom");
+  inlinePDF.parentElement.scrollTop=219;inlinePDF.parentElement.scrollLeft=45;inlineReset.focus();
+  inlineReset.dispatchEvent({type:"click"});assert.equal(inner.messages.at(-1).value.reset,true);assert.equal(inner.messages.at(-1).value.type,"bot:compare-zoom");assert.equal(inner.messages.at(-1).value.digest,one.digest);
+  emit([{...one,zoom:1},two]);assert.equal(inlineReset.textContent,"100%");assert.equal(inlinePDF.style.width,"100%");assert.equal(inlinePDF.style.height,"100%");
+  assert.equal(inlinePane.querySelector("iframe"),inlinePDF,"parent zoom state rebuilt an inline PDF");assert.equal(inlinePDF.parentElement.scrollTop,219);assert.equal(inlinePDF.parentElement.scrollLeft,45);assert.equal(inner.document.activeElement,inlineReset);
+  emit([two,{...one,zoom:1.25}]);assert.equal(inlinePane.style.order,"1");assert.equal(inlinePane.querySelector("iframe"),inlinePDF);assert.equal(inlineReset.textContent,"125%");
+  inlinePane.querySelectorAll(".file-compare-pane-actions button")[2].dispatchEvent({type:"click"});assert.equal(inner.messages.at(-1).value.delta,-.25);
+  host.querySelector(".file-compare-inline-tabs").children[0].dispatchEvent({type:"click"});assert.equal(inlinePane.querySelector("iframe"),inlinePDF,"switching inline tabs recreated the PDF");
+  emit([{...one,zoom:3}],{account:accountB});assert.equal(inlineReset.textContent,"125%","foreign account state changed inline zoom");assert.equal(inner.requests.length,0);
 }
 
 async function confirmationSafety(){
@@ -227,4 +263,4 @@ async function confirmationSafety(){
   assert.equal(s.requests.length,0,"cross-document updates unexpectedly fetched an attachment");
 }
 
-(async()=>{await clocksWhilePending();dockPlacement();progressClockCleanup();await confirmationSafety();process.stdout.write("Utility control clocks, dock placement, confirmations and selection isolation checks passed\n");})().catch(error=>{console.error(error);process.exitCode=1;});
+(async()=>{await clocksWhilePending();dockPlacement();progressClockCleanup();comparisonZoomReset();await confirmationSafety();process.stdout.write("Utility control clocks, dock placement, confirmations and selection isolation checks passed\nModal footer and persistent PDF/image zoom reset checks passed\n");})().catch(error=>{console.error(error);process.exitCode=1;});

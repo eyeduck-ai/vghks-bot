@@ -10,8 +10,8 @@ window.ReviewHistoryUI=(()=>{
   patient_name:reviewPatientIdentity(next.mrn,next.review_task_id).name,
   request:api,allowFetch:()=>!!work?.online&&!root.read_only});
  const same=(a,b)=>a&&b&&a.review_task_id===b.review_task_id&&a.cohort_id===b.cohort_id&&a.mrn===b.mrn&&a.resource===b.resource&&a.reference===b.reference;
- function clearView(){reportView?.gallery.dispose();frame=orderView=reportView=null;}
- function reset(){clearView();context=null;stack=[];taskId="";signature=renderSignature="";loadingStarted=0;sequence++;}
+ function clearView(){reportView?.gallery.dispose();frame?.navigation.remove();frame=orderView=reportView=null;}
+ function reset(){clearView();modal().classList.remove("report-view-dialog");context=null;stack=[];taskId="";signature=renderSignature="";loadingStarted=0;sequence++;}
  function active(){return modal().open&&modal().dataset.view==="history"&&context;}
  function assetUrl(asset){return "/api/accounts/"+encodeURIComponent(account)+"/analysis/asset?id="+encodeURIComponent(asset.digest);}
  function action(label,callback){const button=btn(label,callback,"quiet");button.classList.add("history-action");return button;}
@@ -28,6 +28,7 @@ window.ReviewHistoryUI=(()=>{
   extensionTask="";
   window.FileCompare?.context(account,next.mrn,reviewPatientIdentity(next.mrn,next.review_task_id).name);
   dialog("dataDialog");modal().dataset.view="history";$("#dataTitle").textContent=titles[next.resource];
+  modal().classList.toggle("report-view-dialog",next.resource==="order_report");window.UtilityDock?.sync();
   setPatientDialogContext("dataDialog",next.mrn,"",next.review_task_id);
   if(!retaining)panel().replaceChildren(ClinicalUI.loading("正在讀取已存報告…",{startedAt:loadingStarted}));
   try{
@@ -73,8 +74,11 @@ window.ReviewHistoryUI=(()=>{
  function navigation(content,result){
   const controls=node("div",undefined,"history-controls");
   if(stack.length)controls.append(action("← 返回清單",goBack));
+  if(context.resource==="order_report"){
+   const order=result.data?.order||{},summary=[order.date,order.name,order.case_no].filter(Boolean).join(" · "),meta=node("span",summary,"history-report-meta");meta.title=summary;controls.append(meta);
+  }
   controls.append(node("span",result.updated_at?"已存資料 · "+time(result.updated_at):"尚無已存資料","caption"));
-  if(work?.online&&!root.read_only)controls.append(action("更新資料",()=>load(context,{force:true})));
+  if(work?.online&&!root.read_only){const update=action("更新資料",()=>load(context,{force:true}));if(context.resource==="order_report"){setIcon(update,"refresh","更新資料");update.classList.add("history-report-refresh");}controls.append(update);}
   if(!result.complete&&work?.online&&!root.read_only)controls.append(action("重試未完成",()=>load(context)));
   content.append(controls);
  }
@@ -89,7 +93,8 @@ window.ReviewHistoryUI=(()=>{
   if(next===renderSignature)return;
   renderSignature=next;
   panel().querySelector(".history-load-error")?.remove();
-  if(!frame){const content=panel();content.replaceChildren();frame={navigation:node("div"),coverage:node("div"),issues:node("p",undefined,"error history-index-issues"),body:node("div",undefined,"history-report-content"),waiting:node("div")};content.append(frame.navigation,frame.coverage,frame.issues,frame.body,frame.waiting);}
+  if(!frame){const content=panel();content.replaceChildren();const area=node("div",undefined,"history-frame");frame={navigation:node("div",undefined,"history-navigation"),coverage:node("div"),issues:node("p",undefined,"error history-index-issues"),body:node("div",undefined,"history-report-content"),waiting:node("div")};area.append(frame.coverage,frame.issues,frame.body,frame.waiting);if(context.resource!=="order_report")area.prepend(frame.navigation);content.append(area);}
+  if(context.resource==="order_report"&&frame.navigation.parentElement!==$("#dataDialogActions"))$("#dataDialogActions").append(frame.navigation);
   frame.navigation.replaceChildren();navigation(frame.navigation,result);frame.coverage.replaceChildren();coverage(frame.coverage,result);
   frame.issues.textContent=result.issues?.length?`已顯示可確認的資料；另有 ${result.issues.length} 項未能確認，可按「重試未完成」重試。`:"";frame.issues.hidden=!result.issues?.length;
   const content=frame.body;
@@ -164,19 +169,21 @@ window.ReviewHistoryUI=(()=>{
   const order=data.order||{};
   if(!reportView){
    content.replaceChildren();
-   const meta=node("p",undefined,"caption"),text=node("div"),issues=node("p",undefined,"error"),blank=empty("此醫囑沒有可顯示的報告內容。");
+   const text=node("div",undefined,"history-report-texts"),details=node("details",undefined,"history-report-details"),detailBody=node("div"),issues=node("p",undefined,"error"),blank=empty("此醫囑沒有可顯示的報告內容。");
+   details.append(node("summary","醫囑明細"),detailBody);details.open=false;
    const gallery=window.ReportGallery.create({urlFor:assetUrl,identity:{account,mrn:context.mrn}});
-   reportView={meta,text,issues,blank,gallery,textSignature:""};content.append(meta,gallery.element,text,issues,blank);
+   reportView={text,details,detailBody,issues,blank,gallery,textSignature:"",detailSignature:""};content.append(gallery.element,text,details,issues,blank);
   }
-  reportView.meta.textContent=[order.date,order.name,order.case_no].filter(Boolean).join(" · ");
+  content.classList.toggle("report-has-attachments",!!(data.assets?.length||data.attachment_items?.length));
   reportView.gallery.update(data);
   const textSignature=JSON.stringify([order,data.texts,data.details]);
   if(textSignature!==reportView.textSignature){
    reportView.textSignature=textSignature;const text=reportView.text;text.replaceChildren();
-   if(data.texts?.length||data.details?.length)text.append(ClinicalUI.textDownload(data,[order.date,order.name||"醫囑報告"].filter(Boolean).join(" ")));
+   if(data.texts?.length)text.append(ClinicalUI.textDownload(data,[order.date,order.name||"醫囑報告"].filter(Boolean).join(" ")));
    for(const report of data.texts||[]){text.append(node("h3","文字報告"));if(report.text)text.append(node("pre",report.text,"history-report-text"));if(Object.keys(report.fields||{}).length)text.append(table(["欄位","內容"],Object.entries(report.fields).map(([key,value])=>[key,String(value??"")])));}
-   if(data.details?.length){text.append(node("h3","醫囑明細"));for(const detail of data.details)if(Object.keys(detail.fields||{}).length)text.append(table(["欄位","內容"],Object.entries(detail.fields).map(([key,value])=>[key,String(value??"")])));}
   }
+  const detailSignature=JSON.stringify([data.details||[],!!data.texts?.length]);reportView.details.hidden=!data.details?.length;
+  if(detailSignature!==reportView.detailSignature){reportView.detailSignature=detailSignature;reportView.detailBody.replaceChildren();if(data.details?.length&&!data.texts?.length)reportView.detailBody.append(ClinicalUI.textDownload(data,[order.date,order.name||"醫囑報告"].filter(Boolean).join(" ")));for(const detail of data.details||[])if(Object.keys(detail.fields||{}).length)reportView.detailBody.append(table(["欄位","內容"],Object.entries(detail.fields).map(([key,value])=>[key,String(value??"")])));}
   reportView.issues.textContent=(data.issues||[]).map(issue=>issue.branch+"："+issue.message).join("；");reportView.issues.hidden=!data.issues?.length;
   reportView.blank.hidden=!!(data.details?.length||data.texts?.length||data.assets?.length||data.attachment_items?.length);
  }

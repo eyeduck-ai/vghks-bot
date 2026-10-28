@@ -8,7 +8,7 @@ window.ReportGallery=(()=>{
   const root=element("section",undefined,"report-gallery"),rail=element("div",undefined,"report-gallery-rail"),main=element("div",undefined,"report-gallery-main");
   const heading=element("div",undefined,"report-gallery-heading"),title=element("strong"),tools=element("div",undefined,"attachment-toolbar"),viewport=element("div",undefined,"report-gallery-viewport"),notice=element("p",undefined,"caption report-gallery-notice");
   rail.setAttribute("aria-label","報告附件");main.append(heading,tools,notice,viewport);heading.append(title);root.append(rail,main);
-  const entries=new Map(),positions=new Map(),queue=[];let selected="",userSelected=false,selectedDigest="",controlsKey="",file=null,zoom=1,disposed=false,active=0,order={};
+  const entries=new Map(),positions=new Map(),queue=[];let selected="",userSelected=false,selectedDigest="",controlsKey="",file=null,pdfStage=null,zoom=1,disposed=false,active=0,order={};
   const observer=typeof IntersectionObserver==="function"?new IntersectionObserver(changes=>{for(const change of changes)if(change.isIntersecting){const entry=entries.get(change.target.dataset.refKey);if(entry)schedule(entry);}},{root:rail,rootMargin:"80px"}):null;
   function release(entry){if(entry.objectURL){URL.revokeObjectURL(entry.objectURL);entry.objectURL="";}if(entry.source){entry.source.src="";entry.source=null;}entry.thumb.replaceChildren(element("span",entry.asset?.mime==="application/pdf"?"PDF":"影像","report-gallery-placeholder"));entry.thumbDigest="";}
   function schedule(entry){
@@ -34,6 +34,11 @@ window.ReportGallery=(()=>{
   function visibleFallback(){if(observer||disposed)return;const bounds=rail.getBoundingClientRect?.();for(const entry of entries.values()){const rect=entry.tile.getBoundingClientRect?.();if(bounds&&rect?rect.bottom>=bounds.top&&rect.top<=bounds.bottom&&rect.right>=bounds.left&&rect.left<=bounds.right:entry.ordinal<=6)schedule(entry);}}
   rail.addEventListener("scroll",visibleFallback,{passive:true});
   function savePosition(){if(selected)positions.set(selected,{zoom,left:viewport.scrollLeft,top:viewport.scrollTop});}
+  function applyZoom(){
+   if(!file)return;
+   if(pdfStage){pdfStage.style.width=zoom*100+"%";pdfStage.style.height=zoom*100+"%";file.style.width=100/zoom+"%";file.style.height=100/zoom+"%";file.style.transform="scale("+zoom+")";}
+   else file.style.width=zoom*100+"%";
+  }
   function controls(entry){
    const key=selected+"/"+(entry?.asset?.digest||"");
    if(key===controlsKey){if(entry?.comparison)entry.comparison.fileCount=entries.size;return;}
@@ -42,10 +47,11 @@ window.ReportGallery=(()=>{
    entry.comparison={...identity,digest:asset.digest,mime:asset.mime,name:order.name||"醫囑附件",source:"醫囑報告",date:order.date||"",fileIndex:entry.ordinal,fileCount:entries.size,reportId:order.id};
    tools.append(ClinicalUI.comparisonChoice(entry.comparison),ClinicalUI.assetTools({url,asset,name,image:()=>file}));
    const link=element("a","獨立開啟原檔","attachment-control");link.href=url;link.target="_blank";link.rel="noopener";tools.append(link);
-   if(asset.mime?.startsWith("image/")){
-    const value=element("span",Math.round(zoom*100)+"%","report-gallery-zoom");
-    const resize=next=>{zoom=Math.max(.25,Math.min(4,next));file.style.width=zoom*100+"%";value.textContent=Math.round(zoom*100)+"%";savePosition();};
-    tools.append(button("−",()=>resize(zoom-.25)),value,button("＋",()=>resize(zoom+.25)),button("符合寬度",()=>resize(1)));
+   if(asset.mime?.startsWith("image/")||asset.mime==="application/pdf"){
+    const value=button(Math.round(zoom*100)+"%",()=>resize(1));value.classList.add("report-gallery-zoom");value.title="重設為 100%";
+    const resize=next=>{zoom=Math.max(.25,Math.min(4,next));applyZoom();value.textContent=Math.round(zoom*100)+"%";value.setAttribute("aria-label","目前縮放 "+value.textContent+"，重設為 100%");savePosition();};
+    value.setAttribute("aria-label","目前縮放 "+value.textContent+"，重設為 100%");
+    const less=button("−",()=>resize(zoom-.25)),more=button("＋",()=>resize(zoom+.25));less.setAttribute("aria-label","縮小附件");more.setAttribute("aria-label","放大附件");tools.append(less,value,more);
    }
   }
   function show(){
@@ -57,8 +63,8 @@ window.ReportGallery=(()=>{
    if(selectedDigest!==selected+"/"+digest){
     selectedDigest=selected+"/"+digest;const position=positions.get(selected)||{};zoom=position.zoom||1;
     if(file?.tagName==="IFRAME")file.src="about:blank";
-    file=null;viewport.replaceChildren();
-    if(digest){const pdf=entry.asset.mime==="application/pdf";file=element(pdf?"iframe":"img");const url=urlFor(entry.asset);file.src=pdf?ClinicalUI.pdfURL(url):url;file.title="報告附件 "+entry.ordinal;if(!pdf){file.alt=file.title;file.style.width=zoom*100+"%";}file.className="report-gallery-original";viewport.append(file);}
+    file=pdfStage=null;viewport.replaceChildren();
+    if(digest){const pdf=entry.asset.mime==="application/pdf";file=element(pdf?"iframe":"img");const url=urlFor(entry.asset);file.src=pdf?ClinicalUI.pdfURL(url):url;file.title="報告附件 "+entry.ordinal;if(!pdf)file.alt=file.title;file.className="report-gallery-original";if(pdf){pdfStage=element("div",undefined,"report-gallery-pdf-stage");pdfStage.append(file);viewport.append(pdfStage);}else viewport.append(file);applyZoom();}
     else viewport.append(element("p",entry.status==="failed"?"附件尚未取得。":"附件取得後會顯示於此。","empty"));
     viewport.scrollLeft=position.left||0;viewport.scrollTop=position.top||0;
    }
@@ -77,13 +83,13 @@ window.ReportGallery=(()=>{
     const asset=assets.get(key)||(item.digest?item:null);
     if(entry.asset?.digest!==asset?.digest)release(entry);
     entry.asset=asset;entry.ordinal=item.ordinal||index+1;entry.status=item.status||"ready";entry.message=item.message||"";
-    entry.caption.textContent="附件 "+entry.ordinal;entry.statusNode.textContent=labels[entry.status]||entry.status;entry.tile.title=entry.message||entry.caption.textContent;entry.tile.dataset.status=entry.status;
+    entry.caption.textContent=String(entry.ordinal);entry.statusNode.textContent=entry.status==="ready"?"":labels[entry.status]||entry.status;entry.statusNode.hidden=entry.status==="ready";entry.tile.title=entry.message||"附件 "+entry.ordinal;entry.tile.setAttribute("aria-label","附件 "+entry.ordinal+(entry.status==="ready"?"":"，"+entry.statusNode.textContent));entry.tile.dataset.status=entry.status;
     if(!entry.objectURL&&!entry.source)entry.thumb.textContent=asset?.mime==="application/pdf"||item.kind==="pdf"?"PDF":"影像";
    }
    for(const [key,entry] of entries)if(!keys.has(key)){observer?.unobserve(entry.tile);release(entry);entry.tile.remove();entries.delete(key);positions.delete(key);}
    if(!entries.has(selected)){selected="";userSelected=false;}
    if(!selected||!userSelected&&!entries.get(selected)?.asset?.digest){savePosition();selected=[...entries.values()].find(entry=>entry.asset?.digest)?.key||entries.keys().next().value||"";}
-   root.hidden=!entries.size;if(selected)show();else{selectedDigest=controlsKey="";if(file?.tagName==="IFRAME")file.src="about:blank";file=null;viewport.replaceChildren();tools.replaceChildren();title.textContent="";}
+   root.hidden=!entries.size;if(selected)show();else{selectedDigest=controlsKey="";if(file?.tagName==="IFRAME")file.src="about:blank";file=pdfStage=null;viewport.replaceChildren();tools.replaceChildren();title.textContent="";}
    visibleFallback();
   }
   function dispose(){if(disposed)return;disposed=true;observer?.disconnect();queue.length=0;for(const entry of entries.values())release(entry);if(file?.tagName==="IFRAME")file.src="about:blank";viewport.replaceChildren();entries.clear();positions.clear();}

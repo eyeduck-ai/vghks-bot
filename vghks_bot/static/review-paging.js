@@ -3,7 +3,7 @@
 // The scrollbar represents the complete filtered list. Only nearby identities
 // are retained; SOAP stays in a separate, small account/task-scoped cache.
 window.ReviewPaging=(()=>{
- const pageSize=40,rowHeight=84,overscan=4,blocks=new Map(),details=new Map(),pending=new Map();
+ const pageSize=40,rowHeight=72,overscan=4,blocks=new Map(),details=new Map(),pending=new Map();
  let owner="",pageData=null,detail=null,navigation=null,filtersKey="",collection="",listSequence=0,detailSequence=0,selectionSequence=0,statusSignature="",detailSignature="",busy=false;
  let scrollTimer=null,scrollJob=null,scrollWanted=false,scrollLoading=false,listError="",prefetchTimer=null,prefetchJob=null,prefetchSequence=0,boundRail=null;
  const scope=()=>JSON.stringify([account,currentReview,epoch]);
@@ -44,7 +44,8 @@ window.ReviewPaging=(()=>{
   if(!label){label=node("span","","caption review-page-label");container.replaceChildren(label);}
   const value=range(),last=Math.min(value.total,value.top+Math.ceil(($("#reviewPatients").clientHeight||580)/rowHeight));
   const waiting=busy||scrollLoading||!listError&&required().some(offset=>!blocks.has(offset));
-  label.textContent=value.total?"第 "+(value.top+1)+"–"+last+" / "+value.total+" 位 · 捲動瀏覽"+(waiting?" · 載入本機資料…":listError?" · 讀取失敗，重新捲動以重試":""):"0 位病人";
+  label.textContent=value.total?(value.top+1)+"–"+last+" / "+value.total+(waiting?" · 載入中":listError?" · 讀取失敗":""):"0 位病人";
+  container.title=listError||"目前可視範圍／篩選後病人總數；捲動清單不會切換右側病歷。";
   container.setAttribute("aria-busy",String(waiting));$("#reviewPatients").setAttribute("aria-busy",String(waiting));
  }
  function renderWindow(){
@@ -61,7 +62,7 @@ window.ReviewPaging=(()=>{
   validate(value);
   const next=value.collection_revision||taskSignature(value.task,observedRevisions);
   if(collection&&collection!==next){blocks.clear();details.clear();cancelPrefetch();}
-  collection=next;if(publish)pageData={...value,patients:[]};blocks.delete(value.offset);blocks.set(value.offset,value);trimBlocks();
+  collection=next;if(publish){pageData={...value,patients:[]};reviewData=pageData;}blocks.delete(value.offset);blocks.set(value.offset,value);trimBlocks();
  }
  function readBlock(offset,filters,extra={}){return request("/reviews/patients",{id:currentReview,offset,limit:pageSize,...filters,...(reviewPatient?{selected_mrn:reviewPatient}:{}),...extra});}
  function summary(value){

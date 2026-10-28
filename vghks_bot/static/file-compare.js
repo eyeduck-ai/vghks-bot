@@ -121,10 +121,8 @@ window.FileCompare = (() => {
       if (index >= 0 && [-1, 1].includes(event.data.delta)) move(index, event.data.delta);
     } else if (event.data?.type === "bot:compare-zoom") {
       if (event.data.account !== activeAccount || event.data.mrn !== mrn) return;
-      const item = items.find(row => row.digest === event.data.digest);
-      if (item && [-.25, .25].includes(event.data.delta)) {
-        item.zoom = Math.max(.5, Math.min(3, item.zoom + event.data.delta)); render();
-      }
+      if (event.data.reset === true) zoom(event.data.digest, 0, true);
+      else if ([-.25, .25].includes(event.data.delta)) zoom(event.data.digest, event.data.delta);
     }
   }
   function removeDigest(digest) {
@@ -292,6 +290,14 @@ window.FileCompare = (() => {
     if (!items.length) document.getElementById("fileCompareDialog")?.close();
     render();
   }
+  function zoom(digest, delta, reset = false) {
+    if (embedded) {
+      window.parent.postMessage({type:"bot:compare-zoom", account, mrn, digest, ...(reset ? {reset:true} : {delta})}, location.origin);
+      return;
+    }
+    const item = items.find(row => row.digest === digest);
+    if (item) {item.zoom = reset ? 1 : Math.max(.5, Math.min(3, item.zoom + delta));render();}
+  }
   function pane(item, index, inline = false) {
     const collection = inline ? remoteItems : items;
     const wrap = make("section", undefined, "file-compare-pane");
@@ -305,22 +311,22 @@ window.FileCompare = (() => {
     name.title = [label, item.name, item.source].filter(Boolean).join(" · ");
     const caption = make("span", [item.name, item.source].filter(Boolean).join(" · "));
     const buttons = make("div", undefined, "file-compare-pane-actions");
-    const itemIndex = () => collection.findIndex(row => row.digest === item.digest);
+    const itemIndex = () => (inline ? remoteItems : items).findIndex(row => row.digest === item.digest);
     const moveItem = delta => inline
       ? window.parent.postMessage({type:"bot:compare-move", account, mrn, digest:item.digest, delta}, location.origin)
       : move(itemIndex(), delta);
-    const zoomItem = delta => inline
-      ? window.parent.postMessage({type:"bot:compare-zoom", account, mrn, digest:item.digest, delta}, location.origin)
-      : (item.zoom = Math.max(.5, Math.min(3, item.zoom + delta)), render());
+    const resetZoom = button(Math.round(item.zoom * 100) + "%", () => zoom(item.digest, 0, true));
+    resetZoom.className = "file-compare-zoom";
+    resetZoom.setAttribute("aria-label", "重設縮放為 100%");resetZoom.title = "點擊重設為 100%";
     buttons.append(button("←", () => moveItem(-1)), button("→", () => moveItem(1)),
-      button("−", () => zoomItem(-.25)),
-      make("span", Math.round(item.zoom * 100) + "%"),
-      button("＋", () => zoomItem(.25)),
+      button("−", () => zoom(item.digest, -.25)), resetZoom,
+      button("＋", () => zoom(item.digest, .25)),
       button("×", () => inline ? removeDigest(item.digest) : remove(itemIndex())));
     for (const [i, el] of [...buttons.children].entries()) if (i < 2) el.setAttribute("aria-label", i ? "將檔案向右移" : "將檔案向左移");
     buttons.children[2].setAttribute("aria-label", "縮小檔案");
     buttons.children[4].setAttribute("aria-label", "放大檔案");
     buttons.children[5].setAttribute("aria-label", `移除 ${label}`);
+    buttons.children[5].className = "file-compare-remove";
     buttons.children[5].title = "移除檔案";
     buttons.children[0].disabled = index === 0;
     buttons.children[1].disabled = index === collection.length - 1;
@@ -339,39 +345,56 @@ window.FileCompare = (() => {
     wrap.append(header, scroll);
     return wrap;
   }
+  function updatePane(current, item, index, collection, active) {
+    const label = ClinicalUI.comparisonName(item, collection);
+    const name = current.querySelector(".file-compare-pane-head > strong");
+    name.textContent = label;name.title = [label, item.name, item.source].filter(Boolean).join(" · ");
+    current.dataset.active = String(index === active);
+    current.style.order = String(index);
+    const columns = collection.length <= 2 ? collection.length : collection.length === 4 ? 2 : 3;
+    current.style.setProperty("--pane-span", String(collection.length === 5 && index >= 3 ? 3 : 6 / columns));
+    const buttons = current.querySelectorAll(".file-compare-pane-actions button");
+    buttons[0].disabled = index === 0;buttons[1].disabled = index === collection.length - 1;
+    current.querySelector(".file-compare-remove").setAttribute("aria-label", `移除 ${label}`);
+    const file = current.querySelector(".file-compare-scroll > :first-child");
+    file.title = name.title;if (file.tagName === "IMG") file.alt = name.title;
+    const download = current.querySelector("a.attachment-control");
+    const downloadName = [label,item.name].filter(Boolean).join(" ");
+    if (download.download !== ClinicalUI.fileName(downloadName, item.mime))
+      download.replaceWith(ClinicalUI.downloadLink(download.href, downloadName, item.mime, true));
+    file.style.width = (item.zoom * 100) + "%";
+    file.style.height = item.mime === "application/pdf" ? (item.zoom * 100) + "%" : "auto";
+    current.querySelector(".file-compare-zoom").textContent = Math.round(item.zoom * 100) + "%";
+  }
   function renderInline(host = inlineHost) {
     if (!embedded || !host) return;
     inlineHost = host;
-    const positions = new Map([...host.querySelectorAll(".file-compare-pane")].map(node => {
-      const scroll = node.querySelector(".file-compare-scroll");
-      return [node.dataset.digest, [scroll?.scrollLeft || 0, scroll?.scrollTop || 0]];
-    }));
-    host.replaceChildren();
     if (!remoteItems.length) {
+      host.replaceChildren();
       host.append(make("p", "尚未選取檔案。請到「數值與醫囑」點開報告，再勾選附件加入比較。", "empty-result"));
       return;
     }
     const remembered = remoteItems.findIndex(item => item.digest === inlineActiveDigest);
     inlineActive = remembered >= 0 ? remembered : Math.min(inlineActive, remoteItems.length - 1);
     inlineActiveDigest = remoteItems[inlineActive].digest;
-    const tabs = make("div", undefined, "file-compare-inline-tabs");
+    let tabs = host.querySelector(".file-compare-inline-tabs"), panes = host.querySelector(".file-compare-inline-panes");
+    if (!tabs || !panes) {
+      tabs = make("div", undefined, "file-compare-inline-tabs");panes = make("div", undefined, "file-compare-inline-panes");
+      host.replaceChildren(tabs, panes);
+    }
+    tabs.replaceChildren();
     tabs.setAttribute("aria-label", "比較檔案切換");
-    const panes = make("div", undefined, "file-compare-inline-panes");
+    const desired = new Set(remoteItems.map(item => item.digest));
+    for (const existing of [...panes.children]) if (!desired.has(existing.dataset.digest)) existing.remove();
     for (const [index, item] of remoteItems.entries()) {
       const tab = button(ClinicalUI.comparisonName(item, remoteItems), () => {
         inlineActive = index; inlineActiveDigest = item.digest; renderInline();
       });
       tab.setAttribute("aria-pressed", String(index === inlineActive));
       tabs.append(tab);
-      const node = pane(item, index, true);
-      panes.append(node);
-    }
-    host.append(tabs, panes);
-    for (const node of panes.children) {
-      const previous = positions.get(node.dataset.digest);
-      if (!previous) continue;
-      const scroll = node.querySelector(".file-compare-scroll");
-      scroll.scrollLeft = previous[0]; scroll.scrollTop = previous[1];
+      let current = [...panes.children].find(node => node.dataset.digest === item.digest);
+      if (!current) {current = pane(item, index, true);panes.append(current);}
+      updatePane(current, item, index, remoteItems, inlineActive);
     }
   }
   function render() {
@@ -401,26 +424,7 @@ window.FileCompare = (() => {
       tabs.append(tab);
       let current = [...panes.children].find(element => element.dataset.digest === item.digest);
       if (!current) {current = pane(item, index); panes.append(current);}
-      const name = current.querySelector(".file-compare-pane-head > strong");
-      name.textContent = label;name.title = [label, item.name, item.source].filter(Boolean).join(" · ");
-      current.dataset.active = String(index === activeIndex);
-      current.style.order = String(index);
-      const columns = items.length <= 2 ? items.length : items.length === 4 ? 2 : 3;
-      current.style.setProperty("--pane-span", String(items.length === 5 && index >= 3 ? 3 : 6 / columns));
-      const buttons = current.querySelectorAll(".file-compare-pane-actions button");
-      buttons[0].disabled = index === 0;
-      buttons[1].disabled = index === items.length - 1;
-      buttons[4].setAttribute("aria-label", `移除 ${label}`);
-      const file = current.querySelector(".file-compare-scroll > :first-child");
-      file.title = name.title;
-      if (file.tagName === "IMG") file.alt = name.title;
-      const download = current.querySelector("a.attachment-control");
-      const downloadName = [label,item.name].filter(Boolean).join(" ");
-      if (download.download !== ClinicalUI.fileName(downloadName, item.mime))
-        download.replaceWith(ClinicalUI.downloadLink(download.href, downloadName, item.mime, true));
-      file.style.width = (item.zoom * 100) + "%";
-      file.style.height = item.mime === "application/pdf" ? (item.zoom * 100) + "%" : "auto";
-      current.querySelector(".file-compare-pane-actions span").textContent = Math.round(item.zoom * 100) + "%";
+      updatePane(current, item, index, items, activeIndex);
     }
     sendState(linkedFrame);
   }

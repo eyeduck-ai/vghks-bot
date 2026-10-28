@@ -11,7 +11,7 @@ window.ReviewHandoff=(()=>{
   const readonly=!!root.read_only;
   $("#reviewHandoffSelected").disabled=readonly||!currentReview||!selectedPatients.size;
   $("#reviewSelectionClear").disabled=!selectedPatients.size;
-  $("#reviewSelectionCount").textContent=`已勾選 ${selectedPatients.size} 位（保留篩選前的勾選）`;
+  const count=$("#reviewSelectionCount");count.textContent=`已選 ${selectedPatients.size} 位`;count.title="已勾選的病人會保留至清除選取或切換病歷檢閱／帳號；捲動及篩選不會清除。";count.setAttribute("aria-label",`已勾選 ${selectedPatients.size} 位病人，捲動及篩選會保留選取。`);
   for(const control of $$(".review-handoff-check")){control.checked=selectedPatients.has(control.dataset.mrn);control.disabled=readonly;}
  }
  function updatePatients(patients){

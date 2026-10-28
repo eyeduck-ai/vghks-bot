@@ -51,7 +51,7 @@ window.UtilityDock = (() => {
     for (const [doc,state] of documents) if (!live.has(doc)) {
       state.observer?.disconnect();documents.delete(doc);
       for (const reserved of reservations) if (reserved.ownerDocument === doc) {
-        reserved.classList.remove("utility-dock-host");reserved.style.removeProperty("--utility-dock-height");reservations.delete(reserved);
+        reserved.classList.remove("utility-dock-host", "utility-dock-active");reserved.style.removeProperty("--utility-dock-height");reservations.delete(reserved);
       }
     }
   }
@@ -66,12 +66,13 @@ window.UtilityDock = (() => {
     const target = host();
     for (const reserved of reservations) {
       if (reserved !== target && (!reserved.isConnected || (reserved.tagName === "DIALOG" && !reserved.open))) {
-        reserved.classList.remove("utility-dock-host");reserved.style.removeProperty("--utility-dock-height");reservations.delete(reserved);
+        reserved.classList.remove("utility-dock-host", "utility-dock-active");reserved.style.removeProperty("--utility-dock-height");reservations.delete(reserved);
       }
     }
     const confirmation = target.dataset?.utilityDock === "hide" || target.id === "confirmDialog" || target.id === "sheetManagementFinalizeDialog";
     if (previousHost !== target) {
       // Keep the underlying open reader's geometry while comparison/confirmation is on top.
+      previousHost?.classList.remove("utility-dock-active");
       if (previousHost && !previousHost.isConnected) {
         previousHost.classList.remove("utility-dock-host");previousHost.style.removeProperty("--utility-dock-height");reservations.delete(previousHost);
       }
@@ -79,23 +80,17 @@ window.UtilityDock = (() => {
       else target.append(dock);
       previousHost = target;
     }
-    const bounds = target.tagName === "DIALOG" ? target.getBoundingClientRect() : null;
-    const view = target.ownerDocument?.defaultView || window;
-    const width = target.ownerDocument?.documentElement?.clientWidth || view.innerWidth;
-    const height = target.ownerDocument?.documentElement?.clientHeight || view.innerHeight;
-    if (bounds && Number.isFinite(width) && Number.isFinite(height)) {
-      dock.style.right = Math.max(12, width - bounds.right + 12) + "px";
-      dock.style.bottom = Math.max(12, height - bounds.bottom + 12) + "px";
-      dock.style.maxWidth = Math.max(0, bounds.width - 24) + "px";
-    } else {
-      dock.style.removeProperty("right");dock.style.removeProperty("bottom");dock.style.removeProperty("max-width");
-    }
+    // A modal footer remains in its native focus scope and consumes real layout
+    // space. Fixed viewport positioning would still cover the report images.
+    dock.classList.toggle("utility-dock-modal", target.tagName === "DIALOG");
+    dock.style.removeProperty("right");dock.style.removeProperty("bottom");dock.style.removeProperty("max-width");
     for (const {node,order} of slots.values()) {
       node.style.order = String(order);
       if (node.parentElement !== dock) dock.append(node);
     }
     dock.hidden = confirmation || ![...slots.values()].some(({node}) => !node.hidden);
     target.classList.toggle("utility-dock-host", !dock.hidden);
+    target.classList.toggle("utility-dock-active", !dock.hidden);
     if (dock.hidden) reservations.delete(target);else reservations.add(target);
     reserve();
   }

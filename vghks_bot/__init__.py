@@ -1,3 +1,3 @@
 """VGHKS-bot: account-isolated outpatient and clinical review workspaces."""
 
-__version__ = "6.15.2"
+__version__ = "6.15.3"

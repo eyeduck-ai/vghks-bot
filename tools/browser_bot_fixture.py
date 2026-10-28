@@ -242,7 +242,9 @@ def seed_ophthalmic(workspace, mrn="TEST001", *, report_gallery=False):
                 BinaryAsset(synthetic_pdf(f"Synthetic exam {row['date']} - file {index}"), "application/pdf"),
                 workspace.username) for index in range(1, count+1)]
         store.save_step(mrn, "history-order:"+row["id"], "history_order", {
-            "order": row, "assets": assets, "texts": [], "details": [], "issues": [], "status": "complete"}, workspace.username)
+            "order": row, "assets": assets, "texts": [],
+            "details": [{"fields": {"醫囑": "合成醫囑明細", "備註": "僅供介面驗收，沒有病患資料"}}] if report_gallery else [],
+            "issues": [], "status": "complete"}, workspace.username)
 
 
 def seed_large_review(workspace, count):

@@ -52,6 +52,7 @@ async function run(){
  assert.equal(c.reviewPatient,"P1","selection moved review focus");assert.equal($("#reviewDetail").scrollTop,110);
  ui.toggle(first,true);ui.toggle(first,true);ui.toggle({mrn:" "},true);
  assert.equal(ui.patients().length,2,"selection did not deduplicate MRNs");
+ assert.equal($("#reviewSelectionCount").textContent,"已選 2 位");assert.match($("#reviewSelectionCount")["aria-label"],/已勾選 2 位/);assert.match($("#reviewSelectionCount").title,/篩選/);
  assert.ok(ui.patients().every(patient=>patient.records===undefined),"cross-page selection retained SOAP bodies");
  assert.equal($("#reviewHandoffSelected").disabled,false);
  c.renderReviewPatients([summary(first)]);assert.equal(ui.patients().length,2,"page or filter change dropped hidden selection");

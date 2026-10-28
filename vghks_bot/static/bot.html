@@ -60,11 +60,16 @@
     <button type="submit" data-icon="search" data-icon-label="搜尋本次 SOAP">搜尋</button><span id="reviewSummary" class="muted"></span>
     <button id="reviewExportNotes" type="button">批次輸出備註</button><button id="reviewClearNotes" type="button" class="danger" disabled>批次清除備註</button><button id="reviewFindNotes" type="button">查詢歷次備註</button>
    </form>
-   <div class="review-selection-toolbar" role="group" aria-label="勾選病人轉送">
-    <button id="reviewHandoffSelected" type="button" disabled>勾選病人 → 進階工具</button><button id="reviewSelectionClear" type="button" disabled>清除選取</button><span id="reviewSelectionCount" class="muted" role="status" aria-live="polite">已勾選 0 位（保留篩選前的勾選）</span>
+   <div id="reviewLayout" class="review-layout">
+    <aside id="reviewPatientPanel" class="review-patient-panel" aria-label="病人清單與選取操作">
+     <div class="review-patient-header">
+      <div class="review-selection-toolbar" role="group" aria-label="勾選病人轉送"><button id="reviewHandoffSelected" type="button" disabled>勾選 → 進階工具</button><button id="reviewSelectionClear" type="button" disabled>清除選取</button></div>
+      <div class="review-list-summary"><span id="reviewSelectionCount" class="muted" role="status" aria-live="polite">已選 0 位</span><div id="reviewPager" class="review-pager" aria-label="病歷檢閱清單位置"></div></div>
+     </div>
+     <div id="reviewPatients" class="review-patients" role="list" aria-label="本次病人"></div>
+    </aside>
+    <button id="reviewPatientsToggle" type="button" class="panel-toggle review-boundary-toggle patient-rail-toggle" aria-label="收合病人清單" title="收合病人清單" aria-controls="reviewPatientPanel" aria-expanded="true">‹</button><article id="reviewDetail" class="review-detail"></article>
    </div>
-   <div id="reviewPager" class="review-pager" aria-label="病歷檢閱清單位置"></div>
-   <div id="reviewLayout" class="review-layout"><aside id="reviewPatients" class="review-patients" role="list" aria-label="本次病人"></aside><button id="reviewPatientsToggle" type="button" class="panel-toggle review-boundary-toggle patient-rail-toggle" aria-label="收合病人清單" title="收合病人清單" aria-controls="reviewPatients" aria-expanded="true">‹</button><article id="reviewDetail" class="review-detail"></article></div>
   </section>
   <section id="libraryPage" class="page" hidden><div class="page-heading"><div><span class="eyebrow">LOCAL RECORDS</span><h1>病歷管理</h1></div><div class="actions"><button id="libraryToTools">篩選病人 → 工具</button><button id="deleteRecords" class="danger">刪除勾選病歷</button></div></div><form id="libraryForm" class="toolbar"><label class="grow">病歷文本搜尋<input id="libraryQuery" type="search" maxlength="500"></label><label>tag<select id="libraryTag" data-choices></select></label><label>就診起日<input id="libraryStart" type="date"></label><label>就診迄日<input id="libraryEnd" type="date"></label><label>來源任務<select id="libraryTask"><option value="">所有任務</option></select></label><button type="submit">搜尋</button></form><p id="librarySummary" class="muted"></p><div id="libraryRecords"></div><div id="libraryPagination" class="pagination"></div></section>
   <section id="tagsPage" class="page" hidden><div class="page-heading"><div><span class="eyebrow">PATIENT GROUPS</span><h1>管理TAG群組</h1></div><button id="tagManualOpen">輸入病歷號加 tag</button></div><form id="tagSearchForm" class="toolbar"><label class="grow">姓名／病歷號<input id="tagQuery" type="search"></label><label>tag<select id="tagFilter" data-choices></select></label><label>來源<select id="tagSource" data-choices><option value="">自動與手動</option><option value="auto">SOAP 自動命中</option><option value="manual">手動 tag</option></select></label><button>搜尋</button><button id="tagsToTools" type="button" class="primary">全部篩選病人 → 工具</button></form><p id="tagSummary" class="muted"></p><div id="tagPatients"></div><div id="tagPagination" class="pagination"></div></section>

@@ -117,7 +117,7 @@ Windows CI 的合成測試將 `TEMP`、`TMP`、`TMPDIR` 指向該 job 的 `runne
 
 跨任務共用取得的回歸須以 barrier 製造同時 cache miss，核對實體 SDK／HTTP、前景優先權、各訂閱者取消、force 分流、登入／清除 epoch 與病人／完整就診 selector。快取與合併結果不得改寫 PRQ 病人 context，不得增加 SDK 外層重試；必要身分核對與 SDK 內部退避仍照常發生。
 
-病人來源輸入另以 `tools/browser_bot_fixture.py --review-patients 1000 --lookup-failures --lookup-delay 5 --local-board` 驗收慢查核、失敗與批次貼上。等待時須看得見原號碼，所有開始入口均不得略過 pending／draft／失敗；來源或帳號切換後舊結果不得回填。標題列的滑鼠及鍵盤操作、設定按鈕不冒泡、344／304px 清單與 84px 虛擬列高須於桌面及窄畫面實測。測試只用合成 SDK 與一次性資料庫。
+病人來源輸入另以 `tools/browser_bot_fixture.py --review-patients 1000 --lookup-failures --lookup-delay 5 --local-board` 驗收慢查核、失敗與批次貼上。等待時須看得見原號碼，所有開始入口均不得略過 pending／draft／失敗；來源或帳號切換後舊結果不得回填。標題列的滑鼠及鍵盤操作、設定按鈕不冒泡、248／232px 清單與 72px 虛擬列高須於桌面及窄畫面實測。測試只用合成 SDK 與一次性資料庫。
 
 ## 更新 SDK
 
@@ -131,3 +131,5 @@ $vghksSdkRequirement = Get-Content requirements-build.lock.txt | Where-Object { 
 ```
 
 執行完整檢查、主程式 EXE 自測與封裝核對，並在院內確認真實回應。不要只改其中一處，也不要在 CI 自動追蹤 SDK 的 `main`。PRQ 相容處理使用 `core.operations.operation_spec`，不從已拆分的 Adapter 匯入私有操作常數；光照治療、病人身分及不可重送的恢復規則均需回歸。
+
+緊密檢閱與報告驗收使用 `--review-patients 1000 --report-gallery --demographics --local-board`。核對左欄工具列不隨虛擬清單捲動，搜尋列下不再有全寬選取／位置列；資料資訊保留索引與 SOAP 內容時間的不同語意。報告須驗證雙欄縮圖、收合明細、獨立底部進度／比較列、原生模態視窗的返回與清除確認，以及圖片／多頁 PDF 的百分比重設不重建檢視節點。

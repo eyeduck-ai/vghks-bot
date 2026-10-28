@@ -164,7 +164,7 @@ async function enter(key){
 }
 function updateReviewLayout(){document.body.classList.toggle("review-result-compact",page==="review"&&!!reviewData&&!reviewSetupExpanded);}
 function showPage(name){if(page==="module"&&name!=="module")captureCataractScroll();page=name;document.body.classList.toggle("module-workspace",name==="module");$("#sidebarAccount").open=false;Choices.sync();window.ToolWorkspace?.visibility(name);window.SurgerySystem?.visibility(name);window.SheetManagement?.visibility(name);for(const section of $$("main>.page"))section.hidden=section.id!==name+"Page";for(const b of $$("[data-page]"))b.classList.toggle("active",b.dataset.page===name);updateReviewLayout();window.WorkspacePoll?.visibility();window.ReviewPaging?.visibility();}
-function toggleReviewPatients(){const hidden=!$("#reviewPatients").hidden;$("#reviewPatients").hidden=hidden;$("#reviewPager").hidden=hidden;$("#reviewLayout").classList.toggle("patients-collapsed",hidden);const toggle=$("#reviewPatientsToggle");toggle.setAttribute("aria-expanded",String(!hidden));toggle.textContent=hidden?"›":"‹";toggle.title=hidden?"展開病人清單":"收合病人清單";toggle.setAttribute("aria-label",toggle.title);}
+function toggleReviewPatients(){const hidden=!$("#reviewPatientPanel").hidden;$("#reviewPatientPanel").hidden=hidden;$("#reviewPatients").hidden=hidden;$("#reviewPager").hidden=hidden;$("#reviewLayout").classList.toggle("patients-collapsed",hidden);const toggle=$("#reviewPatientsToggle");toggle.setAttribute("aria-expanded",String(!hidden));toggle.textContent=hidden?"›":"‹";toggle.title=hidden?"展開病人清單":"收合病人清單";toggle.setAttribute("aria-label",toggle.title);}
 async function navigate(name){if(page==="review"&&name!=="review"&&!await window.ReviewNotesUI?.flushAll())throw new Error("有備註尚未儲存，請重試後再切換頁面。");showPage(name);if(name==="library")await loadLibrary();if(name==="tags")await loadTags();if(name==="tasks")await refresh();if(name==="approvals"){await window.Approvals.enter();}if(name==="earnings")await window.Earnings.open();if(name==="surgery")await window.SurgerySystem.open();if(name==="sheetManagement")await window.SheetManagement.open();}
 const draftValue=()=>({start:$("#startDate").value,end:$("#endDate").value,mode:$("#dateMode").value,selected:[...selected],manual,tab:listTab});
 function draftSave(){if(root.read_only)return;clearTimeout(draftTimer);const key=account;draftTimer=setTimeout(()=>{if(key!==account)return;act(()=>api("/draft/save",draftValue()));},250);}
@@ -383,15 +383,16 @@ function renderReviewPatients(values,viewport=null){
  for(const p of values){
   const sequenceNo=p.sequence_no!==undefined?p.sequence_no:window.ReviewNotesUI.sequence(p.mrn),dates=p.dates||[...new Set((p.records||[]).map(record=>record.date))];
   const tags=p.auto_tags||[...new Map((p.records||[]).flatMap(record=>record.matches||[]).map(tag=>[tag.category,tag])).values()];
-  const signature=JSON.stringify([p.mrn,p.name,p.status,sequenceNo,dates,tags,p.manual_tags,root.read_only,!!viewport]);
+  const attention=p.processing?"載入中":["ready","completed"].includes(p.status)?"":labels[p.status]||p.status||"";
+  const signature=JSON.stringify([p.mrn,p.name,p.status,attention,sequenceNo,dates,tags,p.manual_tags,root.read_only,!!viewport]);
   let row=existing.get(p.mrn);
   if(!row||row.dataset.reviewSignature!==signature){
    row=node("div",undefined,"review-patient-row");row.dataset.mrn=p.mrn;row.dataset.reviewSignature=signature;
    const control=node("label",undefined,"review-patient-check"),checkbox=check(`勾選 ${p.name||p.mrn}（${p.mrn}）`,!!window.ReviewHandoff?.has(p.mrn),checked=>window.ReviewHandoff?.toggle(p,checked));
    checkbox.className="review-handoff-check";checkbox.dataset.mrn=p.mrn;checkbox.disabled=!!root.read_only;control.append(checkbox);
    const button=btn("",()=>selectReviewPatient(p.mrn),"patient-select"),heading=node("span",undefined,"review-patient-top"),badge=node("span",sequenceNo||"未提供","review-sequence");
-   button.dataset.mrn=p.mrn;button.title=[p.name||p.mrn,p.mrn,"掛號序號："+(sequenceNo||"未提供"),labels[p.status]||p.status,...dates,...tags.map(tag=>tag.category_name||tag.category),...(p.manual_tags||[]).map(tag=>tag.name||tag.category_name||tag.category||tag)].join(" · ");button.setAttribute("aria-label",button.title);badge.title="掛號序號："+(sequenceNo||"未提供");const name=node("strong",p.name||p.mrn);name.title=p.name||p.mrn;heading.append(name,badge);
-   button.append(heading,node("span",`${p.mrn} · ${labels[p.status]||p.status}`,"caption"));
+   button.dataset.mrn=p.mrn;button.title=[p.name||p.mrn,p.mrn,"掛號序號："+(sequenceNo||"未提供"),attention,...dates,...tags.map(tag=>tag.category_name||tag.category),...(p.manual_tags||[]).map(tag=>tag.name||tag.category_name||tag.category||tag)].filter(Boolean).join(" · ");button.setAttribute("aria-label",button.title);badge.title="掛號序號："+(sequenceNo||"未提供");const name=node("strong",p.name||p.mrn);name.title=p.name||p.mrn;heading.append(name,badge);
+   button.append(heading,node("span",[p.mrn,attention].filter(Boolean).join(" · "),"caption review-patient-id"+(["error","failed","partial"].includes(p.status)?" is-error":"")));
    if(dates.length){const datesLabel=node("span",dates.join("、"),"caption review-patient-dates");datesLabel.title=dates.join("、");button.append(datesLabel);}
    if(viewport){const tagLine=node("span",undefined,"review-patient-tags"),all=[...tags,...(p.manual_tags||[])];tagLine.append(badges(tags.slice(0,2)),badges((p.manual_tags||[]).slice(0,Math.max(0,2-tags.length)),true));if(all.length>2)tagLine.append(node("span","+"+(all.length-2),"caption"));tagLine.title=button.title;button.append(tagLine);}
    else button.append(badges(tags),badges(p.manual_tags,true));row.append(control,button);
@@ -435,16 +436,16 @@ function reviewDataInfo(patient){
  const records=patient.records||[],checked=patient.checked_at,index=patient.index_checked_at;
  const info=node("details",undefined,"review-data-info"),summary=node("summary");
  const label=patient.reused?patient.reuse_label||"沿用已存結果":"已保存 "+records.length+" 份 SOAP";
- summary.append(node("span",[label,checked?"檢閱核對 "+time(checked):index?"索引核對 "+time(index):""].filter(Boolean).join(" · "),"review-data-summary"),node("span","資料資訊","review-data-label"));
+ summary.append(node("span",label,"review-data-summary"),node("span","資料資訊","review-data-label"));
  const rows=[],sameTime=(a,b)=>a===b||!!a&&!!b&&Number.isFinite(Date.parse(a))&&Date.parse(a)===Date.parse(b);
- if(checked&&index&&sameTime(checked,index))rows.push(["檢閱／索引核對",time(checked)]);
- else{if(checked)rows.push(["檢閱核對",time(checked)]);if(index)rows.push(["索引核對",time(index)]);}
+ if(checked&&index&&sameTime(checked,index))rows.push(["檢閱／就診索引核對",time(checked)]);
+ else{if(checked)rows.push(["檢閱核對",time(checked)]);if(index)rows.push(["就診索引核對",time(index)]);}
  for(const record of records){
   const title=["SOAP",record.date,record.section,record.case_no].filter(Boolean).join(" · ");
-  if(record.updated_at)rows.push([title+" · 取得",time(record.updated_at)+(record.cached?" · 沿用本機版本":"")]);
+  if(record.updated_at)rows.push([title+" · 內容取得",time(record.updated_at)+(record.cached?" · 沿用本機版本":"")]);
   else if(record.cached)rows.push([title,"沿用本機版本"]);
   if(record.first_saved&&!sameTime(record.first_saved,record.updated_at))rows.push([title+" · 首次保存",time(record.first_saved)]);
-  if(record.saved_at&&!sameTime(record.saved_at,record.first_saved))rows.push([title+" · 版本保存",time(record.saved_at)]);
+  if(record.saved_at&&!sameTime(record.saved_at,record.first_saved)&&!sameTime(record.saved_at,record.updated_at))rows.push([title+" · 版本保存",time(record.saved_at)]);
  }
  if(!rows.length)return node("p",label,"review-data-summary");
  const values=node("dl",undefined,"review-data-values");
@@ -469,7 +470,7 @@ function renderReviewDetail(){
   for(const target of soap.querySelectorAll("[data-tag-categories]")){
    for(const category of JSON.parse(target.dataset.tagCategories))if(!tagTargets.has(category))tagTargets.set(category,target);
   }
-  if(!reusable)section.append(node("h3",record.date+" · "+record.section),node("p",[record.doctor,record.case_no,record.cached?"沿用本機版本":"已保存",record.updated_at?"取得 "+time(record.updated_at):""].filter(Boolean).join(" · "),"caption"));
+  if(!reusable)section.append(node("h3",record.date+" · "+record.section),node("p",[record.doctor,record.case_no,record.cached?"沿用本機版本":"已保存"].filter(Boolean).join(" · "),"caption"));
   for(const mark of soap.querySelectorAll(".soap-original mark[data-search-hit], .soap-view > .soap mark[data-search-hit]")){
    searchTargets.push({mark,date:record.date,hit:mark.textContent.trim().replace(/\s+/g," ").slice(0,24)||"命中內容"});
   }
