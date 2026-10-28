@@ -365,6 +365,11 @@ class BotTests(unittest.TestCase):
                     self.assertEqual(code, 200)
                     self.assertEqual(headers["Content-Type"], "text/javascript; charset=utf-8")
                     self.assertEqual(body, (Path(__file__).parents[1] / "vghks_bot" / "static" / script).read_bytes())
+                calls = list(BotSyntheticSDK.calls)
+                for retired in ("/review-preparation.js", "/review-preparation.css"):
+                    for suffix in ("", "?v=" + __version__):
+                        self.assertEqual(request(retired + suffix)[0], 404)
+                self.assertEqual(BotSyntheticSDK.calls, calls)
             finally:
                 server.shutdown()
                 thread.join(2)
@@ -438,6 +443,15 @@ class BotTests(unittest.TestCase):
                     self.assertEqual(request(asset, cookie=False)[0], 200)
                 own = f"/api/accounts/{self.key}"
                 foreign = f"/api/accounts/{other}"
+                calls = list(BotSyntheticSDK.calls)
+                for operation in ("read", "action"):
+                    self.assertEqual(request(own + "/reviews/preparation/" + operation,
+                        {"review_task_id": "retired-task", "action": "start", "options": {"soap": True}})[0], 404)
+                for endpoint in ("/workbench", "/status"):
+                    code, body = request(own + endpoint)
+                    self.assertEqual(code, 200)
+                    self.assertNotIn("review_preparation", json.loads(body))
+                self.assertEqual(BotSyntheticSDK.calls, calls)
                 group = self.group()
                 self.assertEqual(request(own+"/sets/cohort", {"set_id": group["id"]})[0], 200)
                 self.assertEqual(request(foreign+"/sets/cohort", {"set_id": group["id"]})[0], 400)

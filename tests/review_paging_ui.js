@@ -2,6 +2,7 @@
 const assert=require("node:assert/strict"),fs=require("node:fs"),vm=require("node:vm");
 const {surface,deferred,tick}=require("./review_ui.js");
 const settle=async()=>{for(let index=0;index<80;index++)await Promise.resolve();};
+const samples=[];
 
 function setup(count=1000){
  const s=surface(),c=s.context,$=s.$,calls=[],notes=[],renders=[],timers=new Map(),documentEvents=new Map();let timerId=0;
@@ -15,10 +16,9 @@ function setup(count=1000){
  c.badges=items=>s.node("span",JSON.stringify(items||[]));
  c.check=(label,checked,run)=>{const input=s.node("input");input.checked=checked;input.setAttribute("aria-label",label);input.run=run;return input;};
  const selection=new Map();c.window.ReviewHandoff={updatePatients(){},has:mrn=>selection.has(mrn),toggle:(patient,checked)=>{if(checked)selection.set(patient.mrn,{mrn:patient.mrn,name:patient.name});else selection.delete(patient.mrn);}};
- let flush=true;const selections=[],preparations=[];
+ let flush=true;const selections=[];
  c.window.ReviewNotesUI={load:async(id,options)=>{notes.push({id,options});await Promise.resolve();},flush:async(...args)=>typeof flush==="function"?flush(...args):flush,sequence:()=>""};
  c.window.FileCompare={context:(...args)=>selections.push(args)};
- c.window.ReviewPreparationUI={context:(...args)=>preparations.push(args)};
  c.renderReviewHeader=()=>{};c.window.ToolWorkspace={adoptReview(){}};
  c.renderReviewDetail=()=>{
   const patient=c.window.ReviewPaging.patient();renders.push(patient.mrn);
@@ -67,7 +67,20 @@ function setup(count=1000){
  const scroll=async(index,fraction=0)=>{$("#reviewPatients").scrollTop=index*116+fraction;await $("#reviewPatients").emit("scroll");await runTimers(65);};
  const rows=()=>$("#reviewPatients").querySelectorAll(".review-patient-row");
  const hide=hidden=>{c.document.hidden=hidden;documentEvents.get("visibilitychange")?.();};
- return {...s,ui,calls,notes,renders,revisions,listGates,detailGates,selections,selection,all,invalidPrefetch,preparations,scroll,runTimers,rows,hide,maxPrefetch:()=>maxPrefetchActive,setTaskRevision:value=>taskRevision=value,setFlush:value=>flush=value,setWrongPatient:value=>wrongPatient=value};
+ const sample={...s,ui,calls,notes,renders,revisions,listGates,detailGates,selections,selection,all,invalidPrefetch,scroll,runTimers,rows,hide,maxPrefetch:()=>maxPrefetchActive,setTaskRevision:value=>taskRevision=value,setFlush:value=>flush=value,setWrongPatient:value=>wrongPatient=value};
+ samples.push(sample);return sample;
+}
+
+function localReadContract(){
+ for(const sample of samples)for(const call of sample.calls){
+  assert.ok(["/reviews/patients","/reviews/patient"].includes(call.path),"review list/local prefetch started an automatic clinical request: "+call.path);
+  if(call.path==="/reviews/patient")assert.equal(call.values.local_only,true,"patient prefetch allowed a network fallback");
+  else assert.equal(call.values.limit,40,"virtual scrolling stopped using bounded metadata batches");
+ }
+ for(const file of ["bot.html","bot.js","review-paging.js","progress.js"]){
+  const text=fs.readFileSync("vghks_bot/static/"+file,"utf8");assert.doesNotMatch(text,/ReviewPreparationUI|review-preparation|review_preparation|reviewPreparation/,"removed background acquisition wiring remains in "+file);
+ }
+ for(const file of ["review-preparation.js","review-preparation.css"])assert.equal(fs.existsSync("vghks_bot/static/"+file),false);
 }
 
 async function continuousWindow(){
@@ -77,7 +90,6 @@ async function continuousWindow(){
  assert.equal(s.notes[0].options.mrns.length,1,"scroll metadata caused all patients' notes to accumulate");
  assert.equal(s.rows()[0].querySelector(".review-sequence").textContent,"001","initial registration sequence required notes");
  assert.ok(s.rows().length<=14);assert.equal($("#reviewPager").querySelectorAll("button").length,0,"page buttons remain");
- assert.equal(s.preparations[0][1].total,1000);
  const firstRow=s.rows()[0],soap=$("#reviewDetail").querySelector(".soap-record");
  firstRow.querySelector(".patient-select").focus();$("#reviewDetail").scrollTop=73;
  await ui.poll({revision:1,status:"completed"},c.work.revisions);assert.equal(calls.length,2,"unchanged status triggered another read");
@@ -233,4 +245,4 @@ async function prefetchCancellationAndSingleLane(){
  c.page="patients";ui.visibility();
 }
 
-(async()=>{await continuousWindow();await focusSelectionAndNavigation();await anchorAndOverlayRevision();await changingCollectionDuringScroll();await racingReads();await sharedReadsAndBoundedMemory();await nearbyLocalPrefetch();await prefetchCompletenessAndRevision();await prefetchCancellationAndSingleLane();process.stdout.write("Review continuous list: bounded DOM/cache, full-range scrolling, MRN anchors, selection/note guards and local-only prefetch passed\n");})().catch(error=>{console.error(error);process.exitCode=1;});
+(async()=>{await continuousWindow();await focusSelectionAndNavigation();await anchorAndOverlayRevision();await changingCollectionDuringScroll();await racingReads();await sharedReadsAndBoundedMemory();await nearbyLocalPrefetch();await prefetchCompletenessAndRevision();await prefetchCancellationAndSingleLane();localReadContract();process.stdout.write("Review continuous list: bounded DOM/cache, full-range scrolling, MRN anchors, selection/note guards and local-only prefetch without automatic clinical queries passed\n");})().catch(error=>{console.error(error);process.exitCode=1;});

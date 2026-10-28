@@ -52,12 +52,8 @@ class SyntheticSheetHandler(BotHandler):
         return super().local_request()
 
 
-class SlowPreparationSDK(BotSyntheticSDK):
-    """Delay a synthetic read so pause and foreground controls can be exercised."""
-    def history(self, mrn, lookback):
-        time.sleep(1.5)
-        return super().history(mrn, lookback)
-
+class LargeReviewSDK(BotSyntheticSDK):
+    """Keep manual profile names aligned with the seeded synthetic review."""
     def basic_info(self, mrn):
         result = super().basic_info(mrn)
         return replace(result, name="合成病人" + mrn[4:]) if mrn.startswith("PAGE") else result
@@ -294,12 +290,11 @@ def main():
     parser.add_argument("--registrations", action="store_true", help="Complete registration fields, explicit and unknown attendance")
     parser.add_argument("--sheet-management", action="store_true", help="Synthetic online sheet statistics; no Google calls")
     parser.add_argument("--review-patients", type=int, default=0, help="Seed a completed synthetic review with 1-20000 patients")
-    parser.add_argument("--slow-preparation", action="store_true", help="Delay synthetic numeric reads for background preparation UI checks")
     args = parser.parse_args()
     if not 0 <= args.review_patients <= 20000:
         parser.error("--review-patients must be between 0 and 20000")
     with tempfile.TemporaryDirectory(prefix="vghks-bot-synthetic-") as directory:
-        sdk = SessionSDK if args.lookup_failures else RegistrationsSDK if args.registrations else DemographicsSDK if args.demographics else FollowUpSDK if args.followup else SlowPreparationSDK if args.slow_preparation else BotSyntheticSDK
+        sdk = SessionSDK if args.lookup_failures else RegistrationsSDK if args.registrations else DemographicsSDK if args.demographics else FollowUpSDK if args.followup else LargeReviewSDK if args.review_patients else BotSyntheticSDK
         manager = DatabaseManager(Path(directory), Settings(), sdk)
         app = manager.current
         try:

@@ -159,13 +159,14 @@ async function externalNoteTests(){
  ui.reset();
 }
 async function profileTests(){
- const s=surface(),c=s.context,$=s.$,calls=[],noteLoads=[],reviewLoads=[],copied=[];
+ const s=surface(),c=s.context,$=s.$,calls=[],noteLoads=[],reviewLoads=[],copied=[],historyActions=[];
  const source=fs.readFileSync("vghks_bot/static/bot.js","utf8");
  c.Node=s.node("div").constructor;c.epoch=0;c.page="review";c.extensionContext=null;c.extensionTask="";c.work.online=true;
  c.document.createElement=tag=>s.node(tag);c.window.addEventListener=()=>{};
  c.navigator={clipboard:{writeText:async value=>copied.push(value)}};
  s.run("vghks_bot/static/clinical-ui.js");c.ClinicalUI=c.window.ClinicalUI;
  c.window.ReviewNotesUI={control:()=>({button:s.node("button","備註"),panel:s.node("div")}),load:async(...values)=>noteLoads.push(values)};
+ c.window.ReviewHistoryUI={open:async(...values)=>historyActions.push(values),dismiss(){}};
  $("#dataDialog").showModal=()=>{$("#dataDialog").open=true;};$("#dataDialog").close=()=>{$("#dataDialog").open=false;return $("#dataDialog").emit("close");};
  c.setPatientDialogContext=(id,mrn)=>{$("#"+id).dataset.mrn=mrn;};
  c.JobProgress.publish=()=>{};c.loadReview=async()=>reviewLoads.push(c.currentReview);
@@ -246,6 +247,12 @@ async function profileTests(){
  assert.equal(calls.length,0,"copying a patient header started a data request");c.reviewPatient="P1";
  c.reviewData.patients[0]={...compact,records:[]};c.renderReviewDetail();contacts=$("#reviewDetail").querySelector(".review-contact-info");
  assert.deepEqual(contacts.children.map(child=>child.textContent),["手機 0912000000","住家電話 07-0000000"],"compact phone was omitted or duplicated");
+ assert.deepEqual(historyActions,[],"rendering or copying a patient automatically opened clinical history");
+ for(const [label,resource] of [["歷年數值類報告","numeric"],["歷年醫囑清單","orders"]]){
+  const action=$("#reviewDetail").querySelectorAll("button").find(button=>button.textContent===label);
+  assert.ok(action,"review lost its explicit "+label+" action");await action.run();assert.deepEqual(historyActions.at(-1),[resource,"P1"]);
+ }
+ assert.equal(calls.length,0,"manual history controls started unrelated patient queries");
  const profileButton=$("#reviewDetail").querySelectorAll("button").find(button=>button.textContent==="病人基本資料");
  assert.ok(profileButton,"review has no explicit patient profile action");await profileButton.run();
  assert.equal($("#dataTitle").textContent,"病人基本資料");assert.equal(starts().length,1);

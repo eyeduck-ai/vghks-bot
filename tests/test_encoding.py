@@ -80,15 +80,22 @@ class AttachmentTransportTests(unittest.TestCase):
         transport.request("GET", image)
         self.assertEqual(sleeps, [1.5])
         original = transport.policy
+        normal_requests = (("GET", self.base + "/QueryOrderDetail.do"),
+                           ("GET", self.base + "/QueryReportByOrder.do"),
+                           ("GET", self.base + "/QueryCaseList.do"),
+                           ("POST", "https://synthetic.invalid/portal/login.do"),
+                           ("POST", self.base + "/QueryPatientRecord.do"),
+                           ("GET", self.base + "/Page/JSP/KS_Patient.jsp"),
+                           ("POST", image), ("GET", image + "/other"),
+                           ("GET", image.replace("synthetic.invalid", "other.invalid")),
+                           ("GET", image.replace("https://", "http://")))
         with report_attachment_downloads():
             for path in ("showPACSPic.jsp", "showPDF.jsp"):
                 transport.request("GET", self.base + "/Page/JSP/" + path)
-            for method, url in (("GET", self.base + "/QueryOrderDetail.do"),
-                                ("POST", image), ("GET", image + "/other"),
-                                ("GET", image.replace("synthetic.invalid", "other.invalid")),
-                                ("GET", image.replace("https://", "http://"))):
+            for method, url in normal_requests:
                 transport.request(method, url)
-        self.assertEqual(sleeps, [1.5] * 6)
+        self.assertEqual(sleeps, [1.5] * (1 + len(normal_requests)),
+                         "attachment scope changed text/index/login/identity pacing")
         self.assertIs(transport.policy, original)
         self.assertIs(transport.attachment_transport.session, session)
         self.assertEqual(transport.attachment_transport.policy.max_attempts, original.max_attempts)
@@ -96,7 +103,7 @@ class AttachmentTransportTests(unittest.TestCase):
             with report_attachment_downloads():
                 raise ValueError("synthetic scope failure")
         transport.request("GET", image)
-        self.assertEqual(sleeps, [1.5] * 7)
+        self.assertEqual(sleeps, [1.5] * (2 + len(normal_requests)))
 
     def test_scope_does_not_affect_other_threads_and_missing_origin_fails_closed(self):
         transport, _, sleeps = self.transport()
@@ -141,19 +148,22 @@ class AttachmentTransportTests(unittest.TestCase):
         self.assertEqual(len(session.calls), 2)
 
     def test_attachment_retry_after_is_preserved(self):
-        transport, session, sleeps = self.transport([429, 200])
-        request = session.request
+        for status in (429, 503):
+            with self.subTest(status=status):
+                transport, session, sleeps = self.transport([status, 200])
+                request = session.request
 
-        def limited(method, url, **kwargs):
-            response = request(method, url, **kwargs)
-            if response.status_code == 429:
-                response.headers["Retry-After"] = "4"
-            return response
+                def limited(method, url, _request=request, _status=status, **kwargs):
+                    response = _request(method, url, **kwargs)
+                    if response.status_code == _status:
+                        response.headers["Retry-After"] = "4"
+                    return response
 
-        session.request = limited
-        with report_attachment_downloads():
-            transport.request("GET", self.base + "/Page/JSP/showPDF.jsp")
-        self.assertEqual(sleeps, [4])
+                session.request = limited
+                with report_attachment_downloads():
+                    transport.request("GET", self.base + "/Page/JSP/showPDF.jsp")
+                self.assertEqual(sleeps, [4])
+                self.assertEqual(len(session.calls), 2)
 
     def test_shared_session_is_serialized_across_normal_and_attachment_paths(self):
         transport, session, _ = self.transport()

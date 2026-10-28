@@ -38,8 +38,6 @@ def status(work, watched=(), run_id=""):
             value["runs"].append({k: v for k, v in work.store.metadata(key).items() if k in fields})
     value["active_count"] = sum(t.get("status") in {"queued", "running", "cancelling"}
                                 for t in [*value["tasks"], *value["runs"]])
-    if hasattr(work.review, "preparation"):
-        value["review_preparation"] = work.review.preparation.snapshot(compact=True)
     return value
 
 

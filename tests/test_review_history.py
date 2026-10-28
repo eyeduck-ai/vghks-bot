@@ -470,6 +470,14 @@ class ReviewHistoryTests(unittest.TestCase):
         self.assertEqual(before, HistorySDK.calls)
 
     def test_numeric_orders_dedup_lazy_assets_and_account_scope(self):
+        before = list(HistorySDK.calls)
+        with patch.object(self.work, "sdk_factory", side_effect=AssertionError("local history read opened SDK")):
+            self.work.review.read_profile({"mrn": MRN, "review_task_id": self.review["id"]})
+            for resource in ("numeric", "orders"):
+                empty = self.history.read(self.request(resource))
+                self.assertIsNone(empty["data"])
+                self.assertFalse(empty["complete"])
+        self.assertEqual(HistorySDK.calls, before)
         self.assertEqual(self.fetch("numeric")["status"], "completed")
         numeric = self.history.read(self.request("numeric"))["data"]
         self.assertEqual(numeric["tables"][0]["rows"][0][0], "2025-01-01")

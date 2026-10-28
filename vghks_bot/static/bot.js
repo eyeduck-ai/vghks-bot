@@ -66,7 +66,7 @@ let reviewHeaderTask="",reviewSetupExpanded=false,reviewHasResults=false;
 let cataractScroll=null;
 
 function say(message,error=false){const n=$(error?"#notice":"#toast");n.textContent=message;n.hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>n.hidden=true,error?9000:3500);}
-function applyReadonly(){window.SheetManagement?.readonly();window.DatabaseUI?.readonly();window.ReviewHandoff?.renderSelection();window.ReviewPreparationUI?.poll({});}
+function applyReadonly(){window.SheetManagement?.readonly();window.DatabaseUI?.readonly();window.ReviewHandoff?.renderSelection();}
 async function act(callback,source=document.activeElement){$("#notice").hidden=true;const revision=epoch,control=source?.tagName==="BUTTON"?source:null;if(control?.dataset.busy)return;const wasDisabled=control?.disabled;if(control){control.dataset.busy="true";control.setAttribute("aria-busy","true");control.disabled=true;}try{return await callback();}catch(e){if(e.name!=="AbortError")say(e.message||"操作未完成",true);}finally{if(control){delete control.dataset.busy;control.removeAttribute("aria-busy");if(control.isConnected&&revision===epoch)control.disabled=!!wasDisabled;}}}
 async function request(path, body, scoped=true){
   const key=account, revision=epoch;
@@ -292,7 +292,6 @@ async function refresh({light=false}={}){
   work.tasks=[...tasks.values()].sort((a,b)=>(b.updated_at||"").localeCompare(a.updated_at||""));
  }
  Object.assign(work,{revisions:value.revisions,online:value.online,offline_mode:value.offline_mode,recovery_count:value.recovery_count,connection_error_code:value.connection_error_code,connection_issue:value.connection_issue,password_status:value.password_status,approval_counts:value.approval_counts,approval_monitor_enabled:value.approval_monitor_enabled});
- window.ReviewPreparationUI?.poll(value);
  window.Approvals?.badge(value.approval_counts,value.approval_monitor_enabled);
  $("#taskCount").textContent=value.active_count||"";
  const activity=JSON.stringify([value.revisions.task,value.revisions.review_note,value.revisions.sdk_event,value.runs]);
@@ -830,7 +829,6 @@ $("#saveConcurrency").addEventListener("click",()=>act(async()=>{const r=await r
 window.addEventListener("message",e=>{if(e.origin!==location.origin||!["moduleFrame","cataractFrame"].some(id=>e.source===$("#"+id).contentWindow))return;window.JobProgress.receive(e,[$("#moduleFrame"),$("#cataractFrame")],account,root.read_only);if(e.data?.type==="bot:task-started")act(refresh);else if(page==="module"&&e.source===activeModuleFrame().contentWindow){if(e.data?.type==="bot:compare-open")window.FileCompare?.open();else window.FileCompare?.receive(e,activeModuleFrame(),account);}});
 window.addEventListener("jobprogressaction",event=>act(async()=>{
  const {action,run}=event.detail;if(run._owner!==account)return;
- if(run.kind==="review_preparation"){if(action!=="debug"&&root.read_only)return;await window.ReviewPreparationUI?.progressAction(run,action);await refresh({light:true});return;}
  if(action==="debug"){await openLookupDiagnostics(run.id);return;}
  if(root.read_only)return;
  if(action==="stop")await api(run.source==="bot"?"/tasks/stop":"/stop",{id:run.id});

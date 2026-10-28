@@ -57,8 +57,6 @@ class LibraryData:
                 db.executemany(f"DELETE FROM {table} WHERE mrn=? AND key=?", keys)
             db.executemany("INSERT OR REPLACE INTO clinical_cache_deletions VALUES(?,?,?)",
                            [(mrn, "soap", timestamp()) for mrn in mrns])
-        if preparation := getattr(getattr(self.app, "review", None), "preparation", None):
-            preparation.invalidate(mrns, {"soap"})
 
     def _snapshot(self, mrns, list_keys):
         packed = json.dumps(mrns)
@@ -208,6 +206,4 @@ class LibraryData:
                 db.executemany("DELETE FROM list_cache WHERE account=? AND day=?",
                                [(row["account"], row["day"]) for row in preview["lists"]])
             self.app.analysis.store.prune_assets()
-            if preparation := getattr(review, "preparation", None):
-                preparation.invalidate(selected, categories)
             return {"ok": True, **preview, "patients": len(selected), "deleted": len(preview["lists"])}

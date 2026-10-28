@@ -66,7 +66,6 @@ window.ReviewPaging=(()=>{
  function readBlock(offset,filters,extra={}){return request("/reviews/patients",{id:currentReview,offset,limit:pageSize,...filters,...(reviewPatient?{selected_mrn:reviewPatient}:{}),...extra});}
  function summary(value){
   window.ToolWorkspace?.adoptReview(value.task);renderReviewHeader(value);
-  window.ReviewPreparationUI?.context(value.task,{mrn:reviewPatient,total:value.all_total});
   $("#reviewSummary").textContent=value.total+" / "+value.all_total+" 位"+(value.incremental?" · 新增 "+value.incremental.new+" · 沿用 "+value.incremental.reused+" · 待處理 "+value.incremental.pending:"")+(value.scope_issue_count?" · "+value.scope_issue_count+" 份病歷的 tag 判定不完整":"");
   $("#reviewSummary").title=$("#reviewSummary").textContent;
  }
@@ -196,14 +195,14 @@ window.ReviewPaging=(()=>{
   if(previous!==mrn&&!await window.ReviewNotesUI.flush(previous))throw new Error("有備註尚未儲存，請重試後再切換病人。");
   if(!alive(key)||selection!==selectionSequence)return;
   if(previous!==mrn){window.ScanBrowser?.reset();window.FileCompare?.context(account,mrn);}
-  reviewPatient=mrn;window.ReviewPreparationUI?.context(pageData?.task,{mrn,total:pageData?.all_total});
+  reviewPatient=mrn;
   for(const element of $$(".patient-select"))element.classList.toggle("active",element.dataset.mrn===mrn);
   const target=find(mrn);if(locate||!target)return load({focusMrn:mrn});
   const notes=window.ReviewNotesUI?.load(currentReview,{mrns:[mrn]});
   await loadDetail(mrn,{revision:target.revision,loading:previous!==mrn,notesPromise:notes});
  }
  async function move(delta){const mrn=nav(delta);if(mrn)await select(mrn,{locate:true});}
- async function poll(task,revisions){window.ReviewPreparationUI?.context(task,{mrn:reviewPatient});if(!active()||reviewSignature!==taskSignature(task)||taskSignature(task,revisions)!==statusSignature)await load();}
+ async function poll(task,revisions){if(!active()||reviewSignature!==taskSignature(task)||taskSignature(task,revisions)!==statusSignature)await load();}
  function visibility(){if(!visible()){cancelPrefetch();clearTimeout(scrollTimer);scrollTimer=null;scrollWanted=false;}else if(active()){renderWindow();scheduleScroll();schedulePrefetch();}}
  document.addEventListener?.("visibilitychange",visibility);
  return {reset,active,patient,load,select,move,nav,poll,positionNotice,taskSignature,visibility};

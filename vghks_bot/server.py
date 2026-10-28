@@ -125,8 +125,6 @@ class Handler(BaseHTTPRequestHandler):
             "/utility-dock.css": ("utility-dock.css", "text/css; charset=utf-8"),
             "/report-gallery.js": ("report-gallery.js", "text/javascript; charset=utf-8"),
             "/review-paging.js": ("review-paging.js", "text/javascript; charset=utf-8"),
-            "/review-preparation.js": ("review-preparation.js", "text/javascript; charset=utf-8"),
-            "/review-preparation.css": ("review-preparation.css", "text/css; charset=utf-8"),
             "/report-gallery.css": ("report-gallery.css", "text/css; charset=utf-8"),
             "/clinical-ui.js": ("clinical-ui.js", "text/javascript; charset=utf-8"),
             "/clinical-ui.css": ("clinical-ui.css", "text/css; charset=utf-8"),
