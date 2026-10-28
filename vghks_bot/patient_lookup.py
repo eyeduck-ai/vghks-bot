@@ -11,6 +11,7 @@ MESSAGES = {
     "PATIENT_NOT_FOUND": "登入已確認，此院區查無該病歷號；請核對病歷號與院區。",
     "PATIENT_LOOKUP_UNCONFIRMED": "院方回應無法確認病人基本資料；尚不能判定病歷號不存在，可至爬蟲紀錄查看 DEBUG。",
     "DEMOGRAPHICS_PATIENT_MISMATCH": "院方回傳的病歷號與查詢不符，這筆基本資料未保存；請核對 DEBUG。",
+    "DEMOGRAPHICS_ID_MISMATCH": "已核對的身分證與此帳號已存基本資料不符，這筆資料未覆寫；請核對查詢與已存資料。",
     "DEMOGRAPHICS_PERMISSION_DENIED": "院方拒絕讀取病人基本資料，請確認此帳號的院內權限。",
 }
 

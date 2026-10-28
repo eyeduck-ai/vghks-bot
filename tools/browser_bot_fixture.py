@@ -287,14 +287,24 @@ def main():
     parser.add_argument("--report-gallery", action="store_true", help="Seed ophthalmic reports with three synthetic PNG grids and one PDF in the first report")
     parser.add_argument("--demographics", action="store_true", help="Synthetic ROC birthdays and a numeric manual MRN")
     parser.add_argument("--lookup-failures", action="store_true", help="Synthetic expired, missing, forbidden and rejected patient queries")
+    parser.add_argument("--lookup-delay", type=float, default=0, help="Delay each synthetic demographics lookup by 0-30 seconds")
     parser.add_argument("--registrations", action="store_true", help="Complete registration fields, explicit and unknown attendance")
     parser.add_argument("--sheet-management", action="store_true", help="Synthetic online sheet statistics; no Google calls")
     parser.add_argument("--review-patients", type=int, default=0, help="Seed a completed synthetic review with 1-20000 patients")
     args = parser.parse_args()
     if not 0 <= args.review_patients <= 20000:
         parser.error("--review-patients must be between 0 and 20000")
+    if not 0 <= args.lookup_delay <= 30:
+        parser.error("--lookup-delay must be between 0 and 30")
     with tempfile.TemporaryDirectory(prefix="vghks-bot-synthetic-") as directory:
         sdk = SessionSDK if args.lookup_failures else RegistrationsSDK if args.registrations else DemographicsSDK if args.demographics else FollowUpSDK if args.followup else LargeReviewSDK if args.review_patients else BotSyntheticSDK
+        if args.lookup_delay:
+            class DelayedLookupSDK(sdk):
+                def demographics(self, mrn):
+                    time.sleep(args.lookup_delay)
+                    return super().demographics(mrn)
+
+            sdk = DelayedLookupSDK
         manager = DatabaseManager(Path(directory), Settings(), sdk)
         app = manager.current
         try:

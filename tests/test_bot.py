@@ -146,6 +146,8 @@ class BotTests(unittest.TestCase):
     def test_verified_national_id_without_encounters_and_mismatched_profile(self):
         run = self.work.review.start({"kind": "resolve", "identifier_kind": "national_id", "identifiers": "A123456789"})["task_id"]
         self.assertEqual(wait_task(self.work, run)["items"][0]["mrn"], "NEW000")
+        self.assertEqual(self.work.review.read_profile({"mrn": "NEW000"})["national_id"], "A123456789")
+        self.assertFalse(any(c[1] == "basic-info" for c in BotSyntheticSDK.calls))
         self.assertFalse(any(c[1] == "index" for c in BotSyntheticSDK.calls))
         self.assertEqual(len(self.work.review.save_set({"mrns": "NEW000"})["members"]), 1)
         run = self.work.review.start({"kind": "resolve", "identifiers": "BAD"})["task_id"]

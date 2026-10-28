@@ -8,10 +8,10 @@ import uuid
 from collections import defaultdict
 from datetime import date
 
-from vghks_sdk import SoapRecord, VisitCase
+from vghks_sdk import ParseError, SoapRecord, VisitCase
 from vghks_sdk import __version__ as sdk_version
 from vghks_sdk.core.errors import error_info
-from vghks_sdk.identifiers import normalize_mrn
+from vghks_sdk.identifiers import normalize_mrn, normalize_national_id
 
 from .analysis_fetch import clean, model, validate_patient
 from .analysis_store import digest
@@ -611,7 +611,8 @@ class Review:
                     input_kind = "national_id" if identifier[:1].isascii() and identifier[:1].isalpha() else "mrn"
                 try:
                     mrn = self.app.gateway.resolve_identity(identifier) if input_kind == "national_id" else normalize_mrn(identifier)
-                    result = self.profile(mrn, force=task["force"])
+                    result = self.profile(mrn, force=task["force"],
+                        verified_national_id=identifier if input_kind == "national_id" else "")
                 except StorageError:
                     raise
                 except Exception as exc:
@@ -635,13 +636,25 @@ class Review:
         self.report(state, task, stage="部分資料未取得，可續跑" if partial else "完成，資料已保存")
         state.update(status="partial" if partial else "completed", message="部分資料未取得，可續跑" if partial else "完成，資料已保存")
 
-    def profile(self, mrn, *, force=False):
+    def profile(self, mrn, *, force=False, verified_national_id=""):
+        """Reuse typed lookup fields; an ID may follow only a verified PRQ lookup."""
+        mrn = normalize_mrn(mrn)
+        identifier = normalize_national_id(verified_national_id) if verified_national_id else ""
         cached = self.db.get("profile", mrn, required=False)
         if not self.valid_profile(cached, mrn):
             cached = None
         if (cached and cached.get("status") == "resolved" and cached.get("mrn") == mrn
                 and cached.get("name", "").strip() and not force and fresh(cached["updated_at"], 86400)):
-            return merge_demographics(cached)
+            if not identifier:
+                return merge_demographics(cached)
+            with self.app.store.library.batch():
+                latest = self.db.get("profile", mrn, required=False)
+                if not self.valid_profile(latest, mrn):
+                    raise ValueError("已存病人基本資料無法核對，請重新查詢。")
+                result = self._verified_profile_identity(latest, identifier)
+                if result == latest:
+                    return merge_demographics(latest)
+                return self.db.save("profile", merge_demographics(result))
         with self.app.sdk_factory(self.app.settings) as sdk:
             value = clean(sdk.patients.get_demographics(mrn))
         validate_patient(value, mrn)
@@ -651,8 +664,25 @@ class Review:
             latest = self.db.get("profile", mrn, required=False)
             if not self.valid_profile(latest, mrn):
                 latest = {}
-            return self.db.save("profile", merge_demographics({**latest, "id": mrn, "mrn": mrn,
-                "status": "resolved"}, value, latest))
+            if identifier:
+                self._verified_profile_identity(latest, identifier)
+            result = merge_demographics({**latest, "id": mrn, "mrn": mrn, "status": "resolved"}, value, latest)
+            if identifier:
+                result = self._verified_profile_identity(result, identifier)
+            return self.db.save("profile", result)
+
+    @staticmethod
+    def _verified_profile_identity(profile, identifier):
+        current = profile.get("national_id")
+        if current:
+            try:
+                matches = normalize_national_id(current) == identifier
+            except Exception:
+                matches = False
+            if not matches:
+                raise ParseError("verified national ID conflicts with the saved patient profile",
+                                 code="DEMOGRAPHICS_ID_MISMATCH")
+        return {**profile, "national_id": identifier}
 
     @staticmethod
     def valid_profile(value, mrn):

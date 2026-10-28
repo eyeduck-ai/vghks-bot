@@ -24,7 +24,7 @@ function surface(){
   querySelectorAll(selector){return this.all().filter(child=>selector.split(",").some(part=>child.matches(part)));}
   querySelector(selector){return this.querySelectorAll(selector)[0]||null;}
   addEventListener(name,run){this.events.set(name,[...(this.events.get(name)||[]),run]);}
-  emit(name){if(name==="click")context.document.activeElement=this;return Promise.all((this.events.get(name)||[]).map(run=>run({preventDefault(){},stopPropagation(){},target:this})));}
+  emit(name,values={}){if(name==="click")context.document.activeElement=this;return Promise.all((this.events.get(name)||[]).map(run=>run({preventDefault(){},stopPropagation(){},target:this,...values})));}
   setAttribute(name,value){this[name]=value;}getAttribute(name){return this[name]??null;}focus(){context.document.activeElement=this;}
   removeAttribute(name){delete this[name];}scrollIntoView(){}
  }
@@ -413,15 +413,73 @@ function layoutTests(){
  c.page="review";c.updateReviewLayout();assert.ok(classes.has("review-result-compact"),"returning to active review lost viewport layout");
  c.reviewData=null;c.updateReviewLayout();assert.equal(classes.has("review-result-compact"),false);
 }
+async function identifierTests(){
+ const s=surface(),c=s.context,$=s.$,starts=[],resolved=[],states=[],details=new Map();c.epoch=0;
+ const settle=async()=>{for(let index=0;index<50;index++)await Promise.resolve();};
+ c.document.getElementById=id=>$("#"+id);c.document.createElement=tag=>s.node(tag);
+ c.JobProgress={pending(){},show(){},ready:async()=>{},wait:async()=>{}};
+ s.run("vghks_bot/static/adaptive-identifiers.js");
+ let tokens,errorChanges=0;
+ const errors=c.window.PatientTokens.createErrors({container:"lookupErrors",onOpen(){},onChange(){errorChanges++;},onRetry:(token,mode)=>tokens.add([token],mode)});
+ tokens=c.window.PatientTokens.create({input:"lookupInput",status:"lookupStatus",pendingContainer:"lookupPending",kind:()=>"auto",canLookup:()=>true,
+  scope:()=>c.account+":"+c.epoch,onStateChange:state=>states.push(state),
+  request:async(path,values)=>{if(path==="/tasks/start"){const gate=deferred();starts.push({values,gate});return gate.promise;}return details.get(new URLSearchParams(path.split("?")[1]).get("id"));},
+  onResolved:item=>{errors.remove("auto:"+item.input);resolved.push(item);},onFailed:(...values)=>errors.add(...values)});
+ assert.equal(states.length,0,"constructor callback can observe an uninitialized controller");assert.equal(errorChanges,0);
+ $("#lookupInput").value="１２３ ";await $("#lookupInput").emit("input");
+ assert.equal($("#lookupInput").value,"");assert.equal(tokens.state().pendingCount,1);assert.equal(starts.length,1);
+ const pending=$("#lookupPending").children[0];assert.equal(pending.children[0].textContent,"123");assert.equal(pending.children[1].textContent,"查核中");
+ tokens.add(["123","１２３"]);assert.equal(starts.length,1,"duplicate pending identifier started another lookup");
+ await pending.children[2].emit("click");tokens.add(["123"]);assert.equal(tokens.state().pendingCount,1);
+ details.set("OLD",{id:"OLD",status:"completed",items:[{input:"123",mrn:"P1",name:"stale",status:"resolved"}]});
+ starts[0].gate.resolve({task_id:"OLD"});await settle();
+ assert.equal(resolved.length,0,"removed/re-added identifier adopted an old request");assert.equal(tokens.state().pendingCount,1,"old finally deleted the replacement row");assert.equal(starts.length,2);
+ details.set("NEW",{id:"NEW",status:"completed",items:[{input:"123",mrn:"P1",name:"current",status:"resolved"}]});starts[1].gate.resolve({task_id:"NEW"});await settle();
+ assert.equal(resolved.length,1);assert.equal(resolved[0].name,"current");assert.equal(tokens.hasBlockers(),false);
+ tokens.add(["１２３"]);assert.equal(starts.length,2,"already resolved identifier was looked up twice");
+ tokens.forget("P1");tokens.add(["123"]);assert.equal(starts.length,3,"removing a patient prevented a later explicit re-add");
+ details.set("FAIL",{id:"FAIL",status:"completed",items:[{input:"123",status:"failed",message:"合成錯誤"}]});starts[2].gate.resolve({task_id:"FAIL"});await settle();
+ assert.equal(errors.count(),1);assert.equal(tokens.state().pendingCount,0);assert.match($("#lookupErrors").children[0].children[0].textContent,/123.*合成錯誤/);
+ await $("#lookupErrors").children[0].children[2].emit("click");assert.equal(starts.length,4);
+ details.set("RETRY",{id:"RETRY",status:"completed",items:[{input:"１２３",mrn:"P1",status:"resolved"}]});starts[3].gate.resolve({task_id:"RETRY"});await settle();assert.equal(errors.count(),0,"normalized retry did not remove the original error");
+ tokens.add(["OLD-SCOPE"]);const old=starts.at(-1);tokens.reset();c.account="OTHER";c.epoch++;tokens.add(["NEW-SCOPE"]);const next=starts.at(-1);
+ details.set("STALE",{id:"STALE",status:"completed",items:[{input:"OLD-SCOPE",mrn:"OLD",status:"resolved"}]});old.gate.resolve({task_id:"STALE"});await settle();assert.equal(tokens.state().pendingCount,1);
+ details.set("CURRENT",{id:"CURRENT",status:"completed",items:[{input:"NEW-SCOPE",mrn:"NEW",status:"resolved"}]});next.gate.resolve({task_id:"CURRENT"});await settle();assert.equal(resolved.at(-1).mrn,"NEW");assert.ok(!resolved.some(row=>row.mrn==="OLD"));
+ errors.add("ａｂ１","合成錯誤","auto");errors.remove("auto:AB1");assert.equal(errors.count(),0,"error keys were not NFKC/case normalized");
+ const before=starts.length;$("#lookupInput").value="DRAFT";await $("#lookupInput").emit("input");assert.equal(tokens.hasBlockers(),true);assert.equal(starts.length,before);
+ await $("#lookupInput").emit("compositionstart");await $("#lookupInput").emit("keydown",{key:"Enter",keyCode:229,isComposing:true});assert.equal(starts.length,before);
+ await $("#lookupInput").emit("compositionend");assert.equal(starts.length,before);tokens.reset();
+ await $("#lookupInput").emit("paste",{clipboardData:{getData:()=>"P2\nP3"}});assert.equal(starts.at(-1).values.identifiers,"P2\nP3");assert.equal(tokens.state().pendingCount,2);tokens.reset();
+}
+async function manualSelectionTests(){
+ const s=surface(),c=s.context,$=s.$,source=fs.readFileSync("vghks_bot/static/bot.js","utf8"),calls=[];let saveGate;
+ c.document.getElementById=id=>$("#"+id);c.document.createElement=tag=>s.node(tag);c.epoch=0;c.work={online:true};c.manualSave=null;
+ c.selectedMRNs=()=>["P1"];c.allRows=()=>[];c.selected=new Set();c.manual=[{mrn:"P1"}];c.ranges=()=>[];
+ c.api=async(path,values)=>{calls.push({path,values});return saveGate?saveGate.promise:{id:"SET"};};c.draftSave=()=>{};c.renderList=()=>{};c.addManualPatient=()=>{};
+ c.JobProgress={pending(){},show(){},ready:async()=>{},wait:async()=>{}};
+ s.run("vghks_bot/static/adaptive-identifiers.js");
+ vm.runInContext(source.slice(source.indexOf("function updateCounts("),source.indexOf("function renderSets(")),c);
+ vm.runInContext(source.slice(source.indexOf("const manualErrors="),source.indexOf('$("#manualOpen")')),c);
+ c.updateCounts();assert.equal($("#useTools").disabled,false);
+ $("#identifiers").value="P2";await $("#identifiers").emit("input");assert.equal($("#useTools").disabled,true);assert.match($("#manualLookupHint").textContent,/Enter/);
+ await assert.rejects(c.saveCurrentSet(),/未完成查核/);assert.equal(calls.length,0,"draft identifier bypassed the manual start guard");
+ $("#identifiers").value="";await $("#identifiers").emit("input");vm.runInContext('manualErrors.add("P2","合成失敗","mrn")',c);
+ await assert.rejects(c.saveCurrentSet(),/失敗/);assert.equal(calls.length,0);vm.runInContext('manualErrors.clear()',c);
+ saveGate=deferred();const saving=c.saveCurrentSet();assert.equal($("#identifiers").disabled,true);await assert.rejects(c.saveCurrentSet(),/正在保存/);
+ // A scripted/queued input event must still be fenced even when the browser input is disabled.
+ $("#identifiers").value="P3";await $("#identifiers").emit("input");saveGate.resolve({id:"SET"});await assert.rejects(saving,/未完成查核/);
+ $("#identifiers").value="";await $("#identifiers").emit("input");saveGate=deferred();const switched=c.saveCurrentSet();c.epoch++;c.account="OTHER";
+ saveGate.resolve({id:"OLD"});await assert.rejects(switched,error=>error.name==="AbortError");assert.equal($("#identifiers").disabled,false);
+}
 async function toolSelectionTests(){
- const s=surface(),c=s.context,$=s.$,requests=[],modules={},actions=[];let lookupGate=null,startGate=null;
+ const s=surface(),c=s.context,$=s.$,requests=[],modules={},actions=[];let lookupGate=null,startGate=null,stateGate=null,rules=0;const adoptionGates=[];
  const kinds=["review","retina","cataract","surgery"],groups=kinds.map(kind=>({id:"SET-"+kind,name:"合成清單 "+kind,
   members:[1,2,3].map(value=>({mrn:"0000000"+value,name:"合成病人"+value,registrations:[]}))}));
  for(const group of groups)modules[group.id.slice(4)]={set_id:group.id};
  const original=JSON.stringify(groups);
  c.work={sets:groups,tasks:[],online:true,preferences:{review_options:{}}};c.page="tool";c.selectedSet=null;
  c.document.getElementById=id=>$("#"+id);c.document.createElement=tag=>s.node(tag);
- c.toolOptions=()=>{};c.openRules=()=>{};c.updateReviewLayout=()=>{};c.reviewSetupExpanded=false;c.refresh=async()=>{};
+ c.toolOptions=()=>{};c.openRules=()=>{rules++;};c.updateReviewLayout=()=>{};c.reviewSetupExpanded=false;c.refresh=async()=>{};
  c.epoch=0;$("#toolClearPatients").tagName="BUTTON";
  c.JobProgress={pending(){},show(){},ready:async()=>{},wait:async()=>{}};
  $("#toolPage").append(s.node("p"));
@@ -430,7 +488,8 @@ async function toolSelectionTests(){
   if(path==="/tools/state")return {modules:JSON.parse(JSON.stringify(modules))};
   if(path==="/sets/read")return JSON.parse(JSON.stringify(groups.find(group=>group.id===values.id)));
   if(path==="/sets/search")return {sets:groups.filter(group=>[group.name,...group.members.map(patient=>patient.mrn)].some(text=>text.includes(values.q))).map(group=>({id:group.id,name:group.name,member_count:group.members.length,members_preview:group.members.slice(0,1),members_loaded:false}))};
-  if(path==="/tools/state/save"){modules[values.module]={set_id:values.set_id};return {modules};}
+  if(path==="/tools/state/save"){modules[values.module]={set_id:values.set_id};return stateGate?stateGate.promise:{modules};}
+  if(path==="/analysis/cohorts")return adoptionGates.shift().promise;
   if(path==="/tools/handoff/remove")return {worklist:{...groups[3],worklist_module:"surgery",members:groups[3].members.filter(member=>!values.mrns.includes(member.mrn))},cohort:{id:"WORKLIST-COHORT"}};
   if(path==="/tasks/start"){if(values.kind==="resolve")return lookupGate.promise;if(values.kind==="review")return startGate.promise;}
   if(path.startsWith("/tasks/detail"))return {status:"completed",done:1,items:[{mrn:"00000999",input:"00000999",status:"resolved"}]};
@@ -443,6 +502,22 @@ async function toolSelectionTests(){
  s.run("vghks_bot/static/adaptive-identifiers.js");s.run("vghks_bot/static/tool-workspace.js");const ui=c.window.ToolWorkspace;
  for(const [index,kind] of kinds.entries()){
   await ui.open(kind,groups[index]);assert.equal(c.selectedSet.members.length,3);assert.equal($("#toolClearPatients").disabled,false);
+  assert.equal($("#toolWorkspaceLabel").textContent,["病歷檢閱","視網膜比較","白內障術前分析","刀表更新"][index]);
+  await $("#toolHeadingToggle").emit("click");assert.equal($("#toolSetupBody").hidden,true);assert.equal($("#toolHeadingToggle")["aria-expanded"],"false");
+  await $("#toolRules").emit("click");assert.equal(rules,index+1);assert.equal($("#toolSetupBody").hidden,true,"settings click toggled patient disclosure");
+  await $("#toolHeadingToggle").emit("click");assert.equal($("#toolSetupBody").hidden,false);assert.equal(c.document.activeElement,$("#toolIdentifier"));
+  $("#toolIdentifier").value="00000999";await $("#toolIdentifier").emit("input");assert.equal($("#toolStart").disabled,true);assert.match($("#toolLookupHint").textContent,/Enter/);
+  const beforeDraft=requests.length;await $("#toolStartForm").emit("submit");await actions.at(-1);assert.equal(requests.length,beforeDraft,"programmatic submit omitted an unsubmitted identifier");
+  lookupGate=deferred();await $("#toolIdentifier").emit("keydown",{key:"Enter"});await tick();
+  assert.equal($("#toolIdentifierPending").children.length,1);assert.match($("#toolSelectedCount").textContent,/1 筆查核中/);
+  await $("#toolHeadingToggle").emit("click");assert.equal($("#toolSetupBody").hidden,true);assert.match($("#toolSelectedCount").textContent,/1 筆查核中/,"collapsing made a pending identifier disappear");
+  const beforePending=requests.length;await $("#toolStartForm").emit("submit");await actions.at(-1);assert.equal(requests.length,beforePending,"disabled start was the only pending lookup guard");
+  await $("#toolIdentifierPending").children[0].children[2].emit("click");lookupGate.resolve({task_id:"REMOVED"});await tick();await tick();
+  await $("#toolHeadingToggle").emit("click");assert.equal(c.selectedSet.members.length,3,"removed pending result joined the source");
+  c.work.online=false;$("#toolIdentifier").value="00000998 ";await $("#toolIdentifier").emit("input");await tick();
+  assert.equal($("#toolLookupErrors").children.length,1);assert.equal($("#toolStart").disabled,true);assert.match($("#toolLookupHint").textContent,/重試或移除/);
+  const beforeError=requests.length;await $("#toolStartForm").emit("submit");await actions.at(-1);assert.equal(requests.length,beforeError,"failed identifier was silently dropped from a start");
+  await $("#toolLookupErrors").children[0].children[3].emit("click");c.work.online=true;ui.refreshSettings();
   const chip=$("#toolSelectionSummary").children[0];assert.equal(chip.querySelector(".patient-chip-name").textContent,"合成病人1");
   assert.equal(chip.querySelector(".patient-chip-mrn").textContent,"00000001");assert.match(chip["aria-label"],/移除病人.*00000001/);
   await chip.run();assert.equal(c.selectedSet.members.length,2,"individual badge removal lost behavior");
@@ -478,6 +553,12 @@ async function toolSelectionTests(){
  startGate.resolve({task_id:"SINGLE"});await single;assert.equal(opened.at(-1),"SINGLE");assert.equal(selected.at(-1),"00000002");
  c.window.ReviewNotesUI.flushAll=async()=>false;
  const blockedCount=requests.length;await assert.rejects(ui.refreshPatient("00000001"),/備註尚未儲存/);assert.equal(requests.length,blockedCount);
+ notesGate=deferred();c.window.ReviewNotesUI.flushAll=()=>notesGate.promise;
+ await $("#toolStartForm").emit("submit");const inputRace=actions.at(-1);await tick();assert.equal($("#toolIdentifier").disabled,true);
+ const raceCount=requests.filter(request=>request.path==="/tasks/start").length;
+ $("#toolIdentifier").value="NEW-DRAFT";await $("#toolIdentifier").emit("input");notesGate.resolve(true);await inputRace;
+ assert.equal(requests.filter(request=>request.path==="/tasks/start").length,raceCount,"new draft entered during notes flush was omitted from the next task");
+ $("#toolIdentifier").value="";await $("#toolIdentifier").emit("input");
  notesGate=deferred();c.window.ReviewNotesUI.flushAll=()=>notesGate.promise;startGate=deferred();
  $("#forceReview").checked=true;await $("#toolStartForm").emit("submit");const carry=actions.at(-1);await tick();
  const startCount=requests.filter(request=>request.path==="/tasks/start").length;notesGate.resolve(true);await tick();
@@ -490,6 +571,24 @@ async function toolSelectionTests(){
  const switchedCount=requests.length;notesGate.resolve(true);await stale;
  assert.equal(requests.length,switchedCount,"late note flush started a refresh in another tool");
  assert.equal($("#toolStart").disabled,false,"switching tools retained another tool's starting state");
+ await ui.open("review",groups[0]);ui.adoptReview({...task,id:"SCOPE-A"});c.window.ReviewNotesUI.flushAll=async()=>true;
+ stateGate=deferred();const oldState=stateGate;await $("#toolStartForm").emit("submit");const oldStart=actions.at(-1);await tick();
+ ui.adoptReview({...task,id:"SCOPE-B",set_id:groups[1].id});assert.equal($("#toolIdentifier").disabled,false,"source adoption retained the old starting lock");
+ await $("#toolHeadingToggle").emit("click");stateGate=deferred();const newState=stateGate;
+ await $("#toolStartForm").emit("submit");const newStart=actions.at(-1);await tick();assert.equal($("#toolIdentifier").disabled,true);
+ const scopedRequests=requests.filter(request=>request.path==="/tasks/start").length;oldState.resolve({modules});await oldStart;
+ assert.equal(requests.filter(request=>request.path==="/tasks/start").length,scopedRequests,"old save resumed a start with an adopted source");
+ assert.equal($("#toolIdentifier").disabled,true,"old finally unlocked another source's active start");
+ startGate=deferred();newState.resolve({modules});await tick();
+ assert.equal(requests.filter(request=>request.path==="/tasks/start").at(-1).values.base_task_id,"SCOPE-B");
+ c.openReview=async id=>{opened.push(id);ui.adoptReview({...task,id,set_id:groups[1].id});};startGate.resolve({task_id:"SCOPE-RESULT"});await newStart;stateGate=null;
+ await $("#toolHeadingToggle").emit("click");assert.equal($("#toolIdentifier").disabled,false,"successful own-result adoption left starting locked");
+ await ui.open("cataract",groups[2]);const older=deferred(),newer=deferred();adoptionGates.push(older,newer);
+ const oldAdoption=ui.adoptModule("OLDER"),newAdoption=ui.adoptModule("NEWER");newer.resolve({cohorts:[{id:"NEWER",source_set:groups[2].id}]});assert.equal(await newAdoption,true);
+ older.resolve({cohorts:[{id:"OLDER",source_set:groups[0].id}]});assert.equal(await oldAdoption,false);assert.equal(c.selectedSet.id,groups[2].id,"late old module adoption replaced the newer source");
+ await ui.open("review",groups[0]);const lateModule=deferred();adoptionGates.push(lateModule);const changing=ui.adoptModule("OLD-MODULE");
+ ui.adoptReview({...task,id:"NEW-REVIEW",set_id:groups[1].id});lateModule.resolve({cohorts:[{id:"OLD-MODULE",source_set:groups[2].id}]});
+ assert.equal(await changing,false);assert.equal(c.selectedSet.id,groups[1].id,"late module read replaced a newly adopted review source");
  c.root.read_only=true;await ui.open("cataract",groups[2]);const writes=requests.filter(request=>request.path==="/tools/state/save").length;
  await $("#toolClearPatients").emit("click");assert.equal(c.selectedSet.members.length,0);
  assert.equal(requests.filter(request=>request.path==="/tools/state/save").length,writes,"readonly clearing wrote database");
@@ -660,4 +759,4 @@ function syncDetailsTests(){
   "SOAP1 · SOAP_VERSION_A","SOAP2 · SOAP_VERSION_B"]);
 }
 module.exports={surface,deferred,tick};
-if(require.main===module)(async()=>{await noteTests();await externalNoteTests();await activityTests();await profileTests();await historyLoadingTests();layoutTests();await toolSelectionTests();await handoffTests();await sheetSyncTests();await destinationTests();await fuTests();syncDetailsTests();process.stdout.write("Review UI race, hierarchy, patient profile, loading, viewport, handoff, FU and sheet sync checks passed\n");})().catch(error=>{console.error(error);process.exitCode=1;});
+if(require.main===module)(async()=>{await noteTests();await externalNoteTests();await activityTests();await profileTests();await historyLoadingTests();layoutTests();await identifierTests();await manualSelectionTests();await toolSelectionTests();await handoffTests();await sheetSyncTests();await destinationTests();await fuTests();syncDetailsTests();process.stdout.write("Review UI race, identifiers, hierarchy, patient profile, loading, viewport, handoff, FU and sheet sync checks passed\n");})().catch(error=>{console.error(error);process.exitCode=1;});

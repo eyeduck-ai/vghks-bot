@@ -135,6 +135,60 @@ class PatientLookupTests(unittest.TestCase):
         self.assertEqual(len(self.connections), 1)
         self.connections[0]._runtime.auth.login.assert_not_called()
 
+    def test_verified_id_reuses_lookup_fields_without_extra_basic_info_requests(self):
+        sdk = self.connections[0]
+        sdk._runtime.auth.hid_for = Mock(return_value="SYNTHETIC-HID")
+        sdk.patients.get_basic_info = Mock(side_effect=AssertionError("unexpected complete basic-info query"))
+        self.actions = [{**PATIENT, "hphonno": "0900000000", "homephon": "07-1234567", "address": "合成地址",
+                         "patid": "UNMAPPED-ID", "hkinname": "未公開欄位"}]
+
+        def query(identifier="A123456789", *, header_id=None, **options):
+            sdk._runtime.request_text = Mock(side_effect=[
+                '<frameset><frame src="/Page/JSP/KS_Patient.jsp"><frame src="/QueryCaseList.do"></frameset>',
+                f'<span id="pHistno">00012345</span><script>var url="&hidno={header_id or identifier}&type=1";</script>',
+            ])
+            result = self.resolve(identifier, identifier_kind="national_id", **options)
+            self.assertEqual(sdk._runtime.request_text.call_count, 2)
+            return result
+
+        task = query()
+        self.assertEqual(task["status"], "completed")
+        value = task["items"][0]
+        self.assertEqual(value["mrn"], "00012345")
+        self.assertEqual(value["national_id"], "A123456789")
+        self.assertEqual((value["mobile_phone"], value["home_phone"], value["sex"]), ("0900000000", "07-1234567", "女"))
+        self.assertEqual(value["birthday"], "1958-01-01")
+        self.assertFalse(value.get("basic_info_at"))
+        self.assertFalse(value["contact"], "unmapped raw CHECK_PAT fields became clinical data")
+        self.assertEqual(self.reads, ["00012345"])
+        saved = self.work.review.db.get("profile", "00012345")
+        self.assertEqual(query()["items"][0]["national_id"], "A123456789")
+        self.assertEqual(self.reads, ["00012345"], "verified identity did not reuse its saved lookup fields")
+        self.assertEqual(self.work.review.db.get("profile", "00012345"), saved)
+        with patch.object(self.work, "sdk_factory", side_effect=AssertionError("local profile read sent a request")):
+            self.assertEqual(self.work.review.read_profile({"mrn": "00012345"})["national_id"], "A123456789")
+            self.assertEqual(self.work.review.profile("00012345")["mobile_phone"], "0900000000")
+
+        failed = query(header_id="B123456789", force=True)
+        self.assertEqual(failed["items"][0]["code"], "PRQ_PATIENT_ID_MISMATCH")
+        self.assertEqual(len(self.reads), 1, "a rejected PRQ identity reached CHECK_PAT")
+        for force, reads in ((False, 1), (True, 2)):
+            with self.subTest(force=force):
+                failed = query("B123456789", force=force)
+                self.assertEqual(failed["items"][0]["code"], "DEMOGRAPHICS_ID_MISMATCH")
+                self.assertEqual(len(self.reads), reads)
+                self.assertEqual(self.work.review.db.get("profile", "00012345"), saved)
+        sdk._runtime.request_text = Mock(side_effect=AssertionError("invalid identifier reached PRQ"))
+        invalid = self.resolve("INVALID_ID", identifier_kind="national_id")
+        self.assertEqual(invalid["items"][0]["code"], "PATIENT_ID_INVALID")
+        sdk._runtime.request_text.assert_not_called()
+        self.assertEqual(len(self.reads), 2)
+        self.actions = [{**PATIENT, "patname": ""}]
+        invalid = query(force=True)
+        self.assertEqual(invalid["items"][0]["code"], "PATIENT_LOOKUP_UNCONFIRMED")
+        self.assertEqual(self.work.review.db.get("profile", "00012345"), saved)
+        sdk.patients.get_basic_info.assert_not_called()
+
     def test_confirmed_empty_requires_public_readiness_and_second_empty_read(self):
         self.actions = [[], []]
         task = self.resolve()

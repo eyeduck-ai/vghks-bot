@@ -117,6 +117,8 @@ Windows CI 的合成測試將 `TEMP`、`TMP`、`TMPDIR` 指向該 job 的 `runne
 
 跨任務共用取得的回歸須以 barrier 製造同時 cache miss，核對實體 SDK／HTTP、前景優先權、各訂閱者取消、force 分流、登入／清除 epoch 與病人／完整就診 selector。快取與合併結果不得改寫 PRQ 病人 context，不得增加 SDK 外層重試；必要身分核對與 SDK 內部退避仍照常發生。
 
+病人來源輸入另以 `tools/browser_bot_fixture.py --review-patients 1000 --lookup-failures --lookup-delay 5 --local-board` 驗收慢查核、失敗與批次貼上。等待時須看得見原號碼，所有開始入口均不得略過 pending／draft／失敗；來源或帳號切換後舊結果不得回填。標題列的滑鼠及鍵盤操作、設定按鈕不冒泡、344／304px 清單與 84px 虛擬列高須於桌面及窄畫面實測。測試只用合成 SDK 與一次性資料庫。
+
 ## 更新 SDK
 
 核對上游版本與變更後，同時修改 `pyproject.toml` 和 `requirements-build.lock.txt` 的完整 commit。`build.ps1` 會核對實際安裝來源；SDK 版本相同但 commit 不符時，只重新安裝 SDK。來源檢查與直接打包也會拒絕不符的 commit，EXE 授權聲明及封裝報告保留完整 commit。

@@ -41,6 +41,7 @@ let activeListRun="", selectedSet=null, currentReview="", reviewData=null, revie
 let libraryData, libraryPage=0, librarySelected=new Set(), tagPage=0, extensionTask="", extensionContext=null;
 let libraryRecordSequence=0, libraryReturnFocus=null;
 let toastTimer, draftTimer, pollBusy=false, searchSequence=0, stopped=false;
+let manualSave=null;
 let collapsedDays=new Set();
 let suppressCompletedReview=false,reconnectTask="",reconnectTarget="";
 const reconnectAttempts=new Map(),recoverySeen=new Map(),resumedTasks=new Set();
@@ -205,11 +206,32 @@ function renderList(){
  }
  if(!rows.length)content.append(empty(listing?.days.some(d=>d.cached)?"此範圍沒有符合的掛號。":"選擇日期查看門診清單，或手動加入病人。"));
  $("#manualMembersSection").hidden=!manual.length;$("#manualCount").textContent=manual.length+" 位";
- $("#manualMembers").replaceChildren(table(["選取","病人／病歷號","性別／生日"],manual.map(p=>[check("選取手動加入病人 "+p.mrn,true,v=>{if(!v){manual=manual.filter(m=>m.mrn!==p.mrn);renderList();draftSave();}}),patientName(p),(p.sex||"—")+" · "+(p.birthday||p.age||"—")])));
- const n=selectedMRNs().length;$("#selectionCount").textContent=`已選 ${n} 位病人`;
- for(const id of ["saveCollection","useTools","selectedTags"])$("#"+id).disabled=!n;for(const button of $$("[data-use-tool]"))button.disabled=!n;
+ $("#manualMembers").replaceChildren(table(["選取","病人／病歷號","性別／生日"],manual.map(p=>[check("選取手動加入病人 "+p.mrn,true,v=>{if(!v){manualLookup.forget(p.mrn);manual=manual.filter(m=>m.mrn!==p.mrn);renderList();draftSave();}}),patientName(p),(p.sex||"—")+" · "+(p.birthday||p.age||"—")])));
+ updateCounts();
 }
-async function saveCurrentSet(){return api("/sets/save",{registrations:allRows().filter(r=>selected.has(r.id)).map(r=>({day:r.day,id:r.id})),mrns:manual.map(p=>p.mrn).join("\n"),source_range:ranges()});}
+function updateCounts(){
+ const n=selectedMRNs().length,state=manualLookup.state(),errors=manualErrors.count(),saving=manualSave?.account===account&&manualSave?.epoch===epoch,blocked=state.blocked||!!errors||saving;
+ $("#selectionCount").textContent=`已選 ${n} 位病人`+(state.pendingCount?` · ${state.pendingCount} 筆查核中`:"")+(errors?` · ${errors} 筆查核失敗`:"")+(state.draft.trim()?" · 輸入尚未查核":"");
+ const hint=state.composing?"請完成文字輸入後再開始。":state.draft.trim()?"請按 Enter 完成查核後再開始。":state.pendingCount?`尚有 ${state.pendingCount} 筆查核中，完成後即可開始。`:errors?"請重試或移除查核失敗的號碼後再開始。":"";
+ $("#manualLookupHint").hidden=!hint;if($("#manualLookupHint").textContent!==hint)$("#manualLookupHint").textContent=hint;
+ for(const id of ["saveCollection","useTools"])$("#"+id).disabled=!n||blocked;
+ for(const button of $$("[data-use-tool]"))button.disabled=!n||blocked;
+ $("#selectedTags").disabled=!n;$("#identifiers").disabled=saving||!!root?.read_only;
+}
+function requireManualChecked(){
+ if(manualLookup.hasBlockers())throw new Error("尚有識別號碼未完成查核，請先完成輸入並等候查核結果。");
+ if(manualErrors.count())throw new Error("有查核失敗的識別號碼，請重試或明確移除後再開始。");
+}
+async function saveCurrentSet(){
+ requireManualChecked();
+ if(manualSave?.account===account&&manualSave?.epoch===epoch)throw new Error("正在保存病人集合，請稍候。");
+ const context={account,epoch};manualSave=context;updateCounts();
+ try{
+  const result=await api("/sets/save",{registrations:allRows().filter(r=>selected.has(r.id)).map(r=>({day:r.day,id:r.id})),mrns:manual.map(p=>p.mrn).join("\n"),source_range:ranges()});
+  if(context.account!==account||context.epoch!==epoch)throw new DOMException("帳號已切換。","AbortError");
+  requireManualChecked();return result;
+ }finally{if(manualSave===context){manualSave=null;updateCounts();}}
+}
 function renderSets(){const container=$("#savedSets");container.replaceChildren();for(const group of work?.sets||[]){const r=node("div",undefined,"saved-row"),text=node("div");text.append(node("strong",group.name),node("span",`${(group.member_count??group.members?.length??0)} 位 · ${time(group.updated_at)}`,"caption"));const actions=node("div",undefined,"actions");actions.append(btn("使用工具",()=>openTools(group)),btn("改名",()=>renameSet(group),"quiet"),btn("移除",async()=>{if(await confirmDelete("移除此病人集合？病歷資料會保留。")){await api("/sets/delete",{id:group.id});await refresh();}},"quiet"));r.append(text,actions);container.append(r);}if(!work?.sets.length)container.append(empty("尚無保存的病人集合。"));}
 function renameSet(group){$("#dataTitle").textContent="集合名稱";const form=node("form"),input=node("input"),save=node("button","保存","primary");input.value=group.name;input.required=true;input.maxLength=100;input.setAttribute("aria-label","集合名稱");save.type="submit";form.append(input,save);form.addEventListener("submit",event=>{event.preventDefault();act(async()=>{await api("/sets/save",{id:group.id,name:input.value});$("#dataDialog").close();await refresh();});});$("#dataContent").replaceChildren(form);dialog("dataDialog");}
 async function openTools(group){return window.ToolWorkspace.open("review",group);}
@@ -784,16 +806,18 @@ $("#listQuery").addEventListener("input",renderList);
 const manualErrors=window.PatientTokens.createErrors({
  container:"manualLookupErrors",onOpen:taskId=>act(()=>openLookupDiagnostics(taskId)),
  onRetry:(token,mode)=>act(()=>{if(!work?.online)throw new Error("請先重新連線，再重試此筆。");manualLookup.add([token],mode);}),
+ onChange:()=>updateCounts(),
 });
 const manualLookup=window.PatientTokens.create({
  input:"identifiers",kind:()=>$("#identifierKind").value,request:api,
- canLookup:()=>!!account&&!!work?.online&&!root.read_only,status:"resolveStatus",
+ canLookup:()=>!!account&&!!work?.online&&!root.read_only&&!(manualSave?.account===account&&manualSave?.epoch===epoch),status:"resolveStatus",
+ pendingContainer:"identifiersPending",scope:()=>JSON.stringify([account,epoch]),onStateChange:()=>updateCounts(),
  onResolved:(patient,mode)=>{manualErrors.remove(mode+":"+(patient.input||patient.mrn));addManualPatient(patient);},
  onFailed:(token,message,mode,taskId)=>manualErrors.add(token,message,mode,taskId),
 });
 $("#manualOpen").addEventListener("click",()=>{dialog("manualDialog");manualLookup.focus();});
 $("#saveCollection").addEventListener("click",()=>act(async()=>{await saveCurrentSet();await refresh();say("病人集合已保存。");}));
-$("#useTools").addEventListener("click",()=>act(async()=>{const group=await saveCurrentSet();await refresh();openTools(group);}));
+$("#useTools").addEventListener("click",()=>act(async()=>{const selectedAccount=account,revision=epoch,group=await saveCurrentSet();await refresh();if(selectedAccount!==account||revision!==epoch)return;requireManualChecked();openTools(group);}));
 $("#selectedTags").addEventListener("click",()=>openPatientTags(selectedMRNs()));
 for(const id of ["toolKind","soapMode","forceReview"])$("#"+id).addEventListener("change",toolOptions);
 $("#refreshTasks").addEventListener("click",()=>act(refresh));

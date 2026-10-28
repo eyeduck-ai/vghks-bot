@@ -3,7 +3,7 @@
 // The scrollbar represents the complete filtered list. Only nearby identities
 // are retained; SOAP stays in a separate, small account/task-scoped cache.
 window.ReviewPaging=(()=>{
- const pageSize=40,rowHeight=116,overscan=4,blocks=new Map(),details=new Map(),pending=new Map();
+ const pageSize=40,rowHeight=84,overscan=4,blocks=new Map(),details=new Map(),pending=new Map();
  let owner="",pageData=null,detail=null,navigation=null,filtersKey="",collection="",listSequence=0,detailSequence=0,selectionSequence=0,statusSignature="",detailSignature="",busy=false;
  let scrollTimer=null,scrollJob=null,scrollWanted=false,scrollLoading=false,listError="",prefetchTimer=null,prefetchJob=null,prefetchSequence=0,boundRail=null;
  const scope=()=>JSON.stringify([account,currentReview,epoch]);

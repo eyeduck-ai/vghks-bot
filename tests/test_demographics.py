@@ -187,6 +187,14 @@ class DemographicFlowTests(unittest.TestCase):
         other.review.profile(self.mrn)
         self.assertEqual(other.review.member_demographics({"mrn": self.mrn})["age"], "45")
         self.assertEqual(self.work.review.member_demographics({"mrn": self.mrn})["age"], "68")
+        for workspace, identifier in ((self.work, "A123456789"), (other, "B123456789")):
+            with patch.object(workspace.gateway, "resolve_identity", return_value=self.mrn):
+                task = wait_task(workspace, workspace.review.start({"kind": "resolve", "identifier_kind": "national_id",
+                                                                   "identifiers": identifier})["task_id"])
+            self.assertEqual(task["items"][0]["national_id"], identifier)
+            self.assertFalse(task["items"][0].get("basic_info_at"))
+        self.assertEqual(self.work.review.read_profile({"mrn": self.mrn})["national_id"], "A123456789")
+        self.assertEqual(other.review.read_profile({"mrn": self.mrn})["national_id"], "B123456789")
         with self.assertRaises(ValueError):
             other.review.cohort({"set_id": group["id"]})
         self.work.review.db.save("profile", {"id": "BROKEN", "mrn": "UNRELATED", "status": "resolved",
@@ -262,12 +270,17 @@ class DemographicFlowTests(unittest.TestCase):
             self.assertTrue(self.work.review.basic_info(task)["cached"])
             self.assertEqual(fetch.call_count, 1)
         acquired = self.work.review.basic_info({**task, "force": True})
+        acquired = self.work.review.db.save("profile", {**acquired, "custom_field": {"synthetic": "preserve"}})
         with patch.object(connection, "get_demographics", return_value={
                 "mrn": self.mrn, "name": acquired["name"], "sex": "", "birthday": "",
                 "mobile_phone": "", "home_phone": ""}):
-            refreshed = self.work.review.profile(self.mrn, force=True)
-        for field in ("national_id", "phone", "contact", "basic_info_at", "birthday", "sex", "mobile_phone"):
+            refreshed = self.work.review.profile(self.mrn, force=True, verified_national_id=acquired["national_id"])
+        for field in ("national_id", "phone", "contact", "basic_info_at", "birthday", "sex", "mobile_phone", "custom_field"):
             self.assertEqual(refreshed[field], acquired[field])
+        with patch.object(self.work, "sdk_factory", side_effect=AssertionError("cached identity triggered an SDK read")):
+            cached = self.work.review.profile(self.mrn, verified_national_id=acquired["national_id"])
+        for field in ("name", "phone", "basic_info_at", "custom_field"):
+            self.assertEqual(cached[field], acquired[field])
 
     def test_basic_info_errors_and_identity_mismatches_do_not_replace_saved_profiles(self):
         self.group()
