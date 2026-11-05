@@ -101,9 +101,9 @@ function reviewPatientIdentity(mrn,taskId=currentReview){
 window.reviewPatientIdentity=reviewPatientIdentity;
 function setPatientDialogContext(id,mrn,name="",taskId=currentReview){
  const dialogElement=$("#"+id),context=$(id==="dataDialog"?"#dataPatient":"#tagPatient");
- if(!mrn){context.textContent="";context.hidden=true;dialogElement.removeAttribute("aria-describedby");return;}
+ if(!mrn){context.textContent="";context.removeAttribute("title");context.hidden=true;dialogElement.removeAttribute("aria-describedby");return;}
  const patient=reviewPatientIdentity(mrn,taskId);
- context.textContent=(name||patient.name)+" · 病歷號 "+mrn;
+ context.textContent=(name||patient.name)+" · 病歷號 "+mrn;context.title=context.textContent;
  context.hidden=false;dialogElement.setAttribute("aria-describedby",context.id);
 }
 function dialog(id){Choices.sync();if(id==="dataDialog"){extensionTask="";extensionContext=null;$("#dataDialogActions")?.replaceChildren();$("#dataDialog").dataset.view="general";setPatientDialogContext(id,"");}if(!$("#"+id).open)$("#"+id).showModal();}
@@ -687,7 +687,7 @@ function registrationRefresh(context,busy=false){
   if(revision!==epoch||extensionContext!==context||!context?.mrn||!$("#dataDialog").open||root.read_only||!work?.online||busy)return;
   return extension("registrations",context.mrn,context.record_id||"",true);
  });
- setIcon(button,"refresh","更新掛號紀錄");button.classList.add("data-dialog-refresh");
+ setIcon(button,"refresh","更新掛號紀錄");button.classList.add("data-dialog-refresh","dialog-header-control");
  button.disabled=busy||!!root.read_only||!work?.online||!context?.mrn;
  button.setAttribute("aria-busy",String(busy));area.replaceChildren(button);
 }

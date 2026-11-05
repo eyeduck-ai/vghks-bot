@@ -292,8 +292,11 @@ button.panel-toggle.icon-button:hover{background:#dce8d7;border-color:#c4d4bd}
 .review-data-label{margin-left:12px;color:var(--green);text-decoration:underline;text-underline-offset:3px;white-space:nowrap}
 .review-data-values{display:grid;grid-template-columns:minmax(140px,auto) minmax(0,1fr);gap:6px 14px;margin:8px 0 0;padding:10px 12px;border-left:2px solid var(--line);background:var(--soft);line-height:1.5}
 .review-data-values dt,.review-data-values dd{margin:0;overflow-wrap:anywhere}.review-data-values dd{color:var(--ink)}
-#dataDialogActions{display:flex;align-items:center;gap:6px;margin-left:auto;flex:none}
-#dataDialogActions .data-dialog-refresh{min-height:32px;width:32px;min-width:32px;padding:6px;border:1px solid var(--line);background:#fff}
+.dialog-toolbar,.dialog-header-actions{display:flex;align-items:center;gap:6px;min-width:0}
+.dialog-header-actions{margin-left:auto;flex:none}
+.dialog-header-actions:empty{display:none}
+.dialog-heading button.dialog-header-control{display:inline-flex;align-items:center;justify-content:center;flex:none;width:var(--dialog-header-size,32px);min-width:var(--dialog-header-size,32px);height:var(--dialog-header-size,32px);min-height:var(--dialog-header-size,32px);padding:0;line-height:1}
+#dataDialogActions .data-dialog-refresh{border:1px solid var(--line);background:#fff}
 @media(max-width:780px){.review-layout{display:flex;flex-direction:column}#reviewPatientsToggle,.review-layout.patients-collapsed #reviewPatientsToggle{position:relative;left:auto;top:auto;align-self:center;margin:-9px 0;flex:none}.review-layout.patients-collapsed .detail-meta{padding-left:0}.review-page .review-detail{padding-top:23px}}
 @media(pointer:coarse){#reviewPatientsToggle{width:22px;min-width:22px;height:26px;min-height:26px;flex-basis:22px;left:calc(var(--review-patient-width) + 1px)}}
 @media(max-width:780px) and (pointer:coarse){#reviewPatientsToggle,.review-layout.patients-collapsed #reviewPatientsToggle{left:auto}}
@@ -497,7 +500,7 @@ button.patient-chip .patient-chip-remove{flex:none;color:#738973;font-size:14px;
 @media(max-width:680px){.patient-identity{flex:1 1 100%}.patient-chip-list{max-height:108px}}
 .dialog-title-group{min-width:0}
 .dialog-patient{margin:4px 0 0!important;color:var(--muted);font-size:12px;font-weight:600;line-height:1.4;overflow-wrap:anywhere}
-#dataDialog>.dialog-heading,#patientTagDialog .dialog-heading{align-items:flex-start;gap:12px}
+#dataDialog>.dialog-heading,#patientTagDialog .dialog-heading{gap:12px}
 #dataDialog>.dialog-heading{position:sticky;top:-28px;z-index:1;margin:-28px -28px 20px;padding:18px 28px 14px;border-bottom:1px solid var(--line);background:#fff}
 #dataDialog>.dialog-heading>button,#patientTagDialog .dialog-heading>button{flex-shrink:0}
 .module-page.cataract-active>.page-heading{display:none}

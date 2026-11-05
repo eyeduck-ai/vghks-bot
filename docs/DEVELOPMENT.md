@@ -58,6 +58,8 @@ Python 虛擬環境的啟動腳本與部分命令列程式含建立時的絕對�
 
 掛號紀錄可使用 `tools/browser_bot_fixture.py --registrations --local-board`，提供完整掛號欄位、明確未到診、未知圖示、取消及日期不明的合成案例。`tests/test_registration_history.py` 另經真實 SDK 與合成 HTTP 驗證快取升級及身分拒收；不需讀取院內 ZIP 或 HAR。
 
+資料視窗的頁首及操作列用共用容器垂直置中，以 `gap` 控制間距。同行的按鈕、連結與勾選用一致的控制高度；窄畫面依操作群組換行，維持鍵盤操作順序。用 `tools/browser_bot_fixture.py --report-gallery --local-board` 驗收縮圖、圖片最適比例、PDF 與比較入口。
+
 刀表合成資料由 `tests/fixtures/` 與相關整合測試維護。`tools/verify_sheet_contract.py` 離線核對主程式採用的共用核心與 GAS 匯出的 82 組格式契約；指定 `--gas-repo <GAS checkout>` 時，另從該 checkout 執行 GAS 匯出器，並實際執行主程式封存請求後交由 GAS 續封，驗證雙向相容。`tests/fixtures/gas_contract.json` 固定 GAS commit，`gas_archives.json` 保存原生封存匯出。需要線上只讀檢查時，使用 `tools/check_sheet_contract.py`，依 `--help` 指定外部服務帳戶檔、刀表、日曆與報告路徑；憑證及線上報告不加入 Git。
 
 來源邊界檢查同時涵蓋 Git 已追蹤檔案與尚未提交、未被忽略的新檔案，不需要先 stage 才能檢查。提交前仍以 `git add <明確路徑>` 或明確的來源目錄選取變更；不要加入真實資料庫或病歷 fixture。失敗重現請建立合成資料。
@@ -117,7 +119,7 @@ Windows CI 的合成測試將 `TEMP`、`TMP`、`TMPDIR` 指向該 job 的 `runne
 
 跨任務共用取得的回歸須以 barrier 製造同時 cache miss，核對實體 SDK／HTTP、前景優先權、各訂閱者取消、force 分流、登入／清除 epoch 與病人／完整就診 selector。快取與合併結果不得改寫 PRQ 病人 context，不得增加 SDK 外層重試；必要身分核對與 SDK 內部退避仍照常發生。
 
-病人來源輸入另以 `tools/browser_bot_fixture.py --review-patients 1000 --lookup-failures --lookup-delay 5 --local-board` 驗收慢查核、失敗與批次貼上。等待時須看得見原號碼，所有開始入口均不得略過 pending／draft／失敗；來源或帳號切換後舊結果不得回填。標題列的滑鼠及鍵盤操作、設定按鈕不冒泡、248／232px 清單與 56px 虛擬列高須於桌面及窄畫面實測。測試只用合成 SDK 與一次性資料庫。
+病人來源輸入另以 `tools/browser_bot_fixture.py --review-patients 1000 --lookup-failures --lookup-delay 5 --local-board` 驗收慢查核、失敗與批次貼上。等待時須看得見原號碼，所有開始入口均不得略過 pending／draft／失敗；來源或帳號切換後舊結果不得回填。標題列的滑鼠及鍵盤操作、設定按鈕不冒泡、248／232px 清單與依 TAG 換行的虛擬列高須於桌面及窄畫面實測。測試只用合成 SDK 與一次性資料庫。
 
 ## 更新 SDK
 

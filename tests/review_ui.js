@@ -7,7 +7,7 @@ function surface(){
  const nodes=new Map();let context;
  class Element{
   constructor(tag="div"){this.tagName=tag;this.children=[];this.dataset={};this.value="";this.textContent="";this.disabled=false;this.hidden=false;this.scrollTop=0;this.scrollLeft=0;this.style={};this.events=new Map();this.className="";this.parentElement=null;
-   this.classList={add:name=>{if(!this.className.split(/\s+/).includes(name))this.className+=" "+name;},remove:name=>{this.className=this.className.split(/\s+/).filter(value=>value!==name).join(" ");},contains:name=>this.className.split(/\s+/).includes(name),toggle:(name,force)=>{const present=this.className.split(/\s+/).includes(name),next=force===undefined?!present:force;this.className=this.className.split(/\s+/).filter(value=>value&&value!==name).concat(next?[name]:[]).join(" ");return next;}};}
+   this.classList={add:(...names)=>{for(const name of names){if(!this.className.split(/\s+/).includes(name))this.className+=" "+name;}},remove:name=>{this.className=this.className.split(/\s+/).filter(value=>value!==name).join(" ");},contains:name=>this.className.split(/\s+/).includes(name),toggle:(name,force)=>{const present=this.className.split(/\s+/).includes(name),next=force===undefined?!present:force;this.className=this.className.split(/\s+/).filter(value=>value&&value!==name).concat(next?[name]:[]).join(" ");return next;}};}
   set id(value){this._id=value;nodes.set("#"+value,this);}get id(){return this._id;}
   get firstElementChild(){return this.children[0]||null;}
   get isConnected(){return this.parentElement?this.parentElement.isConnected:[...nodes.values()].includes(this);}
