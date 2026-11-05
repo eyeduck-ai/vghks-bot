@@ -304,7 +304,9 @@ async function showTaskSummary(id){const task=await api("/tasks/detail?id="+enco
 async function refresh({light=false}={}){
  if(!account)return;
  const watch=[currentReview,extensionTask,...(window.ToolWorkspace?.watched()||[])].filter(Boolean);
- const value=await api("/status?"+new URLSearchParams({watch:watch.join(","),run:[activeListRun,...(window.WorkspacePoll?.watched()||[])].filter(Boolean).join(",")}));
+ const trackedRuns=[activeListRun,...(window.JobProgress?.watchedRuns(account)||[]),...(window.WorkspacePoll?.watched()||[])];
+ const runs=[...new Set(trackedRuns.filter(Boolean))].slice(0,20);
+ const value=await api("/status?"+new URLSearchParams({watch:watch.join(","),run:runs.join(",")}));
  window.WorkspacePoll?.publish(value,account);
  if(!work||!light||catalogRevision!==value.catalog_revision){
   work=await api("/workbench?compact=1");catalogRevision=value.catalog_revision;categoryOptions();renderSets();
@@ -323,7 +325,17 @@ async function refresh({light=false}={}){
  const password=work.password_status,connectionLabels={network:"網路問題",credentials:"登入被拒絕",password_change:"需變更密碼",login:"尚未登入"};
  $("#connectionStatus").textContent=work.online?"已登入"+(password?.status==="EXPIRING"?(Number.isInteger(password.remaining_days)?` · 密碼剩 ${password.remaining_days} 日`:" · 密碼即將到期"):""):work.offline_mode?"離線檢閱":connectionLabels[work.connection_issue?.action]||"連線中斷";$("#connectionStatus").classList.toggle("offline",!work.online);
  const previous=recoverySeen.get(account);recoverySeen.set(account,work.recovery_count||0);if(previous!==undefined&&work.recovery_count>previous)say("院內連線已自動恢復，查詢已繼續。");
- if(activeListRun){const run=history.runs.find(r=>r.id===activeListRun);if(run){JobProgress.show("#listJob",run);if(!inProgress.has(run.status)){activeListRun="";await readList();for(const r of allRows())if(own(r)&&r.mrn)selected.add(r.id);renderList();draftSave();}}}
+ if(activeListRun){
+  const run=history.runs.find(r=>r.id===activeListRun);
+  if(run)JobProgress.show("#listJob",run);
+  if((run&&!inProgress.has(run.status))||value.missing_run_ids?.includes(activeListRun)){
+   activeListRun="";
+   await readList();
+   for(const row of allRows())if(own(row)&&row.mrn)selected.add(row.id);
+   renderList();
+   draftSave();
+  }
+ }
  await window.ToolWorkspace?.poll();
  await window.SheetSyncUI?.poll();
  if(extensionTask&&$("#dataDialog").open)await showExtensionTask(extensionTask,extensionContext?.kind,false);
@@ -394,8 +406,16 @@ function renderReviewPatients(values,viewport=null){
    button.dataset.mrn=p.mrn;button.title=[p.name||p.mrn,p.mrn,"掛號序號："+(sequenceNo||"未提供"),attention,...dates,...tags.map(tag=>tag.category_name||tag.category),...(p.manual_tags||[]).map(tag=>tag.name||tag.category_name||tag.category||tag)].filter(Boolean).join(" · ");button.setAttribute("aria-label",button.title);badge.title="掛號序號："+(sequenceNo||"未提供");const name=node("strong",p.name||p.mrn);name.title=p.name||p.mrn;heading.append(name,badge);
    button.append(heading,node("span",[p.mrn,attention].filter(Boolean).join(" · "),"caption review-patient-id"+(["error","failed","partial"].includes(p.status)?" is-error":"")));
    if(dates.length){const datesLabel=node("span",dates.join("、"),"caption review-patient-dates");datesLabel.title=dates.join("、");button.append(datesLabel);}
-   if(viewport){const tagLine=node("span",undefined,"review-patient-tags"),all=[...tags,...(p.manual_tags||[])];tagLine.append(badges(tags.slice(0,2)),badges((p.manual_tags||[]).slice(0,Math.max(0,2-tags.length)),true));if(all.length>2)tagLine.append(node("span","+"+(all.length-2),"caption"));tagLine.title=button.title;button.append(tagLine);}
-   else button.append(badges(tags),badges(p.manual_tags,true));row.append(control,button);
+   if(viewport){
+    const manualTags=p.manual_tags||[],tagCount=tags.length+manualTags.length;
+    if(tagCount){
+     const tagLine=node("span",undefined,"review-patient-tags");
+     tagLine.append(badges(tags.slice(0,2)),badges(manualTags.slice(0,Math.max(0,2-tags.length)),true));
+     if(tagCount>2)tagLine.append(node("span","+"+(tagCount-2),"caption"));
+     tagLine.title=button.title;button.append(tagLine);
+    }
+   }else button.append(badges(tags),badges(p.manual_tags,true));
+   row.append(control,button);
   }
   row.querySelector(".patient-select").classList.toggle("active",p.mrn===reviewPatient);
   const checkbox=row.querySelector(".review-handoff-check");checkbox.checked=!!window.ReviewHandoff?.has(p.mrn);checkbox.disabled=!!root.read_only;
@@ -553,7 +573,9 @@ function renderReviewDetail(){
  if(!recordSections.length)panel.append(empty(labels[p.status]||"尚未取得 SOAP"));
 }
 async function showDiagnostics(values){
- const result=await api("/reviews/diagnostics",values);$("#dataTitle").textContent="DEBUG 資訊"+(result.task?.analysis_name?" · "+result.task.analysis_name:"");
+ const result=await api("/reviews/diagnostics",values);
+ if(result.task&&!inProgress.has(result.task.status)&&Number.isFinite(Date.parse(result.task.finished_at)))JobProgress.publish(result.task,account);
+ $("#dataTitle").textContent="DEBUG 資訊"+(result.task?.analysis_name?" · "+result.task.analysis_name:"");
  const content=$("#dataContent"),text=JSON.stringify(result,null,2);content.replaceChildren(node("p","SDK 互動與解析失敗證據保存在目前資料庫。新版保留失敗頁面的原始回應及醫療資料值，可用於重現 SDK 問題。","caption"));
  content.append(btn("匯出 DEBUG JSON",()=>{const url=URL.createObjectURL(new Blob([text],{type:"application/json;charset=utf-8"})),a=node("a");a.href=url;a.download="VGHKS-debug-"+(values.mrn||values.task_id||values.session_id)+".json";document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);}));
  const bundle=node("a","下載完整 DEBUG ZIP","diagnostic-download");bundle.href="/api/accounts/"+account+"/reviews/diagnostics/export?"+new URLSearchParams(values);bundle.download="VGHKS-debug.zip";content.append(bundle);
@@ -570,6 +592,7 @@ async function showDiagnostics(values){
  if(result.items?.length){const details=node("details",undefined,"diagnostic-technical"),summary=node("summary",`完整錯誤紀錄（顯示 ${result.items.length} / ${result.total}）`);details.append(summary,node("pre",JSON.stringify(result.items,null,2)));content.append(details);}
  else if(!result.saved_attempts?.length&&!result.sdk_events?.some(event=>event.status==="error"))content.append(node("p","此紀錄沒有保存的 ERROR。","caption"));
  dialog("dataDialog");
+ $("#dataDialog").dataset.view="diagnostics";
 }
 function diagnosticFailure(failure){
  const card=node("section",undefined,"diagnostic-failure"),heading=node("div",undefined,"diagnostic-heading");

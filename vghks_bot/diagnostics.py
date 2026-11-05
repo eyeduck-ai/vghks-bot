@@ -231,6 +231,7 @@ class Diagnostics:
                 and (not task_id or r.get("task_id") == task_id or mrn and not r.get("task_id"))
                 and (not session_id or r.get("session_id") == session_id)]
         task = self.db.get("task", task_id, required=False) if task_id else None
+        source = "bot" if task else "run"
         attempts = []
         if task:
             for item in self.db.items(task_id):
@@ -256,8 +257,9 @@ class Diagnostics:
         failures = failure_summaries(selected, attempts, events, include_events=not mrn)
         return {"items": selected, "total": len(rows), "saved_attempts": attempts,
                 "sdk_events": events, "failures": failures,
-                "task": {k: task[k] for k in ("id", "kind", "name", "analysis_name", "modules", "status", "created_at", "finished_at", "message", "error_code")
-                         if k in task} if task else None,
+                "task": {"source": source, **{k: task[k] for k in (
+                    "id", "kind", "name", "analysis_name", "modules", "status", "created_at",
+                    "finished_at", "updated_at", "revision", "message", "error_code") if k in task}} if task else None,
                 "storage": f"accounts/{self.app.account_id}/clinical.sqlite3",
                 "sdk_logs": f"accounts/{self.app.account_id}/diagnostics/",
                 "contains_raw_response": any(file.get("name", "").endswith((".bin", ".html"))

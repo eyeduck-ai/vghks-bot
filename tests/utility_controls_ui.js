@@ -140,6 +140,14 @@ function dockPlacement(){
   focus.focus();dockUI.sync();assert.equal(s.document.activeElement,focus,"unchanged host update lost focus");
   nested.close();s.flush();assert.equal(dock.parentElement,reader);assert.equal(s.document.activeElement,focus,"same-document move lost the existing focused control");
   assert.equal(nested.style["--utility-dock-height"],undefined,"closed reader retained a stale layout reservation");
+  const observer=s.observers.find(observer=>observer.target===s.document.body);
+  reader.dataset.view="diagnostics";
+  observer.callback([{target:reader,attributeName:"data-view"}]);
+  assert.equal(dock.hidden,true,"DEBUG retained the shared modal footer");
+  assert.equal(reader.classList.contains("utility-dock-host"),false,"DEBUG retained a blank footer");
+  reader.dataset.view="history";
+  observer.callback([{target:reader,attributeName:"data-view"}]);
+  assert.equal(dock.hidden,false,"switching the same dialog back to a report lost its controls");
   const confirmation=s.element("dialog");confirmation.id="confirmDialog";confirmation.showModal();s.flush();
   assert.equal(dock.hidden,true,"confirmation left clinical controls actionable above it");assert.equal(reader.style["--utility-dock-height"],reserve);
   confirmation.close();s.flush();assert.equal(dock.hidden,false);assert.equal(dock.parentElement,reader);assert.equal(dock.children.find(value=>value.id==="selection"),comparison);
@@ -175,6 +183,13 @@ function progressClockCleanup(){
   progress.context("");assert.equal(card.hidden,true);assert.equal(card.children.length,0);assert.equal(s.intervals.size,0,"hidden empty-account progress card retained a live elapsed timer");
   progress.context(accountA);assert.equal(s.intervals.size,1,"returning to a running task failed to restart its elapsed display");
   progress.publish({id:"SYNTHETIC",status:"completed",finished_at:new Date(s.now()).toISOString()},accountA);assert.equal(s.intervals.size,0,"terminal task retained its elapsed timer");
+  progress.publish({id:"LATE",kind:"list",status:"running",revision:4},accountA);
+  assert.equal(s.intervals.size,1);
+  s.advance(332000);
+  progress.publish({id:"LATE",kind:"list",status:"partial",revision:5,finished_at:new Date(s.now()-330000).toISOString()},accountA);
+  assert.equal(s.intervals.size,0,"a late terminal snapshot failed to stop the active clock immediately");
+  progress.publish({id:"LATE",status:"running",revision:4},accountA);
+  assert.equal(card.hidden,true,"a stale running snapshot revived an expired progress card");
   assert.equal(s.requests.length,0);
 }
 

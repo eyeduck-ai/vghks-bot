@@ -8,7 +8,8 @@ async function refreshTests(){
  const context={account:"account",work:null,currentReview:"",extensionTask:"",activeListRun:"",page:"patients",catalogRevision:"",activityRevision:"",reviewSignature:"",recoverySeen:new Map(),URLSearchParams,
   api:async path=>{calls.push(path);if(path.startsWith("/status?"))return {...status,catalog_revision:revision};if(path==="/workbench?compact=1"){snapshotReads++;return {tasks:[{id:"review",kind:"review",status:"running"}],sets:[]};}throw new Error("unexpected full history read "+path);},
   $:selector=>{if(!nodes.has(selector))nodes.set(selector,{textContent:"",open:false,classList:{toggle(){}}});return nodes.get(selector);},
-  categoryOptions(){},renderSets(){},say(){},loadReview:async()=>{loadCount++;},inProgress:new Set(["running","queued","cancelling"]),
+  categoryOptions(){},renderSets(){},say(){},readList:async()=>{},allRows:()=>[],renderList(){},draftSave(){},
+  loadReview:async()=>{loadCount++;},inProgress:new Set(["running","queued","cancelling"]),
   window:{Approvals:{badge(){}},ToolWorkspace:{watched:()=>[],poll:async()=>{}},TaskActivityUI:{invalidate(){},load:async()=>{}},ReviewHistoryUI:{poll:async()=>{}},ReviewPaging:{poll:async()=>{loadCount++;}}}};
  vm.createContext(context);vm.runInContext(source.slice(start,end),context);
  await context.refresh({light:true});assert.equal(snapshotReads,1,"initial snapshot was not loaded");
@@ -16,13 +17,23 @@ async function refreshTests(){
  assert.equal(context.work.tasks[0].status,"completed","live task status was not merged");
  revision="second";await context.refresh({light:true});assert.equal(snapshotReads,2,"changed catalog was not loaded");
  context.currentReview="review";context.page="review";await context.refresh({light:true});assert.equal(loadCount,1,"watched review was not updated");
+ context.activeListRun="new-list";
+ context.window.JobProgress={watchedRuns:key=>{assert.equal(key,"account");return ["old-list","new-list"];}};
+ context.window.WorkspacePoll={watched:()=>["old-list","embedded-list"],publish(){}};
+ await context.refresh({light:true});
+ assert.equal(new URL(calls.at(-1),"http://localhost").searchParams.get("run"),"new-list,old-list,embedded-list",
+   "changing the foreground list dropped a run still displayed in the progress dock");
+ status.missing_run_ids=["new-list"];await context.refresh({light:true});
+ assert.equal(context.activeListRun,"","an unavailable run blocked future list polling");
  assert.ok(calls.every(path=>!path.startsWith("/history")),"poll downloaded full history");
 }
 
 async function progressTests(){
  const messages=[],key="a".repeat(32),parent={postMessage:value=>messages.push(value)};
  let task={id:"task",kind:"review",status:"running",progress:{done:0,total:1}};
- const window={addEventListener(){},fetch:async()=>new Response(JSON.stringify({tasks:[task],runs:[]}),{status:200})};
+ const response=data=>new Response(JSON.stringify(data),{status:200});
+ let fetchSnapshot=async()=>response({tasks:[task],runs:[]});
+ const window={addEventListener(){},fetch:()=>fetchSnapshot()};
  const context={window,parent,document:{addEventListener(){}},location:{search:"?account="+key,origin:"http://localhost",href:"http://localhost/tools"},URL,URLSearchParams,Date,setTimeout,clearTimeout};
  vm.createContext(context);vm.runInContext(fs.readFileSync("vghks_bot/static/progress.js","utf8"),context);
  await context.window.fetch("http://localhost/api/accounts/"+key+"/status");
@@ -31,5 +42,30 @@ async function progressTests(){
  await context.window.fetch("http://localhost/api/accounts/"+key+"/status");
  assert.equal(messages.at(-1).runs[0].status,"completed","floating progress did not observe lightweight status");
  assert.equal(messages.at(-1).runs[0].progress.done,1);
+ const progress=context.window.JobProgress,oldRun="b".repeat(32),other="c".repeat(32);
+ progress.publish({id:oldRun,source:"run",status:"running",revision:4},key);
+ progress.publish({id:other,source:"run",status:"running",revision:3},"d".repeat(32));
+ assert.deepEqual(Array.from(progress.watchedRuns(key)),[oldRun],"watch IDs included another account or a placeholder");
+ const requestCount=messages.length;
+ progress.publish({id:oldRun,source:"run",status:"partial",revision:5,finished_at:new Date(Date.now()-332000).toISOString()},key);
+ assert.equal(messages.length,requestCount+1,"an expired terminal result was dropped before informing the parent");
+ assert.equal(messages.at(-1).runs[0].status,"partial");
+ progress.publish({id:oldRun,source:"run",status:"running",revision:4},key);
+ progress.publish({id:oldRun,source:"run",status:"queued"},key);
+ assert.deepEqual(Array.from(progress.watchedRuns(key)),[],"stale polls or late start responses revived a finished run");
+ progress.publish({id:oldRun,source:"run",status:"running",revision:6},key);
+ assert.deepEqual(Array.from(progress.watchedRuns(key)),[oldRun],"a newer resume was rejected");
+ const missingURL="http://localhost/api/accounts/"+key+"/status?run="+oldRun;
+ let releaseMissing;
+ fetchSnapshot=()=>new Promise(resolve=>{releaseMissing=resolve;});
+ const slowMissing=window.fetch(missingURL);
+ progress.publish({id:oldRun,source:"run",status:"partial",revision:7,finished_at:new Date().toISOString()},key);
+ const count=progress.size();
+ releaseMissing(response({missing_run_ids:[oldRun]}));
+ await slowMissing;
+ assert.equal(progress.size(),count,"an older missing-run response erased a newer terminal result");
+ const fresh="e".repeat(32),before=messages.length;
+ progress.publish({id:fresh,source:"run",status:"partial",revision:3,finished_at:new Date(Date.now()-332000).toISOString()},key);
+ assert.equal(messages.length,before+1,"a newly loaded iframe did not report the terminal state to its parent");
 }
 (async()=>{await refreshTests();await progressTests();console.log("Lightweight polling and progress checks passed");})().catch(error=>{console.error(error);process.exitCode=1;});

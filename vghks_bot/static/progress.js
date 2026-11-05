@@ -1,6 +1,6 @@
 "use strict";
 window.JobProgress = (() => {
-  const tasks=new Map(),activeStatuses=new Set(["queued","running","cancelling"]);
+  const tasks=new Map(),recentFinishes=new Map(),activeStatuses=new Set(["queued","running","cancelling"]);
   const scopedAccount=new URLSearchParams(location.search).get("account");
   const embedded=parent!==window&&/^[a-f0-9]{32}$/.test(scopedAccount||"");
   let workspaceVisible=true;
@@ -25,19 +25,44 @@ window.JobProgress = (() => {
     prune();
     const key=account+":"+run.id,old=tasks.get(key);
     const terminal=!activeStatuses.has(run.status);
-    const time=Date.parse(run.finished_at||run.updated_at||"");
-    const ended=terminal?(old?.status===run.status?old._ended:(Number.isFinite(time)?time:old?Date.now():0)):0;
+    const previous=old||recentFinishes.get(key);
+    const newer=Number.isInteger(run.revision)&&(!Number.isInteger(previous?.revision)||run.revision>previous.revision);
+    if(Number.isInteger(run.revision)&&Number.isInteger(previous?.revision)&&run.revision<previous.revision)return;
+    if(!terminal&&previous&&!activeStatuses.has(previous.status)&&!newer)return;
+    if(terminal&&!run._pending){
+      // Keep a small watermark after the card disappears so a late poll cannot revive it.
+      recentFinishes.delete(key);
+      recentFinishes.set(key,{status:run.status,revision:run.revision??previous?.revision});
+      if(recentFinishes.size>128)recentFinishes.delete(recentFinishes.keys().next().value);
+    }else if(!terminal)recentFinishes.delete(key);
+    let ended=0;
+    if(terminal){
+      const finish=Date.parse(run.finished_at||"");
+      const updated=Date.parse(run.updated_at||"");
+      if(Number.isFinite(finish))ended=finish;
+      else if(old?.status===run.status)ended=old._ended;
+      else if(Number.isFinite(updated))ended=updated;
+      else if(old)ended=Date.now();
+    }
     const started=Date.parse(run.created_at||"");
     const next={...old,_owner:account,_ended:ended,_clockStart:old?._clockStart??(Number.isFinite(started)?started:Date.now())};
-    for(const field of ["id","name","kind","status","source","message","created_at","finished_at","updated_at","read_only","_pending","_claimed"])
+    for(const field of ["id","name","kind","status","source","message","created_at","finished_at","updated_at","revision","read_only","_pending","_claimed"])
       if(field in run)next[field]=run[field];
     if(run.progress)next.progress={done:run.progress.done,total:run.progress.total,failed:run.progress.failed,unit:run.progress.unit,stage:run.progress.stage};
     if(run.counts){next.counts={};for(const field of ["days_done","days_total","days_failed","patients_done","patients_total","errors"])next.counts[field]=run.counts[field];}
     if(!run.progress&&run.counts)delete next.progress;
-    if(!live(next)){tasks.delete(key);return;}
-    tasks.set(key,next);
-    if(embedded){parent.postMessage({type:"bot:progress",account,runs:[next]},location.origin);return;}
+    if(terminal&&run.message&&next.progress&&!run.progress)next.progress={...next.progress,stage:run.message};
+    const retained=live(next);
+    if(retained)tasks.set(key,next);else tasks.delete(key);
+    if(embedded){
+      if(retained||old||(terminal&&(!previous||newer)))parent.postMessage({type:"bot:progress",account,runs:[next]},location.origin);
+      return;
+    }
     renderCard();
+  }
+  function watchedRuns(account=owner){
+    return [...tasks.values()].filter(run=>run._owner===account&&run.source==="run"
+      &&activeStatuses.has(run.status)&&/^[a-f0-9]{32}$/.test(run.id)).map(run=>run.id);
   }
   function pendingRun(name,stage,account=owner){
     const run={id:"pending-"+(++serial)+"-"+Date.now(),name,status:"queued",created_at:new Date().toISOString(),_pending:true,progress:{done:0,total:null,unit:"項",stage}};
@@ -130,6 +155,13 @@ window.JobProgress = (() => {
     const match=url.pathname.match(/^\/api\/accounts\/([a-f0-9]{32})(\/.*)$/);
     const account=match?.[1]||scopedAccount||"local",path=match?.[2]||url.pathname.replace(/^\/api/,"");
     const local=url.origin===location.origin&&url.pathname.startsWith("/api/");
+    const watchedAtDispatch=new Map();
+    if(local&&path==="/status"){
+      for(const id of (url.searchParams.get("run")||"").split(",").slice(0,20)){
+        const key=account+":"+id,run=tasks.get(key);
+        if(run?.source==="run"&&activeStatuses.has(run.status))watchedAtDispatch.set(key,run);
+      }
+    }
     let placeholder=null,kind="",name="";
     if(local&&["/tasks/start","/analysis/start","/start","/lists/browse","/fetch"].includes(path)){
       let values={};try{values=JSON.parse(options?.body||"{}");}catch(_){}
@@ -145,10 +177,24 @@ window.JobProgress = (() => {
           if(response.ok){
             removePending(placeholder.id,account);
             const ids=data.run_ids||[data.task_id||data.id].filter(Boolean);
-            for(const id of ids)publish({id,kind,name,status:"queued",created_at:placeholder.created_at,source:path==="/tasks/start"?"bot":"run",progress:{done:0,total:null,unit:"項",stage:"任務已送出"}},account);
+            for(const id of ids){
+              if(tasks.has(account+":"+id))continue;
+              publish({id,kind,name,status:"queued",created_at:placeholder.created_at,source:path==="/tasks/start"?"bot":"run",progress:{done:0,total:null,unit:"項",stage:"任務已送出"}},account);
+            }
           }else publish({...placeholder,status:"failed",finished_at:new Date().toISOString(),progress:{done:0,total:null,stage:data.error||"操作未完成"}},account);
         }
-        if(response.ok){for(const run of data.runs||[])if(run.kind!=="bot")publish({...run,source:"run"},account);for(const run of data.tasks||[])publish({...run,source:"bot"},account);if(path==="/tasks/detail")publish({...data,source:"bot"},account);}
+        if(response.ok){
+          for(const run of data.runs||[])if(run.kind!=="bot")publish({...run,source:"run"},account);
+          for(const run of data.tasks||[])publish({...run,source:"bot"},account);
+          if(path==="/tasks/detail")publish({...data,source:"bot"},account);
+          if(path==="/status"&&data.missing_run_ids?.length){
+            for(const id of data.missing_run_ids){
+              const key=account+":"+id;
+              if(watchedAtDispatch.has(key)&&tasks.get(key)===watchedAtDispatch.get(key))tasks.delete(key);
+            }
+            renderCard();
+          }
+        }
       }
       return response;
     }catch(error){if(placeholder)publish({...placeholder,status:"failed",finished_at:new Date().toISOString(),progress:{done:0,total:null,stage:error.message||"連線未完成"}},account);throw error;}
@@ -171,5 +217,5 @@ window.JobProgress = (() => {
     observer.observe(document.body,{attributes:true,subtree:true,attributeFilter:["open"]});setInterval(renderCard,1000);
     window.addEventListener("resize",mountCard);
   });
-  return {create,show,visible,pending,context,publish,receive,prune,ready,wait,size:()=>tasks.size};
+  return {create,show,visible,pending,context,publish,receive,prune,ready,wait,watchedRuns,size:()=>tasks.size};
 })();

@@ -143,13 +143,24 @@ class WorkbenchOptimizationTests(unittest.TestCase):
             self.task(f"task{i:04}", members=members, clinical_secret="DO_NOT_POLL" * 100)
         self.task("watch", members=members, status="paused")
         self.task("active", members=members, status="running")
+        finished_id, missing_id, corrupt_id = "a" * 32, "b" * 32, "c" * 32
+        finished = {"id": finished_id, "kind": "list", "status": "partial", "revision": 4,
+                    "counts": {}, "finished_at": "2026-10-04T08:00:00"}
+        self.work.store.create(finished)
+        corrupt = self.work.store.path(corrupt_id)
+        corrupt.mkdir()
+        (corrupt / "run.json").write_text("null", encoding="utf-8")
         with patch.object(self.work, "history", side_effect=AssertionError("full history")), \
                 patch.object(self.work.approvals.tracker, "overview", side_effect=AssertionError("clinical case overview")), \
                 patch("vghks_bot.library.sqlite3.connect", wraps=sqlite3.connect) as connect:
-            result = status(self.work, ["watch"])
+            result = status(self.work, ["watch"], ",".join([missing_id, finished_id, corrupt_id, finished_id]))
             self.assertEqual(connect.call_count, 1)
         self.assertLessEqual(len(result["tasks"]), 22)
         self.assertEqual(result["active_count"], 1)
+        self.assertEqual(result["runs"], [finished])
+        self.assertEqual(result["missing_run_ids"], [missing_id, corrupt_id])
+        summary = self.work.diagnostics.query({"task_id": finished_id})["task"]
+        self.assertEqual((summary["source"], summary["status"], summary["revision"]), ("run", "partial", 4))
         self.assertTrue({"watch", "active"}.issubset({r["id"] for r in result["tasks"]}))
         self.assertNotIn("DO_NOT_POLL", json.dumps(result))
         self.assertNotIn('"members"', json.dumps(result))

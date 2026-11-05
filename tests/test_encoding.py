@@ -9,7 +9,7 @@ from vghks_sdk import RequestPolicy
 from vghks_sdk.parsing.prq import parse_opd_patients
 
 from vghks_bot.encoding import ClinicalTransport, decode_response, report_attachment_downloads
-from vghks_bot.scanner import create_sdk
+from vghks_bot.scanner import ScanState, _collect, create_sdk
 from vghks_bot.settings import Settings
 
 
@@ -25,6 +25,19 @@ class EncodingTests(unittest.TestCase):
         self.assertEqual(len(patients),1)
         self.assertEqual((patients[0].name,patients[0].sex,patients[0].age),("測試姓名","女","68歲"))
         self.assertEqual(patients[0].sequence_no, "1")
+        # The same warning can occur when the source already carries a replacement character.
+        day = date(2026, 9, 19)
+        source = decode_response(html.replace("測試姓名", "合成\ufffd").encode())
+        rows = parse_opd_patients(source, visit_date=day, doctor_card="DOC1")
+        state = ScanState(day, day)
+        sdk = SimpleNamespace(opd=SimpleNamespace(get_doctor_patients=lambda *_: rows))
+        _collect(sdk, state, Settings(username="DOC1"), day, day)
+        self.assertEqual(state.data["counts"]["registrations"], 1)
+        warning, = state.data["issues"]
+        self.assertEqual(warning["code"], "TEXT_DECODE_INCOMPLETE")
+        self.assertIn("姓名", warning["message"])
+        self.assertIn("更新門診清單", warning["message"])
+        self.assertNotIn("合成", warning["message"])
 
     def test_utf8_big5_headers_meta_and_overrides(self):
         for header in ("","text/html; charset=iso-8859-1","text/html; charset=utf-8","text/html; charset=big5"):

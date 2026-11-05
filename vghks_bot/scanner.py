@@ -230,8 +230,11 @@ def _collect(sdk, state, settings, start, end):
             state.count(registrations=1)
             scope = classify_opd_registration(row, doctor_card=settings.username)
             state.archive("registrations", {**asdict(row), "visit_date": row.visit_date.isoformat(), "query_date": day.isoformat(), "scope": scope})
-            if any("\ufffd" in field for field in (row.name, row.sex, row.age)):
-                state.issue("文字編碼", "病人欄位仍有無法解碼的字元，可調整此帳號的文字編碼後重查。", code="TEXT_DECODE_INCOMPLETE", mrn=row.mrn, day=day.isoformat())
+            affected = [label for label, value in (("姓名", row.name), ("性別", row.sex), ("年齡", row.age))
+                        if "\ufffd" in value]
+            if affected:
+                message = "門診清單的" + "、".join(affected) + "含無法解碼的字元，可按「更新門診清單」重新取得。"
+                state.issue("文字編碼", message, code="TEXT_DECODE_INCOMPLETE", mrn=row.mrn, day=day.isoformat())
             if row.visit_date != day:
                 state.count(unknown=1)
                 state.issue("門診清單", "回傳日期與查詢日期不同，未讀取病歷。", mrn=row.mrn, day=day.isoformat())

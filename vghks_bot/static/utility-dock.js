@@ -10,15 +10,18 @@ window.UtilityDock = (() => {
     documents.set(doc, state);
     if (typeof MutationObserver === "function") {
       state.observer = new MutationObserver(records => {
+        let changed = false;
         for (const record of records) {
           const target = record.target;
           if (target.tagName !== "DIALOG") continue;
+          changed = true;
+          if (record.attributeName !== "open") continue;
           state.stack = state.stack.filter(item => item !== target);
           if (target.open) state.stack.push(target);
         }
-        sync();
+        if (changed) sync();
       });
-      state.observer.observe(doc.body, {attributes:true,subtree:true,attributeFilter:["open"]});
+      state.observer.observe(doc.body, {attributes:true,subtree:true,attributeFilter:["open","data-view"]});
     }
   }
   function top(doc) {
@@ -69,7 +72,8 @@ window.UtilityDock = (() => {
         reserved.classList.remove("utility-dock-host", "utility-dock-active");reserved.style.removeProperty("--utility-dock-height");reservations.delete(reserved);
       }
     }
-    const confirmation = target.dataset?.utilityDock === "hide" || target.id === "confirmDialog" || target.id === "sheetManagementFinalizeDialog";
+    const hideDock = target.dataset?.utilityDock === "hide" || target.dataset?.view === "diagnostics"
+      || target.id === "confirmDialog" || target.id === "sheetManagementFinalizeDialog";
     if (previousHost !== target) {
       // Keep the underlying open reader's geometry while comparison/confirmation is on top.
       previousHost?.classList.remove("utility-dock-active");
@@ -88,7 +92,7 @@ window.UtilityDock = (() => {
       node.style.order = String(order);
       if (node.parentElement !== dock) dock.append(node);
     }
-    dock.hidden = confirmation || ![...slots.values()].some(({node}) => !node.hidden);
+    dock.hidden = hideDock || ![...slots.values()].some(({node}) => !node.hidden);
     target.classList.toggle("utility-dock-host", !dock.hidden);
     target.classList.toggle("utility-dock-active", !dock.hidden);
     if (dock.hidden) reservations.delete(target);else reservations.add(target);
