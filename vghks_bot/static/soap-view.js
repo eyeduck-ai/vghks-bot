@@ -66,25 +66,56 @@ window.SOAPView = (() => {
     }
     return ranges;
   }
+  function periodDescription(period){
+    if(!period)return "";
+    const parts=[];
+    if(period.start_date&&period.end_date)parts.push(`${period.source_label||"服藥期限"}：${period.start_date} ～ ${period.end_date}`);
+    if(period.printed_months)parts.push(`院方標示 ${period.printed_months} 個月`);
+    if(period.printed_period_count)parts.push(`院方標示 ${period.printed_period_count} 期`);
+    if(period.printed_dispense_count)parts.push(`院方標示分 ${period.printed_dispense_count} 次`);
+    if(!period.printed_months&&!period.printed_period_count&&!period.printed_dispense_count&&period.estimated_cycles&&period.estimated_cycle_days)
+      parts.push(`依期限推估 ${period.estimated_cycles} 個 ${period.estimated_cycle_days} 天週期`);
+    return parts.join(" · ");
+  }
   function summaryTable(record,field,title,columns,sectionCode){
     const out=section(title), data=record.soap_structure, rows=data[field]||[];
-    if(field==="medications")for(const period of data.chronic_prescription_periods||[])
-      out.append(make("p",`${period.source_label||"服藥期限"}：${period.start_date} ～ ${period.end_date}`,"soap-period"));
+    const medication=field==="medications",periods=medication?data.chronic_prescription_periods||[]:[];
+    const hasChronic=medication&&rows.some(row=>row.prescription_type==="chronic");
+    const linkedPeriods=new Set(hasChronic?rows.filter(row=>row.prescription_type==="chronic").map(row=>row.chronic_period_index):[]);
+    periods.forEach((period,index)=>{
+      const description=periodDescription(period);
+      if(description&&!linkedPeriods.has(index))out.append(make("p",`慢性處方箋 · ${description}`,"soap-period"));
+    });
     if(!rows.length){
       const known=(data.present_sections||[]).includes(sectionCode);
       const failed=(data.parsing_issues||[]).some(code=>code.startsWith(field==="medications"?"SOAP_MEDICATION_":field==="orders"?"SOAP_ORDER_":"SOAP_DIAGNOSIS_"));
       out.append(make("p",failed?"此摘要尚未完整解析，請查看完整原文。":known?"院方此摘要沒有資料列。":"未辨識此摘要。","caption"));return out;
     }
-    const wrap=make("div",undefined,"table-wrap"),table=make("table",undefined,"soap-table"),head=make("thead"),hr=make("tr"),body=make("tbody");
+    const wrap=make("div",undefined,"table-wrap"),table=make("table",undefined,"soap-table"),head=make("thead"),hr=make("tr");
     for(const [,label] of columns){const th=make("th",label);th.scope="col";hr.append(th);}head.append(hr);
+    table.append(head);
+    let body,previousGroup;
     rows.forEach((row,index)=>{
+      const chronic=hasChronic&&row.prescription_type==="chronic";
+      const group=chronic?`chronic:${row.chronic_period_index}`:row.prescription_type||"legacy";
+      if(!body||hasChronic&&group!==previousGroup){
+        body=make("tbody");table.append(body);previousGroup=group;
+        const label=chronic?"慢性處方箋":hasChronic&&group==="regular"?"一般處方":"";
+        if(label){
+          const tr=make("tr"),th=make("th",label,"soap-prescription-group");
+          th.scope="rowgroup";th.colSpan=columns.length;
+          const period=chronic?periods[row.chronic_period_index]:null,description=periodDescription(period);
+          if(description)th.append(make("span",description,"soap-prescription-period"));
+          tr.append(th);body.append(tr);
+        }
+      }
       const tr=make("tr"),hits=(record.matches||[]).filter(m=>m.source_field===field&&m.source_index===index);
       if(hits.length){tr.className="soap-tag-row";tr.tabIndex=-1;tr.dataset.tagCategories=JSON.stringify([...new Set(hits.map(hit=>hit.category))]);}
       for(const [key] of columns){const td=make("td"),value=String(row[key]??"");td.append(marked(value,[...cellRanges(value,hits),...searchRanges(record,value)],"span","soap-cell"));tr.append(td);}
       if(hits.length&&!tr.querySelector("mark")){const badge=make("mark","tag","soap-row-hit");badge.tabIndex=-1;badge.title="tag 命中於此原始資料列";tr.firstElementChild.prepend(badge);}
       body.append(tr);
     });
-    table.append(head,body);wrap.append(table);out.append(wrap);return out;
+    wrap.append(table);out.append(wrap);return out;
   }
   function create(record){
     const out=make("div",undefined,"soap-view"),data=record.soap_structure,warning=issueNote(record);

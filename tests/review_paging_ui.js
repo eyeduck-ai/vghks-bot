@@ -2,20 +2,31 @@
 const assert=require("node:assert/strict"),fs=require("node:fs"),vm=require("node:vm");
 const {surface,deferred,tick}=require("./review_ui.js");
 const settle=async()=>{for(let index=0;index<80;index++)await Promise.resolve();};
-const samples=[];
+const samples=[],estimatedHeight=40;
 
-function setup(count=1000){
+function setup(count=1000,measureRows=false){
  const s=surface(),c=s.context,$=s.$,calls=[],notes=[],renders=[],timers=new Map(),documentEvents=new Map();let timerId=0;
  c.setTimeout=(run,delay)=>{const id=++timerId;timers.set(id,{run,delay});return id;};c.clearTimeout=id=>timers.delete(id);
  c.document.hidden=false;c.document.addEventListener=(name,run)=>documentEvents.set(name,run);
  $("#reviewPatients").clientHeight=580;
+ $("#reviewPatients").clientWidth=248;
+ const observed=new Set();let notifyResize;
+ if(measureRows){
+  c.ResizeObserver=class{
+   constructor(callback){notifyResize=callback;}
+   observe(target){observed.add(target);}
+   unobserve(target){observed.delete(target);}
+   disconnect(){observed.clear();}
+  };
+  c.requestAnimationFrame=callback=>c.setTimeout(callback,0);
+ }
  const panel=$("#reviewPatientPanel"),header=s.node("div",undefined,"review-patient-header"),actions=s.node("div",undefined,"review-selection-toolbar"),summary=s.node("div",undefined,"review-list-summary");
  actions.append($("#reviewHandoffSelected"),$("#reviewSelectionClear"));summary.append($("#reviewSelectionCount"),$("#reviewPager"));header.append(actions,summary);panel.append(header,$("#reviewPatients"));
  c.page="review";c.epoch=1;c.currentReview="R1";c.reviewPatient="";c.reviewData=null;c.reviewSignature="";
  c.work={tasks:[],revisions:{profile:0,review_note:0,patient_tags:0,registrations:0}};
  c.reviewFilters=()=>({q:$("#reviewQuery").value,search_mode:$("#reviewSearchMode").value||"text",tag:$("#reviewTag").value});
  c.ClinicalUI={loading:label=>s.node("div",label,"clinical-loading")};
- c.badges=items=>s.node("span",JSON.stringify(items||[]));
+ c.badges=(items,manual=false)=>{const list=s.node("span");for(const tag of items||[])list.append(s.node("span",tag.name||tag.category_name,manual?"badge manual":"badge"));return list;};
  c.check=(label,checked,run)=>{const input=s.node("input");input.checked=checked;input.setAttribute("aria-label",label);input.run=run;return input;};
  const selection=new Map();c.window.ReviewHandoff={updatePatients(){},has:mrn=>selection.has(mrn),toggle:(patient,checked)=>{if(checked)selection.set(patient.mrn,{mrn:patient.mrn,name:patient.name});else selection.delete(patient.mrn);}};
  let flush=true;const selections=[];
@@ -68,10 +79,12 @@ function setup(count=1000){
  s.run("vghks_bot/static/review-paging.js");const ui=c.window.ReviewPaging;
  c.selectReviewPatient=mrn=>ui.select(mrn);
  const runTimers=async delay=>{for(const [id,timer] of [...timers])if(timer.delay<=delay){timers.delete(id);timer.run();}await settle();};
- const scroll=async(index,fraction=0)=>{$("#reviewPatients").scrollTop=index*56+fraction;await $("#reviewPatients").emit("scroll");await runTimers(65);};
+ const scrollPixels=async position=>{$("#reviewPatients").scrollTop=position;await $("#reviewPatients").emit("scroll");await runTimers(65);};
+ const scroll=(index,fraction=0)=>scrollPixels(index*estimatedHeight+fraction);
+ const resize=async entries=>{notifyResize(entries.map(([target,height])=>({target,borderBoxSize:[{blockSize:height}]})));await runTimers(0);};
  const rows=()=>$("#reviewPatients").querySelectorAll(".review-patient-row");
  const hide=hidden=>{c.document.hidden=hidden;documentEvents.get("visibilitychange")?.();};
- const sample={...s,ui,calls,notes,renders,revisions,listGates,detailGates,selections,selection,all,invalidPrefetch,scroll,runTimers,rows,hide,maxPrefetch:()=>maxPrefetchActive,setTaskRevision:value=>taskRevision=value,setFlush:value=>flush=value,setWrongPatient:value=>wrongPatient=value};
+ const sample={...s,ui,calls,notes,renders,revisions,listGates,detailGates,selections,selection,all,invalidPrefetch,scroll,scrollPixels,resize,observed,runTimers,rows,hide,maxPrefetch:()=>maxPrefetchActive,setTaskRevision:value=>taskRevision=value,setFlush:value=>flush=value,setWrongPatient:value=>wrongPatient=value};
  samples.push(sample);return sample;
 }
 
@@ -90,19 +103,68 @@ function localReadContract(){
 async function compactRailContract(){
  const s=setup(),row=s.all[0];row.name="合成姓名很長仍需完整提供";row.dates=["2026-10-28","2026-10-27","2026-10-26"];
  row.auto_tags=Array.from({length:4},(_,index)=>({category:"AUTO"+index,category_name:"合成眼科分類"+index}));row.manual_tags=[{name:"手動重要分類"}];
+ s.all[2].auto_tags=Array.from({length:11},(_,index)=>({category:"EXTRA"+index,category_name:"更多合成標記"+index}));
  await s.ui.load();
- for(const element of s.rows())assert.equal(element.style.height,"56px","virtual row geometry diverged from the compact rail");
+ for(const element of s.rows())assert.equal(element.style.height,undefined,"virtual rows were forced to one height");
  const button=s.rows()[0].querySelector(".patient-select"),label=button.getAttribute("aria-label");
  const untagged=s.rows()[1].querySelector(".patient-select"),tagLine=button.querySelector(".review-patient-tags");
  assert.equal(untagged.querySelector(".review-patient-tags"),null,"untagged patient still mounted an empty third line");
  assert.equal(untagged.querySelector(".review-patient-dates").textContent,"2026-10-01");
- assert.ok(tagLine,"tagged patient lost its tags");assert.equal(tagLine.querySelector(".caption").textContent,"+3");
+ assert.ok(tagLine,"tagged patient lost its tags");assert.equal(tagLine.querySelectorAll(".badge").length,5);
+ const overflowTags=s.rows()[2].querySelector(".review-patient-tags");
+ assert.equal(overflowTags.querySelectorAll(".badge").length,8);assert.equal(overflowTags.querySelector(".caption").textContent,"+3");assert.match(overflowTags.title,/更多合成標記10/);
  assert.match(label,/合成姓名很長仍需完整提供/);assert.match(label,/2026-10-26/);assert.match(label,/合成眼科分類3/);assert.match(label,/手動重要分類/);
  assert.equal(button.title,label,"ellipsis removed complete patient metadata from the tooltip");
  const css=fs.readFileSync("vghks_bot/static/bot.css","utf8");
- assert.match(css,/--review-patient-row-height:56px/);assert.match(css,/grid-template-rows:16px 13px;grid-auto-rows:14px/);
+ assert.match(css,/--review-patient-row-estimate:40px/);assert.match(css,/grid-template-rows:16px 13px/);assert.match(css,/\.review-patient-tags\{[^}]*flex-wrap:wrap/);
  assert.deepEqual([...css.matchAll(/--review-patient-width:(\d+)px/g)].map(match=>Number(match[1])),[248,232],"an old responsive rule narrowed the expanded rail");
  assert.match(css,/:root\[data-density\] \.review-patients\.is-virtual \.patient-select/,"compact density can override the fixed row spacing");
+}
+
+async function measuredWindows(){
+ const s=setup(1000,true),{ui,context:c,$}=s,rail=$("#reviewPatients");
+ const tags=["眼底影像待覆核","黃斑部影像","視野報告待確認","眼壓追蹤清單","視神經影像比較"].map((category_name,index)=>({category:"TAG"+index,category_name}));
+ for(const index of [0,2,398,399,999])s.all[index].auto_tags=tags;
+ await ui.load();
+ const row=mrn=>s.rows().find(item=>item.dataset.mrn===mrn);
+ const summary=()=>$("#reviewPager").querySelector(".review-page-label").textContent;
+ const first=row("P1"),second=row("P2"),third=row("P3");
+ await s.scroll(1,11);
+ await s.resize([[first,118],[second,40],[third,70]]);
+ assert.equal(rail.scrollTop,129,"a newly wrapped TAG row above the viewport moved the reading anchor");
+ assert.match(summary(),/^2–/);assert.equal(c.reviewPatient,"P1","height measurement changed the selected SOAP");
+
+ const focus=third.querySelector(".patient-select");focus.focus();
+ const remoteOffset=400*estimatedHeight+78+30+17;
+ await s.scrollPixels(remoteOffset);
+ assert.match(summary(),/^401–/);assert.equal(c.document.activeElement,focus);assert.equal(third.style.top,"158px");
+ assert.ok(!s.observed.has(third),"an absolute pinned row was still being measured");
+ assert.ok(s.observed.size<=26,"row resize observation grew with the entire list");
+ await s.resize([[row("P399"),64],[row("P400"),90],[first,400]]);
+ assert.equal(rail.scrollTop,remoteOffset+74,"measuring the newly mounted block did not preserve the first row and its offset");
+ assert.match(summary(),/^401–/);assert.equal(c.document.activeElement,focus);
+
+ rail.clientWidth=210;
+ await s.resize([[rail,rail.clientHeight]]);
+ assert.equal(rail.scrollTop,400*estimatedHeight+17,"a width change kept stale wrap sizes or lost the viewport anchor");
+ assert.match(summary(),/^401–/);
+
+ await s.scrollPixels(1000*estimatedHeight-rail.clientHeight);
+ const last=row("P1000");assert.ok(last,"End did not mount the last patient");
+ await s.resize([[last,118]]);
+ assert.equal(rail.scrollTop,1000*estimatedHeight+78-rail.clientHeight,"End drifted away when the last row wrapped after mounting");
+ assert.match(summary(),/–1000 \/ 1000/);
+ await s.scrollPixels(0);
+ assert.equal(rail.scrollTop,0);assert.ok(row("P1"));assert.equal(c.reviewPatient,"P1");
+
+ await s.resize([[row("P1"),118]]);await s.scrollPixels(70);
+ s.all.unshift({...s.all[1],mrn:"INSERTED"});s.setTaskRevision(2);
+ await ui.poll({revision:2,status:"completed"},c.work.revisions);
+ assert.equal(rail.scrollTop,110,"relocating a tall anchor discarded its valid offset beyond the estimate");
+ assert.match(summary(),/^2–/);
+ await s.resize([[row("P1"),54]]);
+ assert.equal(rail.scrollTop,93,"a shorter measured anchor was not clamped within its own row");
+ assert.match(summary(),/^2–/);
 }
 
 async function persistentHeaderAndAttention(){
@@ -128,17 +190,17 @@ async function initialResultLayout(){
  c.document.body={classList:{toggle(name,on){assert.equal(name,"review-result-compact");layouts.push(on);$("#reviewPatients").clientHeight=on?720:360;}}};
  const source=fs.readFileSync("vghks_bot/static/bot.js","utf8");vm.runInContext(source.split("\n").find(line=>line.startsWith("function updateReviewLayout(")),c);
  c.renderReviewHeader=()=>c.updateReviewLayout();await s.ui.load();
- assert.equal(layouts[0],true,"first result header did not enter the full-height review layout");assert.equal(s.rows().length,17,"initial window used the old rail height before the result layout was applied");assert.match($("#reviewPager").children[0].textContent,/1–13 \/ 1000/);
- c.reviewSetupExpanded=true;await s.ui.load();assert.equal(layouts.at(-1),false,"publishing result metadata overrode the source editor's expanded layout");assert.equal(s.rows().length,11);
+ assert.equal(layouts[0],true,"first result header did not enter the full-height review layout");assert.equal(s.rows().length,22,"initial window used the old rail height before the result layout was applied");assert.match($("#reviewPager").children[0].textContent,/1–18 \/ 1000/);
+ c.reviewSetupExpanded=true;await s.ui.load();assert.equal(layouts.at(-1),false,"publishing result metadata overrode the source editor's expanded layout");assert.equal(s.rows().length,13);
 }
 
 async function continuousWindow(){
  const s=setup(),{ui,context:c,calls,renders,$}=s;
- await ui.load();assert.ok(c.reviewData.patients.length<=20);assert.equal(c.reviewPatient,"P1");
+ await ui.load();assert.ok(c.reviewData.patients.length<=25);assert.equal(c.reviewPatient,"P1");
  assert.equal(calls.filter(call=>call.path==="/reviews/patient").length,1,"initial viewport eagerly loaded other patients' SOAP");
  assert.equal(s.notes[0].options.mrns.length,1,"scroll metadata caused all patients' notes to accumulate");
  assert.equal(s.rows()[0].querySelector(".review-sequence").textContent,"001","initial registration sequence required notes");
- assert.ok(s.rows().length<=20);assert.equal($("#reviewPager").querySelectorAll("button").length,0,"page buttons remain");
+ assert.ok(s.rows().length<=25);assert.equal($("#reviewPager").querySelectorAll("button").length,0,"page buttons remain");
  const firstRow=s.rows()[0],soap=$("#reviewDetail").querySelector(".soap-record");
  firstRow.querySelector(".patient-select").focus();$("#reviewDetail").scrollTop=73;
  await ui.poll({revision:1,status:"completed"},c.work.revisions);assert.equal(calls.length,2,"unchanged status triggered another read");
@@ -150,12 +212,12 @@ async function continuousWindow(){
  await s.scroll(400,19);assert.equal(c.reviewPatient,"P1");assert.equal(renders.length,before);assert.equal(s.notes.length,noteCount,"scroll loaded notes");
  assert.equal($("#reviewNoteInput"),note);assert.equal(note.value,"still editing");assert.equal(c.document.activeElement,note);
  assert.equal($("#reviewDetail").querySelector(".soap-record"),soap);assert.equal($("#reviewDetail").scrollTop,73);
- assert.ok(s.rows().some(row=>row.dataset.mrn==="P401"));assert.equal($("#reviewPatients").scrollTop,400*56+19);assert.ok(s.rows().length<=20);
+ assert.ok(s.rows().some(row=>row.dataset.mrn==="P401"));assert.equal($("#reviewPatients").scrollTop,400*estimatedHeight+19);assert.ok(s.rows().length<=25);
  assert.match($("#reviewPager").textContent+$("#reviewPager").children.map(node=>node.textContent).join(""),/401/);
  assert.ok(calls.filter(call=>call.path==="/reviews/patients").length<=4,"thumb jump fetched skipped batches");
- await s.scroll(800);await s.scroll(995);assert.ok(s.rows().some(row=>row.dataset.mrn==="P1000"));assert.ok(s.rows().length<=20);
- const height=$("#reviewPatients").children.filter(row=>row.style.position!=="absolute").reduce((sum,row)=>sum+(parseFloat(row.style.height)||0),0);
- assert.equal(height,1000*56,"full-list scrollbar height changed with loaded windows");
+ await s.scroll(800);await s.scroll(995);assert.ok(s.rows().some(row=>row.dataset.mrn==="P1000"));assert.ok(s.rows().length<=25);
+ const height=$("#reviewPatients").children.filter(row=>row.style.position!=="absolute").reduce((sum,row)=>sum+(parseFloat(row.style.height)||(row.dataset.mrn?estimatedHeight:0)),0);
+ assert.equal(height,1000*estimatedHeight,"full-list scrollbar height changed with loaded windows");
  const listCount=calls.filter(call=>call.path==="/reviews/patients").length;await s.scroll(0);
  assert.ok(calls.filter(call=>call.path==="/reviews/patients").length>listCount,"offscreen summaries grew into an unbounded cache");
  assert.equal(s.rows()[0].dataset.mrn,"P1");assert.equal(s.rows()[0].getAttribute("aria-posinset"),"1");
@@ -166,12 +228,12 @@ async function focusSelectionAndNavigation(){
  const s=setup(),{ui,context:c,$}=s;await ui.load();
  const focused=s.rows()[1],button=focused.querySelector(".patient-select");button.focus();
  await s.scroll(400);assert.equal(c.document.activeElement,button);assert.equal($("#reviewPatients").contains(button),true,"virtualization detached keyboard focus");
- assert.equal(focused.style.position,"absolute");assert.ok(s.rows().length<=20);
+ assert.equal(focused.style.position,"absolute");assert.ok(s.rows().length<=25);
  const selectedRow=s.rows().find(row=>row.dataset.mrn==="P401"),checkbox=selectedRow.querySelector(".review-handoff-check");checkbox.run(true);
  await s.scroll(0);assert.equal(s.selection.has("P401"),true);assert.deepEqual(Object.keys(s.selection.get("P401")).sort(),["mrn","name"]);
  await ui.select("P40");assert.equal(ui.nav(1),"P41");await ui.move(1);assert.equal(c.reviewPatient,"P41");assert.equal(ui.patient().mrn,"P41");
- assert.ok(s.rows().some(row=>row.dataset.mrn==="P41"));assert.equal($("#reviewPatients").scrollTop,40*56);
- await ui.move(-1);assert.equal(c.reviewPatient,"P40");assert.equal($("#reviewPatients").scrollTop,39*56);
+ assert.ok(s.rows().some(row=>row.dataset.mrn==="P41"));assert.equal($("#reviewPatients").scrollTop,40*estimatedHeight);
+ await ui.move(-1);assert.equal(c.reviewPatient,"P40");assert.equal($("#reviewPatients").scrollTop,39*estimatedHeight);
  const selectedSoap=$("#reviewDetail").querySelector(".soap-record"),before=s.renders.length;
  await s.scroll(100);assert.equal(c.reviewPatient,"P40");assert.equal(s.renders.length,before);assert.equal($("#reviewDetail").querySelector(".soap-record"),selectedSoap);
  assert.equal($("#reviewDetail").querySelector(".review-page-context").hidden,false);
@@ -183,7 +245,7 @@ async function focusSelectionAndNavigation(){
 async function anchorAndOverlayRevision(){
  const s=setup(),{ui,context:c,$}=s;await ui.load();await s.scroll(80,17);
  s.all.splice(0,10);s.setTaskRevision(2);await ui.poll({revision:2,status:"completed"},c.work.revisions);
- assert.equal($("#reviewPatients").scrollTop,70*56+17,"collection update lost the visible MRN anchor");
+ assert.equal($("#reviewPatients").scrollTop,70*estimatedHeight+17,"collection update lost the visible MRN anchor");
  assert.ok(s.rows().some(row=>row.dataset.mrn==="P81"));assert.equal(c.reviewPatient,"P1");
  s.all.find(row=>row.mrn==="P81").sequence_no="REGISTERED";c.work.revisions.registrations++;const beforeRegistration=s.calls.length;
  await ui.poll({revision:2,status:"completed"},c.work.revisions);
@@ -199,12 +261,12 @@ async function changingCollectionDuringScroll(){
  assert.equal($("#reviewPatients").getAttribute("aria-busy"),"true");assert.match($("#reviewPager").children[0].textContent,/載入中/);
  const soap=$("#reviewDetail").querySelector(".soap-record"),notes=s.notes.length;
  s.all.splice(0,5);s.setTaskRevision(2);gate.resolve();await settle();
- assert.equal($("#reviewPatients").scrollTop,33*56+27,"neighbor-block collection change lost the current MRN anchor");
+ assert.equal($("#reviewPatients").scrollTop,33*estimatedHeight+27,"neighbor-block collection change lost the current MRN anchor");
  assert.ok(s.rows().some(row=>row.dataset.mrn==="P39"));assert.equal(c.reviewPatient,"P1");assert.equal(s.notes.length,notes);assert.equal($("#reviewDetail").querySelector(".soap-record"),soap);
  assert.equal($("#reviewPatients").getAttribute("aria-busy"),"false");assert.ok(s.calls.length<=5,"collection relocation kept reloading indefinitely");
  const polling=setup();await polling.ui.load();const pollGate=deferred();polling.listGates.set(0,pollGate);polling.setTaskRevision(2);
  const refresh=polling.ui.poll({revision:2,status:"completed"},polling.context.work.revisions);await tick();await polling.scroll(400,11);pollGate.resolve();await refresh;
- assert.equal(polling.$("#reviewPatients").scrollTop,400*56+11,"a slow poll restored an obsolete viewport over the user's scroll");assert.ok(polling.rows().some(row=>row.dataset.mrn==="P401"));
+ assert.equal(polling.$("#reviewPatients").scrollTop,400*estimatedHeight+11,"a slow poll restored an obsolete viewport over the user's scroll");assert.ok(polling.rows().some(row=>row.dataset.mrn==="P401"));
 }
 
 async function racingReads(){
@@ -294,4 +356,4 @@ async function prefetchCancellationAndSingleLane(){
  c.page="patients";ui.visibility();
 }
 
-(async()=>{await continuousWindow();await compactRailContract();await persistentHeaderAndAttention();await initialResultLayout();await focusSelectionAndNavigation();await anchorAndOverlayRevision();await changingCollectionDuringScroll();await racingReads();await sharedReadsAndBoundedMemory();await nearbyLocalPrefetch();await prefetchCompletenessAndRevision();await prefetchCancellationAndSingleLane();localReadContract();process.stdout.write("Review compact continuous list: initial full-height layout, fixed left controls, bounded DOM/cache, MRN anchors and local-only prefetch passed\n");})().catch(error=>{console.error(error);process.exitCode=1;});
+(async()=>{await continuousWindow();await compactRailContract();await measuredWindows();await persistentHeaderAndAttention();await initialResultLayout();await focusSelectionAndNavigation();await anchorAndOverlayRevision();await changingCollectionDuringScroll();await racingReads();await sharedReadsAndBoundedMemory();await nearbyLocalPrefetch();await prefetchCompletenessAndRevision();await prefetchCancellationAndSingleLane();localReadContract();process.stdout.write("Review continuous list: measured row heights, stable MRN and End anchors, bounded DOM/cache, and local-only prefetch passed\n");})().catch(error=>{console.error(error);process.exitCode=1;});

@@ -264,13 +264,17 @@ def self_test(report_path: Path) -> int:
                 assert structured["medications"][0]["frequency"] == "BID"
                 assert structured["orders"][0]["quantity"] == "1.00"
                 assert structured["chronic_prescription_periods"][0]["start_date"] == "2026-09-21"
+                mixed = synthetic_soap(VisitCase("TEST001", today(), "O", "ONE", "70", "眼科"), mixed_prescriptions=True)
+                assert [row.prescription_type for row in mixed.medications] == ["regular", "chronic"]
+                assert mixed.medications[1].chronic_period_index == 0 and not mixed.parsing_issues
+                assert mixed.chronic_prescription_periods[0].estimated_cycles == 3
                 from .tags import classification
 
                 scoped = Settings().update({"categories": [{"id": "ap", "name": "AP", "keywords": ["# Arrange"], "scope": "ap"}]})
                 hits = classification(record, scoped)
                 assert hits["matches"][0]["source_field"] == "assessment_plan" and not hits["tag_scope_issues"]
                 assert workspace.library_search({})["records"][0]["ap_preview"][0]["label"] == "A+P"
-                result["checks"].append("structured SOAP, printed orders/medications, chronic period, scoped tags and AP preview")
+                result["checks"].append("structured SOAP, printed orders/medications, mixed chronic prescriptions, scoped tags and AP preview")
                 assert not any(c[1] in {"numeric", "registrations", "basic-info"} for c in BotSyntheticSDK.calls)
                 result["checks"].append("same-day SOAP, cross-doctor aliases, fallback, task scope, account isolation and lazy extensions")
                 numeric = workspace.review.start({"kind": "numeric", "mrn": "TEST001", "record_id": task["items"][0]["records"][0]["id"]})["task_id"]

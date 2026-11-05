@@ -1,6 +1,6 @@
 # 系統架構
 
-本文對齊 6.12.2，沿用本機 HTTP、每帳號 SQLite 與 SDK 閘道。SDK 固定為 0.23.5／`67755b32404a118c8507f1d6b6f5c4ca2219f77d`，完整 commit 同步列於專案及建置鎖定檔。
+本文說明自 6.12.2 沿用的本機 HTTP、每帳號 SQLite 與 SDK 閘道。SDK 的固定版本以專案及建置鎖定檔中的完整 commit 為準。
 
 `sheet_statistics.py` 共用月份／封存讀取列與永久 ID 去重結果，分別計算排程列數、眼數、拆項術式及型號眼數。`report` 保留原篩選與列數欄位，新增 `monthly`、`eye_count`、型號／術式 `eye_count`、`review_items` 與分類缺漏。取消判定共用實際顯示格式，包含條件格式與富文字；統計不呼叫院內 SDK、不回寫臨床欄位。
 

@@ -23,7 +23,7 @@ from vghks_sdk.core.tls import create_requests_session
 
 from .clinical_identity import classify_opd_registration, select_registration_visits
 from .connection_state import failure_message, require_ready, should_pause
-from .encoding import ClinicalTransport
+from .encoding import ClinicalTransport, observe_prq_decoding
 from .progress import run_progress
 from .sdk_orders import configure_orders
 from .settings import Settings, timestamp
@@ -200,7 +200,16 @@ def run_scan(state: ScanState, settings: Settings, start: date, end: date, sdk_f
         state.update(status="paused" if should_pause(exc) else "failed", message=message)
 
 
-def _collect(sdk, state, settings, start, end):
+def read_opd_patients(sdk, account, day):
+    with observe_prq_decoding("opd") as evidence:
+        rows = _checked_list(sdk.opd.get_doctor_patients(account, day), OutpatientPatient)
+    return rows, {"source": "remote", **evidence}
+
+
+def _collect(sdk, state, settings, start, end, *, load_patients=None):
+    if load_patients is None:
+        def load_patients(account, day):
+            return read_opd_patients(sdk, account, day)
     grouped = defaultdict(list)
     seen = set()
     for offset in range((end - start).days + 1):
@@ -208,9 +217,7 @@ def _collect(sdk, state, settings, start, end):
         state.check_cancel()
         state.update(stage="registrations", message=f"正在取得 {day.isoformat()} 門診清單…")
         try:
-            rows = _checked_list(
-                sdk.opd.get_doctor_patients(settings.username, day), OutpatientPatient,
-            )
+            rows, evidence = load_patients(settings.username, day)
         except StorageError:
             raise
         except Exception as exc:
@@ -220,6 +227,7 @@ def _collect(sdk, state, settings, start, end):
             if should_pause(exc):
                 raise
             continue
+        field_labels = {"name": "姓名", "sex": "性別", "age": "年齡"}
         for row in rows:
             state.check_cancel()
             identity = (day, row.mrn, row.name, row.visit_date, row.section_code, row.room,
@@ -230,11 +238,15 @@ def _collect(sdk, state, settings, start, end):
             state.count(registrations=1)
             scope = classify_opd_registration(row, doctor_card=settings.username)
             state.archive("registrations", {**asdict(row), "visit_date": row.visit_date.isoformat(), "query_date": day.isoformat(), "scope": scope})
-            affected = [label for label, value in (("姓名", row.name), ("性別", row.sex), ("年齡", row.age))
-                        if "\ufffd" in value]
+            affected = [field for field in field_labels if "\ufffd" in getattr(row, field)]
             if affected:
-                message = "門診清單的" + "、".join(affected) + "含無法解碼的字元，可按「更新門診清單」重新取得。"
-                state.issue("文字編碼", message, code="TEXT_DECODE_INCOMPLETE", mrn=row.mrn, day=day.isoformat())
+                labels = "、".join(field_labels[field] for field in affected)
+                state.issue(
+                    "文字編碼", f"門診清單的{labels}含替代字元，可按「更新門診清單」重新取得。",
+                    code="TEXT_DECODE_INCOMPLETE", mrn=row.mrn, day=day.isoformat(),
+                    query={"phase": "opd.get_doctor_patients", "label": "門診清單 · 文字編碼",
+                           "affected_fields": affected, "encoding_evidence": evidence},
+                )
             if row.visit_date != day:
                 state.count(unknown=1)
                 state.issue("門診清單", "回傳日期與查詢日期不同，未讀取病歷。", mrn=row.mrn, day=day.isoformat())
@@ -308,7 +320,8 @@ def _read_patients(sdk, state, settings, grouped, *, library=None, force=False):
                     state.add_record(cached)
                     state.count(soap_cached=1)
                     continue
-                soap = sdk.records.get_soap(case)
+                with observe_prq_decoding("soap") as evidence:
+                    soap = sdk.records.get_soap(case)
                 if (not isinstance(soap, SoapRecord) or soap.case.identity != case.identity
                         or soap.case.patient_mrn != mrn):
                     raise ParseError("SOAP case mismatch", code="SOAP_CASE_MISMATCH")
@@ -332,7 +345,12 @@ def _read_patients(sdk, state, settings, grouped, *, library=None, force=False):
                         **payload, **classification(payload, settings),
                 })
                 if "\ufffd" in text:
-                    state.issue("文字編碼", "SOAP 含無法解碼的字元，請核對原文。", code="TEXT_DECODE_INCOMPLETE", mrn=mrn, day=case.visit_date.isoformat())
+                    state.issue(
+                        "文字編碼", "SOAP 含替代字元，請核對院方資料。",
+                        code="TEXT_DECODE_INCOMPLETE", mrn=mrn, day=case.visit_date.isoformat(),
+                        query={"phase": "records.get_soap", "label": "SOAP 病歷 · 文字編碼",
+                               "affected_fields": ["soap"], "encoding_evidence": {"source": "remote", **evidence}},
+                    )
             except StorageError:
                 raise
             except Exception as exc:

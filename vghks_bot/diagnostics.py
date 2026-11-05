@@ -19,6 +19,7 @@ from .settings import timestamp
 
 PHASE_NAMES = {
     "auth.check": "登入與連線檢查", "auth.login": "登入", "auth.reconnect": "重新連線",
+    "opd.get_doctor_patients": "門診清單",
     "patients.get_demographics": "病人基本資料", "patients.get_basic_info": "病人身分與聯絡資料",
     "patients.resolve_identity": "病人身分核對",
     "records.get_visit_cases": "就診索引", "records.get_soap": "SOAP 病歷",
@@ -162,6 +163,12 @@ def failure_summary(row):
     elif row.get("recovered"):
         reason = "查詢曾發生異常，後續重試或連線恢復後已取得結果。"
         action = "可繼續使用；詳細失敗與恢復過程保留於 DEBUG。"
+    if code == "TEXT_DECODE_INCOMPLETE":
+        impact = "查詢結果已保存；含替代字元的欄位可能不完整。"
+        if phase == "opd.get_doctor_patients":
+            action = "可按「更新門診清單」重新取得；若仍有替代字元，請核對院方資料。"
+        elif phase == "records.get_soap":
+            action = "請核對院方 SOAP 的相應內容。"
     stack = error.get("stack") or []
     transport = row.get("transport") or {}
     return {"id": row.get("id", ""), "mrn": row.get("mrn", ""), "phase": phase, "label": label or "未記錄階段",
@@ -255,6 +262,10 @@ class Diagnostics:
         limit = 1000 if export else 100
         selected = rows[:limit]
         failures = failure_summaries(selected, attempts, events, include_events=not mrn)
+        if export:
+            for warning in (*attempts, *failures):
+                if warning.get("code") == "TEXT_DECODE_INCOMPLETE":
+                    warning.pop("mrn", None)
         return {"items": selected, "total": len(rows), "saved_attempts": attempts,
                 "sdk_events": events, "failures": failures,
                 "task": {"source": source, **{k: task[k] for k in (
@@ -344,6 +355,9 @@ class Diagnostics:
                 "evidence/operation-*.jsonl：失敗、重試或 session 恢復的詳細時序，含 HTTP、轉址、錯誤與頁面結構。\n"
                 "evidence/response-*.bin／.html：失敗回應與必要的前置登入檢查；帳密、token 等會遮罩，可能含醫療資料。\n"
                 "成功查詢平時只保留彙總，成功的臨床回應不另存；恢復後保留精簡操作摘要。\n"
+                "文字編碼警告的 encoding_evidence 僅描述該次門診清單或 SOAP 回應。原始位元組只保留可辨識的固定替代字元標記；解碼器判定無效的位元組以 XX 遮罩。\n"
+                "標記與遮罩反映整份回應，無法定位受影響欄位的原始字元。兩者可能同時出現；若皆無資料，仍可能是 HTML 或 JavaScript 解析後才產生替代字元。\n"
+                "本機快取沒有原始回應的編碼證據。\n"
                 "可將 .html 交給相同版本 SDK 的純解析函式重現問題；原始內容不會執行。\n"
                 "遮罩、截斷、容量限制與保存失敗請核對 transport.evidence 及 export，不應將缺少內容視為院方空回應。\n"
                 "只包含目前帳號及所選任務／病人的失敗證據；舊版未保存的內容無法補回。\n")

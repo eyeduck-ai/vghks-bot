@@ -386,7 +386,7 @@ function renderReviewHeader(value){
 }
 async function loadReview(options){return window.ReviewPaging.load(options);}
 function renderReviewPatients(values,viewport=null){
- const patients=$("#reviewPatients"),scroll=patients.scrollTop,focused=document.activeElement;
+ const patients=$("#reviewPatients"),scroll=viewport?.scrollTop??patients.scrollTop,focused=document.activeElement;
  const focusMrn=focused?.dataset?.mrn||focused?.closest?.(".review-patient-row")?.dataset.mrn,focusCheck=focused?.className?.includes("review-handoff-check");
  const existing=new Map([...patients.children].filter(row=>row.dataset.mrn).map(row=>[row.dataset.mrn,row])),rows=[];
  patients.classList.toggle("is-virtual",!!viewport);
@@ -407,11 +407,11 @@ function renderReviewPatients(values,viewport=null){
    button.append(heading,node("span",[p.mrn,attention].filter(Boolean).join(" · "),"caption review-patient-id"+(["error","failed","partial"].includes(p.status)?" is-error":"")));
    if(dates.length){const datesLabel=node("span",dates.join("、"),"caption review-patient-dates");datesLabel.title=dates.join("、");button.append(datesLabel);}
    if(viewport){
-    const manualTags=p.manual_tags||[],tagCount=tags.length+manualTags.length;
+    const manualTags=p.manual_tags||[],tagCount=tags.length+manualTags.length,tagLimit=8;
     if(tagCount){
      const tagLine=node("span",undefined,"review-patient-tags");
-     tagLine.append(badges(tags.slice(0,2)),badges(manualTags.slice(0,Math.max(0,2-tags.length)),true));
-     if(tagCount>2)tagLine.append(node("span","+"+(tagCount-2),"caption"));
+     tagLine.append(badges(tags.slice(0,tagLimit)),badges(manualTags.slice(0,Math.max(0,tagLimit-tags.length)),true));
+     if(tagCount>tagLimit)tagLine.append(node("span","+"+(tagCount-tagLimit),"caption"));
      tagLine.title=button.title;button.append(tagLine);
     }
    }else button.append(badges(tags),badges(p.manual_tags,true));
@@ -419,20 +419,20 @@ function renderReviewPatients(values,viewport=null){
   }
   row.querySelector(".patient-select").classList.toggle("active",p.mrn===reviewPatient);
   const checkbox=row.querySelector(".review-handoff-check");checkbox.checked=!!window.ReviewHandoff?.has(p.mrn);checkbox.disabled=!!root.read_only;
-  if(viewport){const index=viewport.positions[p.mrn];row.dataset.reviewIndex=String(index);row.style.position="";row.style.top="";row.style.height=viewport.rowHeight+"px";row.setAttribute("role","listitem");row.setAttribute("aria-posinset",String(index+1));row.setAttribute("aria-setsize",String(viewport.total));}
+  if(viewport){const index=viewport.positions[p.mrn];row.dataset.reviewIndex=String(index);row.style.position="";row.style.top="";row.setAttribute("role","listitem");row.setAttribute("aria-posinset",String(index+1));row.setAttribute("aria-setsize",String(viewport.total));}
   rows.push(row);
  }
  if(viewport){
   const positionRows=new Map(rows.map(row=>[Number(row.dataset.reviewIndex),row])),slots=[];
   const spacer=(kind,height)=>{let value=patients.querySelector(".review-spacer-"+kind);if(!value){value=node("div",undefined,"review-list-spacer review-spacer-"+kind);value.setAttribute("aria-hidden","true");}value.style.height=Math.max(0,height)+"px";return value;};
-  slots.push(spacer("before",viewport.start*viewport.rowHeight));
+  slots.push(spacer("before",viewport.before));
   for(let index=viewport.start;index<viewport.end;index++){
    let row=positionRows.get(index);
-   if(!row){row=node("div","載入本機病人資料…","review-patient-placeholder caption");row.style.height=viewport.rowHeight+"px";row.setAttribute("aria-hidden","true");}
+   if(!row){row=node("div","載入本機病人資料…","review-patient-placeholder caption");row.style.height=viewport.heightAt(index)+"px";row.setAttribute("aria-hidden","true");}
    slots.push(row);
   }
-  slots.push(spacer("after",(viewport.total-viewport.end)*viewport.rowHeight));
-  if(viewport.pin&&Number.isInteger(viewport.pin.index)&&existing.has(viewport.pin.mrn)){const pinned=existing.get(viewport.pin.mrn);pinned.style.position="absolute";pinned.style.top=viewport.pin.index*viewport.rowHeight+"px";slots.push(pinned);}
+  slots.push(spacer("after",viewport.after));
+  if(viewport.pin&&existing.has(viewport.pin.mrn)){const pinned=existing.get(viewport.pin.mrn);pinned.style.position="absolute";pinned.style.top=viewport.pin.top+"px";slots.push(pinned);}
   rows.splice(0,rows.length,...slots);
  }
  for(const child of [...patients.children])if(!rows.includes(child))child.remove();

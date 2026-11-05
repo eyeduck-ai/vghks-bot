@@ -4,6 +4,8 @@ from __future__ import annotations
 from datetime import timedelta
 from html import escape
 
+from vghks_sdk import __version__ as sdk_version
+
 from .selftest_session import MRN, SessionScenario
 from .settings import today
 
@@ -67,7 +69,7 @@ def check_sdk_registrations(directory):
         assert result["status"] == "completed", result
         saved, = result["items"]
         assert saved["registration_schema"] == REGISTRATION_SCHEMA
-        assert saved["sdk_version"] == "0.23.5"
+        assert saved["sdk_version"] == sdk_version
         rows = saved["payload"]
         assert len(rows) == 5 and [row["no_show"] for row in rows] == [None, True, None, None, None]
         assert rows[0]["sequence_no"] == "001" and rows[0]["expected_time"] == "09:30"

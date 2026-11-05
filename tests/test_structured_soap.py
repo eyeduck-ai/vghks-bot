@@ -11,7 +11,7 @@ from vghks_bot.bot import BotApplication
 from vghks_bot.selftest_bot import BotSyntheticSDK, wait_task
 from vghks_bot.selftest_soap import synthetic_soap
 from vghks_bot.settings import Settings
-from vghks_bot.soap_data import snapshot
+from vghks_bot.soap_data import display_chronic_prescriptions, snapshot
 from vghks_bot.soap_preview import ap_preview
 from vghks_bot.tags import classification, extract_tags
 
@@ -42,6 +42,33 @@ class StructuredSoapTests(unittest.TestCase):
         self.assertEqual(data["parsing_issues"], [])
         self.assertNotIn("transient-not-clinical", json.dumps(data))
         self.assertNotIn("case", data)
+
+    def test_mixed_chronic_prescriptions_can_be_displayed_from_a_legacy_snapshot(self):
+        record = snapshot(synthetic_soap(CASE, mixed_prescriptions=True))
+        data = record["soap_structure"]
+        self.assertEqual([row["prescription_type"] for row in data["medications"]], ["regular", "chronic"])
+        self.assertEqual(data["medications"][1]["chronic_period_index"], 0)
+        self.assertEqual(data["chronic_prescription_periods"][0]["estimated_cycles"], 3)
+        self.assertEqual(data["chronic_prescription_periods"][0]["estimated_cycle_days"], 28)
+        self.assertEqual(data["parsing_issues"], [])
+        legacy = {**data, "medications": [{k: v for k, v in row.items() if k not in
+                                            {"prescription_type", "chronic_period_index"}} for row in data["medications"]],
+                  "chronic_prescription_periods": [], "parsing_issues": ["SOAP_MEDICATION_ROW_UNRECOGNIZED"]}
+        record["soap_structure"] = legacy
+        record.update(classification(record, rule("medications", "SYNTHETIC CHRONIC DROP")))
+        old_matches = record["matches"]
+        self.assertEqual(old_matches[0]["source_index"], 1)
+        display_chronic_prescriptions(record)
+        self.assertEqual(record["soap_structure"]["medications"], data["medications"])
+        self.assertEqual(record["soap_structure"]["chronic_prescription_periods"], data["chronic_prescription_periods"])
+        self.assertEqual(record["matches"], old_matches)
+        self.assertEqual(record["tag_scope_issues"], [])
+        self.assertEqual(legacy["parsing_issues"], ["SOAP_MEDICATION_ROW_UNRECOGNIZED"])
+
+        incomplete = {**record, "soap_structure": {**legacy, "medications": legacy["medications"][:1]}}
+        unchanged = incomplete["soap_structure"]
+        display_chronic_prescriptions(incomplete)
+        self.assertIs(incomplete["soap_structure"], unchanged)
 
     def test_each_tag_scope_only_reads_its_own_source(self):
         pairs = {"s": "主訴文字", "o": "Va OD", "ap": "# Arrange",

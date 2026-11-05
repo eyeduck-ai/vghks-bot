@@ -28,6 +28,7 @@ from .report_cache import branch_complete, result_complete
 from .scanner import Cancelled, safe_failure
 from .sdk_orders import assess_order_index, order_index_complete
 from .settings import today
+from .soap_data import display_chronic_prescriptions
 from .soap_data import snapshot as soap_snapshot
 from .storage import StorageError
 
@@ -309,6 +310,8 @@ class ReviewHistory:
     def _read(self, values):
         _, mrn, resource, reference = self.scope(values)
         data, updated = self._stored(mrn, resource, reference, cataract=bool(values.get("cohort_id")))
+        if resource == "visit_soap" and data is not None:
+            display_chronic_prescriptions(data)
         index_steps = self._index_steps(mrn, resource, reference)
         issues = [issue for step in index_steps if step for issue in step.get("assessment", {}).get("issues", [])]
         complete = (all(order_index_complete(step) for step in index_steps) if index_steps else

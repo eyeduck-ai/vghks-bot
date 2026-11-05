@@ -2,7 +2,7 @@
 
 [![Windows build](https://github.com/eyeduck-ai/vghks-bot/actions/workflows/windows.yml/badge.svg)](https://github.com/eyeduck-ai/vghks-bot/actions/workflows/windows.yml)
 
-VGHKS 院內系統的本機工作台：Windows 單檔 EXE、瀏覽器介面與 SQLite，透過 [vghks-sdk](https://github.com/eyeduck-ai/vghks-sdk) 存取院內功能。版本 **6.15.4**，共用刀表契約 **1.3.0**。
+VGHKS 院內系統的本機工作台：Windows 單檔 EXE、瀏覽器介面與 SQLite，透過 [vghks-sdk](https://github.com/eyeduck-ai/vghks-sdk) 存取院內功能。版本 **6.15.5**，共用刀表契約 **1.3.0**。
 
 ## 下載與更新
 
@@ -46,4 +46,4 @@ Windows x64、Python 3.11、Git 與 Node.js 24：
 ./build.ps1
 ```
 
-完整合成測試、來源自測、EXE 自測及封裝核對通過後，產物位於 `dist/`。CI 的 PR 執行完整驗證；main 另建置主程式，版本標籤沿用同一 commit 的已驗證產物發布。SDK 固定為 0.23.5／`67755b3`，SDK 與共用核心都核對實際完整 Git commit。
+完整合成測試、來源自測、EXE 自測及封裝核對通過後，產物位於 `dist/`。CI 的 PR 執行完整驗證；main 另建置主程式，版本標籤沿用同一 commit 的已驗證產物發布。SDK 固定為 0.23.6／`cfdf041`，SDK 與共用核心都核對實際完整 Git commit。

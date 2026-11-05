@@ -12,6 +12,7 @@ from .bounded_search import search as regex_search
 from .demographics import merge_demographics
 from .migrations import migrate, statements
 from .settings import today
+from .soap_data import display_chronic_prescriptions
 
 META_FIELDS = ("id", "kind", "name", "account_id", "set_id", "created_at", "mode", "cutoff",
                "department_keyword", "department_keywords", "department_filter", "department",
@@ -382,6 +383,7 @@ class ReviewPages:
             task_matches = self.search_matches(db, key, query, mode) if query else {}
             matches = task_matches.get(mrn, {})
             for index, record in enumerate(records):
+                display_chronic_prescriptions(record)
                 record.update(highlights=[list(span) for span in matches.get(index, [])], search_hit=not query or index in matches)
             where, args = self.matching(db, key, query, mode, tag, matches=task_matches)
             return {"task_id": key, "patient": patient, "revision": revision, **self.navigation(db, key, mrn, where, args),
