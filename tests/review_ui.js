@@ -133,6 +133,34 @@ async function activityTests(){
  assert.ok(profileView,"profile subtask did not expose its saved data action");await profileView.run();
  assert.deepEqual(openedProfiles,[["PROFILE1","profile"]]);
 }
+async function editLoginNoteTests(){
+ const s=surface(),c=s.context,$=s.$,notesSaved=[];
+ let saved="",fail=true;
+ Object.assign(c,{epoch:0,draftTimer:null,draftValue:()=>({}),manualLookup:{reset(){}},manualErrors:{clear(){}},loginFields(){},
+  api:async(path,values)=>{
+   if(path==="/reviews/notes/summary")return {task_id:"R1",note_count:Number(!!saved)};
+   if(path==="/reviews/notes/page")return {task_id:"R1",patients:[{mrn:"P1",text:saved}]};
+   if(path==="/reviews/notes/save"){if(fail)throw new Error("synthetic save failure");saved=values.text;notesSaved.push(saved);return {};}
+   if(path==="/draft/save")return {};
+   throw new Error(path);
+  }
+ });
+ const source=fs.readFileSync("vghks_bot/static/bot.js","utf8");
+ vm.runInContext(source.slice(source.indexOf("function showEntry("),source.indexOf("async function login("))+
+  source.slice(source.indexOf('$("#editLogin").addEventListener'),source.indexOf('$("#saveConcurrency").addEventListener')),c);
+ s.run("vghks_bot/static/review-notes.js");
+ const notes=c.window.ReviewNotesUI;
+ await notes.load("R1",{mrns:["P1"]});
+ $("#reviewDetail").append(notes.control({mrn:"P1"}).panel);
+ const input=$("#reviewNoteInput");input.value="SYNTHETIC UNSAVED NOTE";await input.emit("input");
+ await assert.rejects(()=>$("#editLogin").emit("click"),/有備註尚未儲存/);
+ assert.equal(c.account,"ACCOUNT");assert.equal(input.value,"SYNTHETIC UNSAVED NOTE");
+ assert.equal(saved,"","a failed save was treated as durable");
+ fail=false;await $("#editLogin").emit("click");
+ assert.deepEqual(notesSaved,["SYNTHETIC UNSAVED NOTE"]);
+ assert.equal(c.account,"");assert.equal($("#entry").hidden,false);
+}
+
 async function externalNoteTests(){
  const s=surface(),c=s.context,$=s.$,calls=[];let serverText="first",saveFailure=false;
  c.work.revisions={review_note:0};c.setIcon=(button,name,label)=>{button.iconLabel=label;};
@@ -762,5 +790,61 @@ function syncDetailsTests(){
  assert.ok(batch);assert.equal(batch.open,false);assert.deepEqual(batch.querySelectorAll("pre").map(node=>node.textContent),[
   "SOAP1 · SOAP_VERSION_A","SOAP2 · SOAP_VERSION_B"]);
 }
+async function earningsViewTests(){
+ const s=surface(),c=s.context,$=s.$,calls=[],detail=deferred(),exported=deferred();
+ let scoped=false,hasArchive=true,confirm=true;
+ c.epoch=0;c.work.online=true;
+ c.Option=function(label,value){const option=s.node("option",label);option.value=value;return option;};
+ c.JobProgress.visible=()=>true;c.check=()=>s.node("input");
+ c.table=(_headers,rows)=>{const element=s.node("table");for(const row of rows)for(const cell of row)if(typeof cell==="object")element.append(cell);return element;};
+ c.confirmDelete=()=>typeof confirm==="boolean"?Promise.resolve(confirm):confirm.promise;
+ c.dialog=id=>{$("#"+id).open=true;};$("#dataDialog").close=()=>{$("#dataDialog").open=false;};
+ c.api=async(path,body)=>{
+  calls.push({path,body});
+  if(path.endsWith("/overview")){
+   const view=body.view||(scoped?"active":"archive");
+   const reports=view==="archive"&&!hasArchive?[]:[{id:view,kind:"performance",month:view==="archive"?"2026-10":"2026-11",period:"PERIOD",version_count:1}];
+   return {view,has_archive:hasArchive,reports,total:reports.length,months:reports.map(report=>report.month),tasks:[],catalogs:[],
+    credentials:{configured:scoped},monitor:view==="active"?{configured:scoped}:null};
+  }
+  if(path.endsWith("/credentials")){scoped=true;return {};}
+  if(path.endsWith("/detail"))return detail.promise;
+  if(path.endsWith("/export"))return exported.promise;
+  if(path.endsWith("/delete")){hasArchive=false;return {};}
+  throw new Error(path);
+ };
+ s.run("vghks_bot/static/earnings.js");
+ const ui=c.window.Earnings, choose=async view=>{$("#earningsView").value=view;await $("#earningsView").emit("change");},
+  selection=()=>$("#earningsSelectAll").emit("change",{target:{checked:true}});
+ ui.reset();await ui.open();
+ assert.equal("view" in calls[0].body,false,"an initial account hard-coded its report view");
+ assert.equal($("#earningsView").value,"archive");assert.equal($("#earningsViewField").hidden,false);
+ for(const id of ["earningsCaptureAll","earningsOptions","earningsMonitorSettings"])assert.equal($("#"+id).disabled,true);
+ assert.equal($("#earningsCredentials").disabled,false);
+ await $("#earningsCaptureAll").emit("click");
+ assert.equal(calls.length,1,"archive started a portal query");
+ await selection();$("#earningsKind").value="payroll";$("#earningsMonth").value="2026-10";
+ const staleDetail=$("#earningsReports").querySelector("button").run(),staleExport=$("#earningsExportJson").emit("click");
+ assert.ok(calls.filter(call=>/\/(detail|export)$/.test(call.path)).every(call=>call.body.view==="archive"));
+ await choose("active");detail.resolve({});exported.resolve({});await Promise.all([staleDetail,staleExport]);
+ assert.equal($("#earningsKind").value,"");assert.equal($("#earningsMonth").value,"");assert.equal($("#earningsExportJson").disabled,true);
+ assert.equal($("#earningsDetail").firstElementChild.textContent,"選擇已保存報表檢閱內容。");
+
+ await choose("archive");await selection();
+ confirm=deferred();const staleDelete=$("#earningsDelete").emit("click");await tick();
+ await choose("active");confirm.resolve(true);await staleDelete;
+ assert.equal(calls.some(call=>call.path.endsWith("/delete")),false,"a stale confirmation deleted the previously selected archive");
+
+ await choose("archive");await selection();await $("#earningsCredentials").emit("click");
+ const form=$("#dataContent").querySelector("form"),[identity,password]=form.querySelectorAll("input");
+ identity.value="SYNTHETIC";password.value="SYNTHETIC";await form.emit("submit");await tick();
+ assert.equal($("#earningsView").value,"active");assert.equal("view" in calls.at(-1).body,false,"changing credentials retained the old report view");
+ assert.equal($("#earningsDelete").disabled,true);
+
+ await choose("archive");await selection();confirm=true;await $("#earningsDelete").emit("click");
+ const deleted=calls.find(call=>call.path.endsWith("/delete"));
+ assert.equal(deleted.body.view,"archive");assert.deepEqual(Array.from(deleted.body.ids),["archive"]);
+ assert.equal($("#earningsView").value,"active");assert.equal($("#earningsViewField").hidden,true,"an empty archive stranded the user in a hidden view");
+}
 module.exports={surface,deferred,tick};
-if(require.main===module)(async()=>{await noteTests();await externalNoteTests();await activityTests();await profileTests();await historyLoadingTests();layoutTests();await identifierTests();await manualSelectionTests();await toolSelectionTests();await handoffTests();await sheetSyncTests();await destinationTests();await fuTests();syncDetailsTests();process.stdout.write("Review UI race, identifiers, hierarchy, patient profile, loading, viewport, handoff, FU and sheet sync checks passed\n");})().catch(error=>{console.error(error);process.exitCode=1;});
+if(require.main===module)(async()=>{await noteTests();await editLoginNoteTests();await externalNoteTests();await activityTests();await profileTests();await historyLoadingTests();layoutTests();await identifierTests();await manualSelectionTests();await toolSelectionTests();await handoffTests();await sheetSyncTests();await destinationTests();await fuTests();syncDetailsTests();await earningsViewTests();process.stdout.write("Review UI race, identifiers, hierarchy, patient profile, loading, viewport, handoff, FU and sheet sync checks passed\n");})().catch(error=>{console.error(error);process.exitCode=1;});

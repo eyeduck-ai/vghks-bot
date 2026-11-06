@@ -13,7 +13,7 @@ window.ReviewHistoryUI=(()=>{
  function clearView(){reportView?.gallery.dispose();frame?.navigation.remove();frame=orderView=reportView=null;}
  function reset(){clearView();modal().classList.remove("report-view-dialog");context=null;stack=[];taskId="";signature=renderSignature="";loadingStarted=0;sequence++;}
  function active(){return modal().open&&modal().dataset.view==="history"&&context;}
- function assetUrl(asset){return "/api/accounts/"+encodeURIComponent(account)+"/analysis/asset?id="+encodeURIComponent(asset.digest);}
+ function assetUrl(asset){return window.LocalSession.resourceURL("/api/accounts/"+encodeURIComponent(account)+"/analysis/asset?id="+encodeURIComponent(asset.digest));}
  function action(label,callback){const button=btn(label,callback,"quiet");button.classList.add("history-action");return button;}
  function showError(error){
   const content=panel();content.querySelector(".clinical-loading")?.remove();

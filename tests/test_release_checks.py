@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+from tools import verify_bundle
 from tools.verify_repository import (
     check_contents,
     check_core_installation,
@@ -12,6 +13,7 @@ from tools.verify_repository import (
     check_paths,
     check_sdk_installation,
     source_paths,
+    tracked_directory,
 )
 
 
@@ -80,3 +82,31 @@ class ReleaseBoundaryTests(unittest.TestCase):
                 "-----BEGIN PRIVATE KEY-----\n" + "A" * 32, encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "Private key material.*new_module.py"):
                 check_contents(root, source_paths(root))
+
+    def test_package_allowlist_and_bundle_validation_reject_local_files_and_private_defaults(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "init", "--quiet"], cwd=root, check=True, capture_output=True)
+            (root / ".gitignore").write_text("service-account*.json\n", encoding="utf-8")
+            static = root / "vghks_bot/static"
+            static.mkdir(parents=True)
+            script = static / "app.js"
+            script.write_text("'use strict';", encoding="utf-8")
+            subprocess.run(["git", "add", "vghks_bot/static/app.js"], cwd=root, check=True, capture_output=True)
+            (static / "draft.js").write_text("// not staged", encoding="utf-8")
+            (static / "service-account-synthetic.json").write_text("{}", encoding="utf-8")
+            self.assertEqual(tracked_directory("vghks_bot/static", root=root), [script])
+            base = {"vghks_bot/static/app.js": script.read_bytes(),
+                    "vghks_bot/defaults.json": b'{"username":"", "password":"synthetic"}'}
+            for files, error in (
+                ({**base, "vghks_bot/static/service-account-synthetic.json": b"{}"}, "static file names"),
+                (base, "login defaults must be blank"),
+            ):
+                archive = Mock(toc=files)
+                archive.extract.side_effect = files.__getitem__
+                with (self.subTest(error=error),
+                      patch.object(verify_bundle, "CArchiveReader", return_value=archive),
+                      patch.object(verify_bundle, "check_sdk_installation", return_value="0" * 40),
+                      patch.object(verify_bundle, "check_core_installation", return_value="1" * 40),
+                      self.assertRaisesRegex(ValueError, error)):
+                    verify_bundle.verify(root / "synthetic.exe", root=root)

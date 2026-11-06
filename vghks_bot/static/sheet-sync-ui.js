@@ -3,10 +3,10 @@
 $("#toolSourcePanel").insertAdjacentHTML("beforeend",'<section id="sheetSyncPanel" class="feature-controls" aria-labelledby="sheetSyncTitle" hidden><div class="section-heading"><h2 id="sheetSyncTitle">當日門診 → 線上刀表</h2><div class="actions"><button id="sheetSyncSettings" type="button" aria-haspopup="dialog">排程設定</button><button id="sheetSyncRun" type="button" class="primary">立即同步</button><button id="sheetSyncRefresh" type="button">重新整理</button></div></div><p id="sheetSyncStatus" class="caption" role="status"></p><details id="sheetSyncPendingDetails"><summary id="sheetSyncPendingTitle">待確認項目</summary><div id="sheetSyncPending"></div></details></section>');
 document.body.insertAdjacentHTML("beforeend",'<dialog id="sheetSyncDialog" aria-labelledby="sheetSyncDialogTitle"><form id="sheetSyncForm"><div class="dialog-heading"><h2 id="sheetSyncDialogTitle">刀表更新排程</h2><button type="button" data-close="sheetSyncDialog" aria-label="關閉刀表更新排程">×</button></div><label class="check"><input id="sheetSyncEnabled" type="checkbox">定期同步我的當日門診 SOAP</label><label>間隔（分鐘）<input id="sheetSyncInterval" type="number" min="5" max="1440" value="60" required></label><p class="caption">只在主程式開啟、此帳號在線時執行。來源固定為台北時間當天的我的門診；有衝突或缺少必要資料時保留待確認。</p><p class="caption">日曆同步由獨立監控程式執行。</p><div class="actions"><button id="sheetSyncSave" type="submit" class="primary">保存排程</button></div></form></dialog>');
 window.SheetSyncUI=(()=>{
- let current=null,owner="",visible=false,reading=null,lastRead=0;
+ let owner="",visible=false,reading=null,lastRead=0;
  const call=(path,values={})=>api("/sheet-sync/"+path,values);
  function render(value){
-  current=value;const settings=value.settings||{},last=value.last_result;
+  const settings=value.settings||{},last=value.last_result;
   $("#sheetSyncStatus").textContent=[value.running?"正在同步":settings.enabled?"排程已啟用":"排程未啟用",
    value.online===false?"帳號離線":"",settings.enabled?"每 "+(settings.interval_minutes||60)+" 分鐘":"",
    settings.last_run_at?"上次 "+time(settings.last_run_at):"",
@@ -26,7 +26,15 @@ window.SheetSyncUI=(()=>{
   for(const entry of pending){
    const row=node("section",undefined,"tracking-panel"),actions=node("div",undefined,"actions");
    row.append(node("strong",(entry.name||"姓名未提供")+" · "+entry.mrn),node("p",entry.reason||"請核對來源與刀表內容。","caption"));
-   if(entry.cohort_id)actions.append(btn("開啟候選",()=>openModule(entry.cohort_id,"surgery",{focusMrn:entry.mrn})));
+   if(entry.kind==="source")row.append(node("p","來源日期 · "+entry.day,"caption"));
+   if(entry.kind==="source"&&entry.can_retry){
+    const retry=btn("重新取得此病人 SOAP",async()=>{
+     retry.disabled=true;
+     try{await call("review",{id:entry.id,action:"retry_source"});await load(true);say("已排入重新取得此病人的 SOAP");}
+     catch(error){if(retry.isConnected){retry.disabled=false;retry.focus();}throw error;}
+    });
+    retry.disabled=!!root.read_only||!!value.running||value.online===false;actions.append(retry);
+   }else if(entry.cohort_id)actions.append(btn("開啟候選",()=>openModule(entry.cohort_id,"surgery",{focusMrn:entry.mrn})));
    const dismiss=btn("移除待確認",async()=>{await call("review",{id:entry.id,action:"dismiss"});await load(true);},"quiet");
    dismiss.disabled=!!root.read_only;actions.append(dismiss);row.append(actions);area.append(row);
   }
@@ -34,7 +42,7 @@ window.SheetSyncUI=(()=>{
  }
  async function load(force=false){
   if(!account||!visible)return;
-  if(reading)return reading;
+  if(reading&&owner===account)return reading;
   if(!force&&Date.now()-lastRead<5000&&owner===account)return;
   const key=account;owner=key;
   const read=call("status").then(value=>{if(account===key&&visible){lastRead=Date.now();render(value);}return value;})
@@ -59,5 +67,5 @@ window.SheetSyncUI=(()=>{
  });});
  $("#sheetSyncRun").addEventListener("click",()=>act(async()=>{await call("run");await load(true);say("刀表同步已排入執行");}));
  $("#sheetSyncRefresh").addEventListener("click",()=>act(()=>load(true)));
- return {visibility,poll:()=>visible?load():Promise.resolve(),reset(){current=null;owner="";visible=false;lastRead=0;$("#sheetSyncPanel").hidden=true;}};
+ return {visibility,poll:()=>visible?load():Promise.resolve(),reset(){owner="";visible=false;reading=null;lastRead=0;$("#sheetSyncPanel").hidden=true;}};
 })();

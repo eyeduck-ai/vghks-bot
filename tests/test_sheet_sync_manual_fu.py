@@ -46,6 +46,10 @@ class Documents:
     def documents(self, table):
         return [copy.deepcopy(value) for (name, _), value in self.values.items() if name == table]
 
+    def unresolved_automatic_sources(self):
+        return {key for row in self.documents("sheet_previews") if row.get("automatic")
+                and row["status"] in {"applying", "uncertain"} for key in row["source_records"]}
+
 
 class ManualFUTests(unittest.TestCase):
     def setUp(self):

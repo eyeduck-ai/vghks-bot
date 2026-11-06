@@ -343,7 +343,7 @@ window.CataractUI = (() => {
           choose.dataset.assetDigest=asset.digest;choose.title=`${row.name} ${row.date||""} · ${asset.name||'檔案 '+(index+1)}`;
           const name=[row.date,row.name,index+1].filter(Boolean).join(" ");
           file.append(check,choose,el("small",asset.mime==="application/pdf"?"PDF":"影像"),
-            ClinicalUI.assetTools({url:scopedPath("/api/analysis/asset?id="+encodeURIComponent(asset.digest)),asset,name,compact:true,
+            ClinicalUI.assetTools({url:window.LocalSession.resourceURL(scopedPath("/api/analysis/asset?id="+encodeURIComponent(asset.digest))),asset,name,compact:true,
               image:()=>currentUI?.preview.querySelector(`.cataract-asset[data-digest="${asset.digest}"] img`)}));
         }
         file.querySelector("input").checked=window.FileCompare.has(asset.digest);
@@ -531,7 +531,7 @@ window.CataractUI = (() => {
       if(!retained){
       const box = el("div", undefined, "cataract-asset");box.dataset.digest=selected.digest;
       const file = el(selected.mime === "application/pdf" ? "iframe" : "img");
-      const url=scopedPath("/api/analysis/asset?id=" + encodeURIComponent(selected.digest));
+      const url=window.LocalSession.resourceURL(scopedPath("/api/analysis/asset?id=" + encodeURIComponent(selected.digest)));
       file.src = selected.mime==="application/pdf"?ClinicalUI.pdfURL(url):url;
       file.title = `${row.name} · 所選檔案`;
       if (file.tagName === "IMG") file.alt = file.title;

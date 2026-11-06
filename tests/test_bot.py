@@ -6,6 +6,7 @@ import time
 import unittest
 from datetime import timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from vghks_sdk import LoginRejectedError, RequestError
@@ -338,7 +339,7 @@ class BotTests(unittest.TestCase):
 
             def request(path):
                 connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=4)
-                connection.request("GET", path, headers={"Cookie": "opd_session=" + self.app.session_token})
+                connection.request("GET", path, headers={"X-VGHKS-Session": self.app.session_token})
                 response = connection.getresponse()
                 result = response.status, dict(response.getheaders()), response.read()
                 connection.close()
@@ -385,7 +386,7 @@ class BotTests(unittest.TestCase):
             thread.start()
             def request(path, values=None, csrf=True):
                 connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=4)
-                headers = {"Content-Type": "application/json", "Cookie": "opd_session=" + self.app.session_token}
+                headers = {"Content-Type": "application/json", "X-VGHKS-Session": self.app.session_token}
                 if csrf:
                     headers["X-CSRF-Token"] = self.app.csrf_token
                 connection.request("GET" if values is None else "POST", path, None if values is None else json.dumps(values), headers)
@@ -418,11 +419,11 @@ class BotTests(unittest.TestCase):
         with BotServer(0, self.app) as server:
             thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": .01}, daemon=True)
             thread.start()
-            def request(path, values=None, csrf=True, cookie=True):
+            def request(path, values=None, csrf=True, auth=True):
                 connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=4)
                 headers = {"Content-Type": "application/json"}
-                if cookie:
-                    headers["Cookie"] = "opd_session="+self.app.session_token
+                if auth:
+                    headers["X-VGHKS-Session"] = self.app.session_token
                 if csrf:
                     headers["X-CSRF-Token"] = self.app.csrf_token
                 connection.request("GET" if values is None else "POST", path, None if values is None else json.dumps(values), headers)
@@ -432,9 +433,9 @@ class BotTests(unittest.TestCase):
                 return value
             try:
                 self.assertEqual(request("/api/history")[0], 404)
-                self.assertEqual(request(f"/api/accounts/{self.key}/workbench", cookie=False)[0], 401)
+                self.assertEqual(request(f"/api/accounts/{self.key}/workbench", auth=False)[0], 401)
                 self.assertEqual(request(f"/api/accounts/{self.key}/draft/save", {}, csrf=False)[0], 403)
-                self.assertEqual(request("/api/accounts/activate", {"id": other}, cookie=False)[0], 401)
+                self.assertEqual(request("/api/accounts/activate", {"id": other}, auth=False)[0], 401)
                 self.assertEqual(request("/api/accounts/activate", {"id": other}, csrf=False)[0], 403)
                 self.assertEqual(json.loads(request("/api/accounts/activate", {"id": other})[1])["status"], "ready")
                 self.assertEqual(request(f"/api/accounts/{self.key}/draft/save", {"test": "first"})[0], 200)
@@ -442,7 +443,7 @@ class BotTests(unittest.TestCase):
                 self.assertEqual(request(f"/api/accounts/{self.key}/accounts/save", {"accounts": [{"id": other, "username": "OTHER"}]})[0], 400)
                 self.assertEqual(request(f"/api/accounts/{other}/analysis/asset?id="+"a"*64)[0], 404)
                 for asset in ("/tool-workspace.js", "/monitor-ui.js", "/approvals.js", "/choices.js", "/choices.css"):
-                    self.assertEqual(request(asset, cookie=False)[0], 200)
+                    self.assertEqual(request(asset, auth=False)[0], 200)
                 own = f"/api/accounts/{self.key}"
                 foreign = f"/api/accounts/{other}"
                 calls = list(BotSyntheticSDK.calls)
@@ -470,6 +471,47 @@ class BotTests(unittest.TestCase):
             finally:
                 server.shutdown()
                 thread.join(2)
+
+
+    def test_two_local_ports_keep_separate_sessions(self):
+        first = self.app
+        second = SimpleNamespace(launch_token="b" * 43, session_token="c" * 43, read_only=False,
+                                 bootstrap=lambda: {"instance": "second"})
+
+        def request(server, path, body=None, headers=None):
+            connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=4)
+            try:
+                connection.request("POST" if body is not None else "GET", path,
+                    None if body is None else json.dumps(body), {"Content-Type": "application/json", **(headers or {})})
+                response = connection.getresponse()
+                return response.status, dict(response.getheaders()), json.loads(response.read())
+            finally:
+                connection.close()
+
+        with BotServer(0, first) as left, BotServer(0, second) as right:
+            threads = [threading.Thread(target=server.serve_forever, kwargs={"poll_interval": .01}, daemon=True)
+                       for server in (left, right)]
+            for thread in threads:
+                thread.start()
+            try:
+                code, headers, one = request(left, "/api/session", {"token": first.launch_token})
+                self.assertEqual(code, 200)
+                self.assertNotIn("Set-Cookie", headers)
+                code, headers, two = request(right, "/api/session", {"token": second.launch_token})
+                self.assertEqual(code, 200)
+                self.assertNotIn("Set-Cookie", headers)
+                for server, own, other in ((left, one, two), (right, two, one)):
+                    self.assertEqual(request(server, "/api/bootstrap", headers={"X-VGHKS-Session": own["session"]})[0], 200)
+                    self.assertEqual(request(server, "/api/bootstrap", headers={"X-VGHKS-Session": other["session"]})[0], 401)
+                    self.assertEqual(request(server, "/api/bootstrap?access=" + own["resource"])[0], 401)
+                path = f"/api/accounts/{self.key}/analysis/asset?id=" + "a" * 64 + "&access="
+                self.assertEqual(request(left, path + two["resource"])[0], 401)
+                self.assertEqual(request(left, path + one["resource"])[0], 404)
+            finally:
+                for server in (left, right):
+                    server.shutdown()
+                for thread in threads:
+                    thread.join(3)
 
 
 class GatewayTests(unittest.TestCase):

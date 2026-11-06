@@ -190,11 +190,17 @@ function assertReportToolbar(header, panel){
  assert.equal(galleryHeader.querySelector(".report-gallery-heading").firstElementChild.textContent,"附件 1 / 2");
  const files=toolbar.querySelector(".report-gallery-file-actions"),zoom=toolbar.querySelector(".report-gallery-zoom-group");
  assert.ok(files.querySelector("input").checked);
- assert.equal(files.children.at(-1).href,"/api/accounts/ACCOUNT/analysis/asset?id=PDF");
+ const download=new URL(files.children.at(-1).href);
+ assert.equal(download.pathname,"/api/accounts/"+"a".repeat(32)+"/analysis/asset");
+ assert.equal(download.searchParams.get("id"),"PDF");
+ assert.equal(download.searchParams.get("access"),"f".repeat(64));
  assert.equal(zoom["aria-label"],"附件縮放");
 }
 async function historyTests(){
  const s=setup(),c=s.context,$=s.$,calls=[];s.gallery.dispose();let revision=1,status="running",complete=false,startGate=null,pages=[],shown=[];
+ c.account="a".repeat(32);c.location={origin:"http://127.0.0.1:1000",href:"http://127.0.0.1:1000/"};
+ c.URL=Object.assign(class extends URL {},c.URL);
+ s.run("vghks_bot/static/local-session.js");c.window.LocalSession.accept({session:"S".repeat(43),resource:"f".repeat(64)});
  const pdf=asset("PDFREF","PDF","application/pdf"),image=asset("IMAGEREF","IMG");
  const items=[{ref_key:"PDFREF",ordinal:1,status:"ready",kind:"pdf"},{ref_key:"IMAGEREF",ordinal:2,status:"pending",kind:"image"}];
  const details=[{fields:{檢查項目:"合成眼科醫囑"}}];let data={...payload(items,[pdf]),details};

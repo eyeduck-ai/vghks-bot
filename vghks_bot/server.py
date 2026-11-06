@@ -3,7 +3,6 @@ from __future__ import annotations
 import hmac
 import json
 import threading
-from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
@@ -15,6 +14,16 @@ from .jobs import Application, BusyError
 from .storage import StorageError
 
 STATIC = Path(__file__).with_name("static")
+SESSION_HEADER = "X-VGHKS-Session"
+RESOURCE_QUERY = "access"
+
+
+def resource_token(session_token):
+    return hmac.new(session_token.encode("ascii"), b"VGHKS read-only resource", "sha256").hexdigest()
+
+
+def _matches_token(value, expected):
+    return isinstance(value, str) and value.isascii() and hmac.compare_digest(value, expected)
 
 
 class LocalServer(ThreadingHTTPServer):
@@ -42,7 +51,7 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_):
         pass
 
-    def reply(self, status, payload, *, mime="application/json; charset=utf-8", cookie=None,
+    def reply(self, status, payload, *, mime="application/json; charset=utf-8",
               filename=None, cache_control="no-store"):
         if self.command == "POST" and not getattr(self, "_body_consumed", False):
             # Closing a Windows socket with an unread POST body can reset the
@@ -68,8 +77,6 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("Cross-Origin-Resource-Policy", "same-origin")
         self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
-        if cookie:
-            self.send_header("Set-Cookie", cookie)
         self.end_headers()
         try:
             self.wfile.write(body)
@@ -89,20 +96,26 @@ class Handler(BaseHTTPRequestHandler):
             return False
         return True
 
-    def authorized(self, *, mutation=False):
-        try:
-            cookies = SimpleCookie(self.headers.get("Cookie", ""))
-            token = cookies["opd_session"].value if "opd_session" in cookies else ""
-            valid = hmac.compare_digest(token, self.server.application.session_token)
-        except (ValueError, TypeError):
-            valid = False
+    def authorized(self, *, mutation=False, resource=False):
+        token = self.server.application.session_token
+        valid = _matches_token(self.headers.get(SESSION_HEADER), token)
+        if not valid and resource and not mutation and self.command == "GET":
+            access = parse_qs(urlsplit(self.path).query).get(RESOURCE_QUERY, [])
+            valid = len(access) == 1 and _matches_token(access[0], resource_token(token))
         if not valid:
             self.reply(401, {"error": "本機工作階段已失效，請由 EXE 開啟的頁面進入。"})
             return False
-        if mutation and not hmac.compare_digest(self.headers.get("X-CSRF-Token", ""), self.server.application.csrf_token):
+        if mutation and not _matches_token(self.headers.get("X-CSRF-Token"), self.server.application.csrf_token):
             self.reply(403, {"error": "請重新載入頁面後再操作。"})
             return False
         return True
+
+    def establish_session(self, app, values):
+        if not _matches_token(values.get("token"), app.launch_token):
+            self.reply(401, {"error": "請由 EXE 開啟的頁面進入。"})
+            return
+        session = app.session_token
+        self.reply(200, {"ok": True, "session": session, "resource": resource_token(session)})
 
     def do_GET(self):
         if not self.local_request():
@@ -111,6 +124,7 @@ class Handler(BaseHTTPRequestHandler):
         files = {
             "/": ("index.html", "text/html; charset=utf-8"),
             "/app.js": ("app.js", "text/javascript; charset=utf-8"),
+            "/local-session.js": ("local-session.js", "text/javascript; charset=utf-8"),
             "/workspace.js": ("workspace.js", "text/javascript; charset=utf-8"),
             "/dialog-dismiss.js": ("dialog-dismiss.js", "text/javascript; charset=utf-8"),
             "/analysis.js": ("analysis.js", "text/javascript; charset=utf-8"),
@@ -140,8 +154,9 @@ class Handler(BaseHTTPRequestHandler):
             filename, mime = files[path]
             self.reply(200, (STATIC / filename).read_bytes(), mime=mime)
         elif path.startswith("/api/"):
-            if self.authorized():
-                params = {key: value[0] for key, value in parse_qs(urlsplit(self.path).query).items()}
+            if self.authorized(resource=path == "/api/analysis/asset"):
+                params = {key: value[0] for key, value in parse_qs(urlsplit(self.path).query).items()
+                          if key != RESOURCE_QUERY}
                 self.dispatch_get(self.server.application, path, params)
         else:
             self.reply(404, {"error": "找不到此頁面。"})
@@ -245,11 +260,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def dispatch_post(self, app, path, values):
         if path == "/api/session":
-            token = values.get("token")
-            if not isinstance(token, str) or not hmac.compare_digest(token, app.launch_token):
-                self.reply(401, {"error": "啟動連結已失效，請重新執行 EXE。"})
-                return
-            self.reply(200, {"ok": True}, cookie=f"opd_session={app.session_token}; HttpOnly; SameSite=Strict; Path=/")
+            self.establish_session(app, values)
         elif path == "/api/settings":
             self.reply(200, app.save_settings(values))
         elif path == "/api/accounts/save":

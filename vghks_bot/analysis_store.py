@@ -116,6 +116,15 @@ class AnalysisStore:
             where, args = (" WHERE cohort_id=?", (cohort_id,)) if cohort_id else ("", ())
             return [json.loads(r[0]) for r in db.execute("SELECT payload FROM analysis_run_metadata" + where + " ORDER BY updated_at DESC", args)]
 
+    def unresolved_automatic_sources(self):
+        with self.library.connect() as db:
+            rows = db.execute("""SELECT DISTINCT source.value FROM sheet_previews p,
+                json_each(p.payload,'$.source_records') source
+                WHERE json_extract(p.payload,'$.automatic')=1
+                  AND json_extract(p.payload,'$.status') IN ('applying','uncertain')
+                  AND source.type='text'""")
+            return {row[0] for row in rows}
+
     def marker_receipts(self, spreadsheet_id):
         with self.library.connect() as db:
             rows = db.execute("""SELECT payload FROM sheet_previews WHERE json_extract(payload,'$.spreadsheet_id')=?

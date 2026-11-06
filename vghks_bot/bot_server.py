@@ -14,7 +14,7 @@ from .jobs import BusyError
 from .launcher import CHALLENGE_HEADER, REOPEN_HEADER, REOPEN_PATH, signature, valid_token
 from .patient_handoff import public_document
 from .request_gate import RequestGate
-from .server import STATIC, Handler, LocalServer
+from .server import RESOURCE_QUERY, STATIC, Handler, LocalServer
 from .storage import StorageError
 from .surgery_schedule import EBOARD_URL
 from .workbench import snapshot, status
@@ -90,6 +90,7 @@ class BotHandler(Handler):
             return
         assets = {"/": ("bot.html", "text/html; charset=utf-8"),
                   "/bot.js": ("bot.js", "text/javascript; charset=utf-8"),
+                  "/local-session.js": ("local-session.js", "text/javascript; charset=utf-8"),
                   "/review-history.js": ("review-history.js", "text/javascript; charset=utf-8"),
                   "/review-paging.js": ("review-paging.js", "text/javascript; charset=utf-8"),
                   "/registration-history.js": ("registration-history.js", "text/javascript; charset=utf-8"),
@@ -144,7 +145,8 @@ class BotHandler(Handler):
             return
         if not url.path.startswith("/api/"):
             return super().do_GET()
-        if not self.authorized():
+        resource = re.fullmatch(r"/api/accounts/[a-f0-9]{32}/(?:analysis/asset|reviews/diagnostics/export)", url.path)
+        if not self.authorized(resource=resource is not None):
             return
         try:
             if url.path == "/api/bootstrap":
@@ -160,7 +162,7 @@ class BotHandler(Handler):
                 self.reply(404, {"error": "請使用帳號工作區 API。"})
                 return
             workspace, path = scoped
-            params = {k: v[0] for k, v in parse_qs(url.query).items()}
+            params = {k: v[0] for k, v in parse_qs(url.query).items() if k != RESOURCE_QUERY}
             if path == "/api/workbench":
                 self.reply(200, snapshot(workspace, compact=params.get("compact") == "1"))
             elif path == "/api/status":
@@ -354,11 +356,7 @@ class BotHandler(Handler):
             if root.read_only and path not in {"/api/session", "/api/accounts/activate", "/api/accounts/offline", "/api/shutdown"}:
                 raise ValueError("目前是唯讀檢閱；請建立可編輯副本後操作。")
             if path == "/api/session":
-                token = values.get("token")
-                if not isinstance(token, str) or not hmac.compare_digest(token, root.launch_token):
-                    self.reply(401, {"error": "請由 EXE 開啟的頁面進入。"})
-                    return
-                self.reply(200, {"ok": True}, cookie=f"opd_session={root.session_token}; HttpOnly; SameSite=Strict; Path=/")
+                self.establish_session(root, values)
             elif path == "/api/accounts/login":
                 self.reply(200, root.login(values))
             elif path == "/api/accounts/activate":

@@ -429,6 +429,10 @@ class ClinicalResources:
                 section_code=case.section_code, case_no=case.case_no, source_mrn=case.mrn, case_index=case.index,
                 doctor=case.doctor_name, doctor_card=case.doctor_card, updated_at=timestamp(),
                 query_selector_sha256=digest(self._case_selector(case)), **snapshot(soap))
+            if case.case_type != "O":
+                record["case_type"] = case.case_type
+            if params := self._case_selector(case).get("detail_params"):
+                record["detail_params"] = params
             return {"record": clean(record), "empty": False}
         def save(value, saved, _assessment):
             if value["empty"]:
@@ -449,11 +453,11 @@ class ClinicalResources:
 
     @staticmethod
     def _case_selector(case):
+        from .analysis_fetch import visit_detail_params
+
         value = to_jsonable(case)
         value["lookup_mrn"] = case.patient_mrn
-        if value.get("detail_params"):
-            value["detail_params"] = {key: item for key, item in value["detail_params"].items()
-                if key.casefold() not in {"hid", "ssid", "keyone", "keytwo", "keythree", "password", "cookie"}}
+        value["detail_params"] = visit_detail_params(case.detail_params)
         return value
 
     @classmethod
@@ -465,9 +469,8 @@ class ClinicalResources:
             if fingerprint:
                 if fingerprint != digest(expected):
                     return False
-                # clean() intentionally omits transient detail parameters. The
-                # fingerprint attests those only after fetch validated the full
-                # returned case; every persisted observable field still agrees.
+                # Older snapshots lack the safe detail selectors. Their hash
+                # must still attest the selector before they can be reused.
                 actual_detail, expected_detail = actual.pop("detail_params", None), expected.pop("detail_params", None)
                 return actual == expected and (not actual_detail or actual_detail == expected_detail)
             return actual == expected

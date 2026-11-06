@@ -258,6 +258,7 @@ class DiagnosticTests(unittest.TestCase):
 
     def test_debug_zip_http_download_is_authenticated_account_scoped_and_readonly_compatible(self):
         from vghks_bot.selftest_diagnostics import check_order_index_evidence
+        from vghks_bot.server import resource_token
 
         check_order_index_evidence(self.work)
         second = self.app.login({"username": "SECOND", "password": "synthetic"})["account"]["id"]
@@ -266,11 +267,12 @@ class DiagnosticTests(unittest.TestCase):
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
             try:
-                def read(account, authenticated=True):
+                def read(account, authenticated=True, direct=False):
                     connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
-                    headers = {"Cookie": "opd_session=" + self.app.session_token} if authenticated else {}
+                    headers = {"X-VGHKS-Session": self.app.session_token} if authenticated else {}
                     connection.request("GET", "/api/accounts/" + account +
-                                       "/reviews/diagnostics/export?task_id=selftest-order-index", headers=headers)
+                                       "/reviews/diagnostics/export?task_id=selftest-order-index" +
+                                       ("&access=" + resource_token(self.app.session_token) if direct else ""), headers=headers)
                     response = connection.getresponse()
                     result = response.status, dict(response.getheaders()), response.read()
                     connection.close()
@@ -282,6 +284,12 @@ class DiagnosticTests(unittest.TestCase):
                 self.assertIn("attachment;", headers["Content-Disposition"])
                 with zipfile.ZipFile(io.BytesIO(content)) as archive:
                     self.assertTrue(any(name.endswith(".bin") for name in archive.namelist()))
+                status, headers, content = read(self.key, authenticated=False, direct=True)
+                self.assertEqual(status, 200)
+                self.assertEqual(headers["Referrer-Policy"], "no-referrer")
+                with zipfile.ZipFile(io.BytesIO(content)) as archive:
+                    for name in archive.namelist():
+                        self.assertNotIn(resource_token(self.app.session_token).encode(), archive.read(name))
                 with zipfile.ZipFile(io.BytesIO(read(second)[2])) as archive:
                     self.assertFalse(json.loads(archive.read("debug.json"))["items"])
                     self.assertEqual(set(archive.namelist()), {"debug.json", "sdk-context.json", "README.txt"})

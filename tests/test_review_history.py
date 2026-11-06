@@ -522,6 +522,69 @@ class ReviewHistoryTests(unittest.TestCase):
         self.assertEqual([call[1] for call in HistorySDK.calls], ["index", "image"])
         self.assertTrue(self.history.read(self.request("order_report", ref))["complete"])
 
+    def test_partial_report_refresh_retains_previously_saved_text_by_reference(self):
+        self.fetch("orders")
+        ref = self.history.read(self.request("orders"))["data"][0]["id"]
+        request = self.request("order_report", ref)
+        orders = self.work.gateway.connection.orders
+        detail, report = orders.get_order_detail, orders.get_order_report
+        second = replace(REPORT, sequence_no="2")
+
+        def detail_refs(reference):
+            return replace(detail(reference), report_refs=(REPORT, second))
+
+        def initial_report(reference):
+            return replace(report(reference), report_text="synthetic branch " + reference.sequence_no)
+
+        def refreshed_report(reference):
+            if reference == second:
+                raise ValueError("synthetic second report temporarily unavailable")
+            return replace(initial_report(reference), report_text="synthetic refreshed branch 1")
+
+        with patch.object(orders, "get_order_detail", side_effect=detail_refs):
+            with patch.object(orders, "get_order_report", side_effect=initial_report):
+                self.assertEqual(self.fetch("order_report", ref)["status"], "completed")
+            original = self.history.read(request)["data"]["texts"]
+            self.assertEqual([row["text"] for row in original], ["synthetic branch 1", "synthetic branch 2"])
+            with patch.object(orders, "get_order_report", side_effect=refreshed_report):
+                self.assertEqual(self.fetch("order_report", ref, force=True)["status"], "partial")
+            updated = {row["ref_key"]: row for row in self.history.read(request)["data"]["texts"]}
+            self.assertEqual(updated[original[0]["ref_key"]]["text"], "synthetic refreshed branch 1")
+            self.assertEqual(updated[original[1]["ref_key"]], original[1])
+            self.assertEqual(len(updated), 2)
+        with patch.object(orders, "get_order_report", side_effect=initial_report):
+            self.assertEqual(self.fetch("order_report", ref, force=True)["status"], "completed")
+        self.assertEqual(self.history.read(request)["data"]["texts"], original[:1])
+
+    def test_partial_report_refresh_retains_previously_saved_order_detail(self):
+        self.fetch("orders")
+        ref = self.history.read(self.request("orders"))["data"][0]["id"]
+        request = self.request("order_report", ref)
+        orders = self.work.gateway.connection.orders
+        detail = orders.get_order_detail
+        alternate = replace(DETAIL, result_type="SYNTHETIC")
+        original = self.history.order(MRN, ref)[0]
+        variants = [original, {**original, "detail_ref": clean(alternate)}]
+
+        def initial(reference):
+            return replace(detail(reference), fields={"synthetic": "second" if reference == alternate else "first"})
+
+        def refresh(reference):
+            if reference == alternate:
+                raise ValueError("synthetic second detail temporarily unavailable")
+            return replace(detail(reference), fields={"synthetic": "updated"})
+
+        with patch.object(self.history, "order", return_value=variants):
+            with patch.object(orders, "get_order_detail", side_effect=initial):
+                self.assertEqual(self.fetch("order_report", ref)["status"], "completed")
+            saved = self.history.read(request)["data"]["details"]
+            self.assertEqual([row["fields"]["synthetic"] for row in saved], ["first", "second"])
+            with patch.object(orders, "get_order_detail", side_effect=refresh):
+                self.assertEqual(self.fetch("order_report", ref, force=True)["status"], "partial")
+            updated = self.history.read(request)["data"]["details"]
+            self.assertEqual([row["fields"]["synthetic"] for row in updated], ["updated", "second"])
+            self.assertEqual(updated[1], saved[1])
+
     def test_report_publishes_each_saved_image_before_the_remaining_download(self):
         self.fetch("orders")
         ref = self.history.read(self.request("orders"))["data"][0]["id"]

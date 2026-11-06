@@ -106,7 +106,9 @@ def source_lock(directory, owned=False):
     handle = None
     try:
         if path.exists():
-            handle = path.open("r+b")
+            # Windows byte-range locking also works on a read handle, including
+            # backups on media that cannot be written.
+            handle = path.open("rb")
             if os.name == "nt":
                 import msvcrt
                 msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)

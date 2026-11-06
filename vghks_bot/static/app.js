@@ -45,8 +45,8 @@ function notify(message, error = false) {
 }
 async function api(path, body) {
   const response = await fetch(scopedPath(path), {
-    method: body === undefined ? "GET" : "POST", credentials: "same-origin", cache: "no-store",
-    headers: body === undefined ? {} : {"Content-Type":"application/json", "X-CSRF-Token":config?.csrf || "", "X-Database-Context":config?.context || ""},
+    method: body === undefined ? "GET" : "POST", credentials: "omit", cache: "no-store", redirect: "error",
+    headers: {...window.LocalSession.headers(), ...(body === undefined ? {} : {"Content-Type":"application/json", "X-CSRF-Token":config?.csrf || "", "X-Database-Context":config?.context || ""})},
     body: body === undefined ? undefined : JSON.stringify(body)
   });
   const data = await response.json();
@@ -466,7 +466,7 @@ async function poll() {
 document.addEventListener("visibilitychange",()=>{clearTimeout(pollTimer);if(!document.hidden&&!stopped&&!embedded)void poll();});
 async function initialize() {
   const token = location.hash.slice(1);
-  if (/^[A-Za-z0-9_-]{43}$/.test(token)) { await api("/api/session",{token}); window.history.replaceState(null,"",location.pathname); }
+  if (/^[A-Za-z0-9_-]{43}$/.test(token)) { window.LocalSession.accept(await api("/api/session",{token})); window.history.replaceState(null,"",location.pathname); }
   config = await api("/api/bootstrap");
   $("#version").textContent = `v${config.version}`;
   config.accounts.forEach(addAccount);

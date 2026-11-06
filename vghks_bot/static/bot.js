@@ -37,7 +37,7 @@ const labels={queued:"排隊中",running:"執行中",completed:"完成",partial:
 const inProgress=new Set(["queued","running","cancelling"]);
 labels.forbidden="權限不足";
 let root, account="", epoch=0, work, listing, selected=new Set(), manual=[], listTab="own", page="patients";
-let activeListRun="", selectedSet=null, currentReview="", reviewData=null, reviewPatient="", reviewSignature="";
+let activeListRun="", listIntent=null, selectedSet=null, currentReview="", reviewData=null, reviewPatient="", reviewSignature="";
 let libraryData, libraryPage=0, librarySelected=new Set(), tagPage=0, extensionTask="", extensionContext=null;
 let libraryRecordSequence=0, libraryReturnFocus=null;
 let toastTimer, draftTimer, pollBusy=false, searchSequence=0, stopped=false;
@@ -73,7 +73,7 @@ async function request(path, body, scoped=true){
   const key=account, revision=epoch;
   if(scoped&&!key)throw new Error("請先選擇帳號。");
   const url=scoped?"/api/accounts/"+key+path:"/api"+path;
-  const response=await fetch(url,{method:body===undefined?"GET":"POST",credentials:"same-origin",cache:"no-store",headers:body===undefined?{}:{"Content-Type":"application/json","X-CSRF-Token":root?.csrf||"","X-Database-Context":root?.context||""},body:body===undefined?undefined:JSON.stringify(body)});
+  const response=await fetch(url,{method:body===undefined?"GET":"POST",credentials:"omit",cache:"no-store",redirect:"error",headers:{...window.LocalSession.headers(),...(body===undefined?{}:{"Content-Type":"application/json","X-CSRF-Token":root?.csrf||"","X-Database-Context":root?.context||""})},body:body===undefined?undefined:JSON.stringify(body)});
   const data=await response.json();
   if(scoped&&(key!==account||revision!==epoch))throw new DOMException("帳號已切換","AbortError");
   if(!response.ok)throw new Error(data.error||"操作未完成。");
@@ -151,16 +151,19 @@ async function enter(key){
  cataractScroll=null;
  collapsedDays.clear();manualLookup.reset();manualErrors.clear();
  window.ReviewHistoryUI?.reset();window.ReviewNotesUI?.reset();window.ReviewHandoff?.reset();window.TaskActivityUI?.reset();reconnectTask="";reconnectTarget="";
- window.ReviewPaging?.reset();epoch++;account=key;window.FileCompare?.context(key, "");window.Approvals?.reset();window.ToolWorkspace?.reset();window.Earnings?.reset();window.SurgerySystem?.reset();window.SheetManagement?.reset();work=null;listing=null;selected=new Set();manual=[];libraryPage=tagPage=0;listTab="own";selectedSet=null;currentReview="";reviewData=null;reviewPatient="";reviewSignature="";extensionTask=activeListRun="";librarySelected.clear();
+ window.ReviewPaging?.reset();epoch++;account=key;window.FileCompare?.context(key, "");window.Approvals?.reset();window.ToolWorkspace?.reset();window.Earnings?.reset();window.SurgerySystem?.reset();window.SheetManagement?.reset();work=null;listing=null;listIntent=null;selected=new Set();manual=[];libraryPage=tagPage=0;listTab="own";selectedSet=null;currentReview="";reviewData=null;reviewPatient="";reviewSignature="";extensionTask=activeListRun="";librarySelected.clear();
  $("#moduleFrame").removeAttribute("src");$("#cataractFrame").removeAttribute("src");for(const d of $$("dialog[open]"))d.close();
  for(const id of ["reviewQuery","listQuery","libraryQuery","libraryStart","libraryEnd","tagQuery"])$("#"+id).value="";
  for(const id of ["libraryTag","tagFilter","reviewTag","libraryTask"])$("#"+id).value="";
  $("#entry").hidden=true;$("#shell").hidden=false;$("#accountSwitch").value=key;updateAccountHeader();$("#startDate").value=$("#endDate").value=root.today;$("#dateMode").value="single";dateMode();
  for(const id of ["taskList","libraryRecords","tagPatients","reviewPatients","reviewDetail","dataContent","librarySoapContent","savedSets"])$("#"+id)?.replaceChildren();
  $("#listJob").textContent="";$("#connectionStatus").textContent="載入中";showPage("patients");renderList();renderSets();
- await refresh();const draft=work.draft;
+ const revision=epoch;
+ await refresh();if(revision!==epoch||key!==account||listIntent)return;
+ const draft=work.draft;
  if(draft){$("#startDate").value=draft.start||root.today;$("#endDate").value=draft.end||root.today;$("#dateMode").value=draft.mode||"single";dateMode();selected=new Set(draft.selected||[]);manual=draft.manual||[];listTab=draft.tab||"own";}
- await readList();showPage("patients");renderSets();applyReadonly();
+ const intent=startListIntent();
+ if(await readList(intent)&&currentListIntent(intent)){renderSets();applyReadonly();}
 }
 function updateReviewLayout(){document.body.classList.toggle("review-result-compact",page==="review"&&!!reviewData&&!reviewSetupExpanded);}
 function showPage(name){if(page==="module"&&name!=="module")captureCataractScroll();page=name;document.body.classList.toggle("module-workspace",name==="module");$("#sidebarAccount").open=false;Choices.sync();window.ToolWorkspace?.visibility(name);window.SurgerySystem?.visibility(name);window.SheetManagement?.visibility(name);for(const section of $$("main>.page"))section.hidden=section.id!==name+"Page";for(const b of $$("[data-page]"))b.classList.toggle("active",b.dataset.page===name);updateReviewLayout();window.WorkspacePoll?.visibility();window.ReviewPaging?.visibility();}
@@ -172,6 +175,11 @@ function dateMode(){Choices.sync();const single=$("#dateMode").value==="single";
 function moveDay(day){const d=new Date(day+"T12:00:00Z");return d.toISOString().slice(0,10);}
 function relativeDay(base,offset){const d=new Date(base+"T12:00:00Z");d.setUTCDate(d.getUTCDate()+offset);return moveDay(d.toISOString().slice(0,10));}
 const ranges=()=>({start:$("#startDate").value,end:$("#dateMode").value==="single"?$("#startDate").value:$("#endDate").value});
+function startListIntent(){activeListRun="";return listIntent={account,epoch,...ranges()};}
+function currentListIntent(intent){
+ if(!intent||intent!==listIntent||intent.account!==account||intent.epoch!==epoch)return false;
+ const {start,end}=ranges();return start===intent.start&&end===intent.end;
+}
 function own(r){return r.ownership==="DEDICATED";}
 const allRows=()=>listing?.days.flatMap(d=>d.rows)||[];
 function visibleRows(){const q=$("#listQuery").value.trim().toLocaleLowerCase();return allRows().filter(r=>(listTab==="own"?own(r):!own(r))&&(!q||(r.mrn+" "+r.name+" "+(r.sequence_no||"")).toLocaleLowerCase().includes(q)));}
@@ -179,16 +187,31 @@ function selectedPatients(){const patients=new Map();for(const row of allRows())
 function selectedMRNs(){return selectedPatients().map(patient=>patient.mrn);}
 async function browse(force=false){
  dateMode();if(!$("#dateForm").reportValidity())return;
- selected.clear();manual=[];activeListRun="";
- let pending=JobProgress.pending("#listJob","門診清單","正在準備門診清單查詢…");
+ const intent=startListIntent(),range={start:intent.start,end:intent.end};
+ selected.clear();manual=[];listing=null;collapsedDays.clear();renderList();
+ const pending=JobProgress.pending("#listJob","門診清單","正在準備門診清單查詢…");
  try{
-  await readList();collapsedDays.clear();
-  if(work.online){const value=await api("/lists/browse",{account_ids:[account],ranges:{[account]:ranges()},force});activeListRun=value.run_ids[0];pending?.remove();pending=null;}
-  else{pending?.remove();say("離線顯示已保存的門診清單。");}
-  for(const r of allRows())if(own(r)&&r.mrn)selected.add(r.id);renderList();draftSave();
- }catch(error){pending?.remove();throw error;}
+  if(!await readList(intent,{selectNew:true})||!currentListIntent(intent))return;
+  draftSave();
+  if(work?.online){
+   const value=await api("/lists/browse",{account_ids:[intent.account],ranges:{[intent.account]:range},force});
+   if(currentListIntent(intent))activeListRun=value.run_ids[0]||"";
+  }else say("離線顯示已保存的門診清單。");
+ }catch(error){if(currentListIntent(intent))throw error;}
+ finally{pending?.remove();}
 }
-async function readList(){listing=await api("/lists",{account_id:account,...ranges()});renderList();}
+async function readList(intent,{selectNew=false}={}){
+ if(!currentListIntent(intent))return false;
+ let value;
+ try{value=await api("/lists",{account_id:intent.account,start:intent.start,end:intent.end});}
+ catch(error){if(currentListIntent(intent))throw error;return false;}
+ if(!currentListIntent(intent))return false;
+ if(selectNew){
+  const known=new Set(allRows().filter(own).map(row=>row.id));
+  for(const row of value.days.flatMap(day=>day.rows))if(own(row)&&row.mrn&&!known.has(row.id))selected.add(row.id);
+ }
+ listing=value;renderList();return true;
+}
 function renderList(){
  const rows=visibleRows(),mine=allRows().filter(own).length;$("#ownTab").textContent=`我的門診（${mine}）`;$("#sharedTab").textContent=`其他／共用門診（${allRows().length-mine}）`;
  $("#ownTab").setAttribute("aria-selected",listTab==="own");$("#sharedTab").setAttribute("aria-selected",listTab!=="own");
@@ -303,8 +326,9 @@ async function openLookupDiagnostics(taskId=""){
 async function showTaskSummary(id){const task=await api("/tasks/detail?id="+encodeURIComponent(id));$("#dataTitle").textContent=task.name||"抓取任務";const content=$("#dataContent");content.replaceChildren(table(["欄位","內容"],[["狀態",labels[task.status]||task.status],["開始",time(task.created_at)],["完成",time(task.finished_at)||"—"],["進度",`${task.done??0} / ${task.total??"—"}`],["說明",task.message||"—"]]));const all=task.items||[],items=all.slice(0,200);if(items.length){content.append(node("h3","處理項目"),table(["項目","狀態","說明／錯誤代碼"],items.map(item=>[item.mrn||item.apply_seq||[item.kind,item.period].filter(Boolean).join(" · ")||item.part||"—",labels[item.status]||item.status||"—",[item.message,item.code].filter(Boolean).join(" · ")||"—"])));if(all.length>items.length)content.append(node("p",`只顯示前 ${items.length} / ${all.length} 項。`,"caption"));}dialog("dataDialog");}
 async function refresh({light=false}={}){
  if(!account)return;
+ const watchedListRun=activeListRun,watchedListIntent=listIntent;
  const watch=[currentReview,extensionTask,...(window.ToolWorkspace?.watched()||[])].filter(Boolean);
- const trackedRuns=[activeListRun,...(window.JobProgress?.watchedRuns(account)||[]),...(window.WorkspacePoll?.watched()||[])];
+ const trackedRuns=[watchedListRun,...(window.JobProgress?.watchedRuns(account)||[]),...(window.WorkspacePoll?.watched()||[])];
  const runs=[...new Set(trackedRuns.filter(Boolean))].slice(0,20);
  const value=await api("/status?"+new URLSearchParams({watch:watch.join(","),run:runs.join(",")}));
  window.WorkspacePoll?.publish(value,account);
@@ -325,15 +349,12 @@ async function refresh({light=false}={}){
  const password=work.password_status,connectionLabels={network:"網路問題",credentials:"登入被拒絕",password_change:"需變更密碼",login:"尚未登入"};
  $("#connectionStatus").textContent=work.online?"已登入"+(password?.status==="EXPIRING"?(Number.isInteger(password.remaining_days)?` · 密碼剩 ${password.remaining_days} 日`:" · 密碼即將到期"):""):work.offline_mode?"離線檢閱":connectionLabels[work.connection_issue?.action]||"連線中斷";$("#connectionStatus").classList.toggle("offline",!work.online);
  const previous=recoverySeen.get(account);recoverySeen.set(account,work.recovery_count||0);if(previous!==undefined&&work.recovery_count>previous)say("院內連線已自動恢復，查詢已繼續。");
- if(activeListRun){
-  const run=history.runs.find(r=>r.id===activeListRun);
-  if(run)JobProgress.show("#listJob",run);
-  if((run&&!inProgress.has(run.status))||value.missing_run_ids?.includes(activeListRun)){
+ if(watchedListRun&&activeListRun===watchedListRun&&listIntent===watchedListIntent){
+  const run=history.runs.find(r=>r.id===watchedListRun);
+  if(run&&currentListIntent(watchedListIntent))JobProgress.show("#listJob",run);
+  if((run&&!inProgress.has(run.status))||value.missing_run_ids?.includes(watchedListRun)){
    activeListRun="";
-   await readList();
-   for(const row of allRows())if(own(row)&&row.mrn)selected.add(row.id);
-   renderList();
-   draftSave();
+   if(await readList(watchedListIntent,{selectNew:true})&&currentListIntent(watchedListIntent))draftSave();
   }
  }
  await window.ToolWorkspace?.poll();
@@ -578,7 +599,7 @@ async function showDiagnostics(values){
  $("#dataTitle").textContent="DEBUG 資訊"+(result.task?.analysis_name?" · "+result.task.analysis_name:"");
  const content=$("#dataContent"),text=JSON.stringify(result,null,2);content.replaceChildren(node("p","SDK 互動與解析失敗證據保存在目前資料庫。新版保留失敗頁面的原始回應及醫療資料值，可用於重現 SDK 問題。","caption"));
  content.append(btn("匯出 DEBUG JSON",()=>{const url=URL.createObjectURL(new Blob([text],{type:"application/json;charset=utf-8"})),a=node("a");a.href=url;a.download="VGHKS-debug-"+(values.mrn||values.task_id||values.session_id)+".json";document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);}));
- const bundle=node("a","下載完整 DEBUG ZIP","diagnostic-download");bundle.href="/api/accounts/"+account+"/reviews/diagnostics/export?"+new URLSearchParams(values);bundle.download="VGHKS-debug.zip";content.append(bundle);
+ const bundle=node("a","下載完整 DEBUG ZIP","diagnostic-download");bundle.href=window.LocalSession.resourceURL("/api/accounts/"+account+"/reviews/diagnostics/export?"+new URLSearchParams(values));bundle.download="VGHKS-debug.zip";content.append(bundle);
  if(result.task)content.append(node("p",[result.task.analysis_name||result.task.name,labels[result.task.status]||result.task.status,result.task.message].filter(Boolean).join(" · "),"diagnostic-task"));
  if(result.failures?.length){
   content.append(node("h3",`失敗原因（${result.failures.length} 次讀取）`));
@@ -872,7 +893,11 @@ $("#rulesForm").addEventListener("invalid",e=>{for(let p=e.target.parentElement;
 for(const button of $$("button[data-icon]"))setIcon(button,button.dataset.icon,button.dataset.iconLabel||button.textContent,button.dataset.iconText!=="true");
 for(const [id,name,label] of [["refreshTasks","refresh","更新爬蟲紀錄"],["refreshList","refresh","更新門診清單"],["previousDay","left","前一天"],["nextDay","right","後一天"]])setIcon($("#"+id),name,label);
 $("#accountSettings").addEventListener("click",()=>{$("#settingsAccount").textContent=(info()?.label||info()?.username)+" · "+info()?.campus;$("#concurrency").value=String(root.concurrency);dialog("settingsDialog");});
-$("#editLogin").addEventListener("click",()=>showEntry(account));
+$("#editLogin").addEventListener("click",()=>act(async()=>{
+ const revision=epoch;
+ if(!await window.ReviewNotesUI.flushAll())throw new Error("有備註尚未儲存，請重試後再更新登入資訊。");
+ if(revision===epoch)showEntry(account);
+}));
 $("#saveConcurrency").addEventListener("click",()=>act(async()=>{const r=await ra("/concurrency",{value:Number($("#concurrency").value)});root.concurrency=r.concurrency;$("#settingsDialog").close();say("連線設定已保存。");}));
 window.addEventListener("message",e=>{if(e.origin!==location.origin||!["moduleFrame","cataractFrame"].some(id=>e.source===$("#"+id).contentWindow))return;window.JobProgress.receive(e,[$("#moduleFrame"),$("#cataractFrame")],account,root.read_only);if(e.data?.type==="bot:task-started")act(refresh);else if(page==="module"&&e.source===activeModuleFrame().contentWindow){if(e.data?.type==="bot:compare-open")window.FileCompare?.open();else window.FileCompare?.receive(e,activeModuleFrame(),account);}});
 window.addEventListener("jobprogressaction",event=>act(async()=>{
@@ -889,5 +914,5 @@ async function poll(){
  if(!stopped)pollTimer=setTimeout(poll,window.WorkspacePoll?.active()?2000:10000);
 }
 document.addEventListener("visibilitychange",()=>{window.WorkspacePoll?.visibility();clearTimeout(pollTimer);if(!document.hidden&&!pollBusy&&!stopped)void poll();});
-async function initialize(){const token=location.hash.slice(1);if(/^[A-Za-z0-9_-]{43}$/.test(token)){await ra("/session",{token});history.replaceState(null,"",location.pathname);}root=await ra("/bootstrap");for(const name of Object.keys(reviewIconFiles))reviewIconImage(name);$("#version").textContent=$("#sidebarVersion").textContent="v"+root.version;renderAccounts();loginFields(root.last_account||"");if(root.read_only&&root.accounts.length){const key=root.last_account||root.accounts[0].id;await ra("/accounts/offline",{id:key});await enter(key);}else if(root.accounts.find(a=>a.id===root.last_account)?.remembered)await login(root.last_account,true);applyReadonly();if(root.database_notice){say(root.database_notice);await window.DatabaseUI.open();}poll();}
+async function initialize(){const token=location.hash.slice(1);if(/^[A-Za-z0-9_-]{43}$/.test(token)){window.LocalSession.accept(await ra("/session",{token}));history.replaceState(null,"",location.pathname);}root=await ra("/bootstrap");for(const name of Object.keys(reviewIconFiles))reviewIconImage(name);$("#version").textContent=$("#sidebarVersion").textContent="v"+root.version;renderAccounts();loginFields(root.last_account||"");if(root.read_only&&root.accounts.length){const key=root.last_account||root.accounts[0].id;await ra("/accounts/offline",{id:key});await enter(key);}else if(root.accounts.find(a=>a.id===root.last_account)?.remembered)await login(root.last_account,true);applyReadonly();if(root.database_notice){say(root.database_notice);await window.DatabaseUI.open();}poll();}
 initialize().catch(e=>say(e.message,true));

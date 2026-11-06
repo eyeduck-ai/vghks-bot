@@ -34,6 +34,8 @@ Artifact 保留 14 天；正式 Release 是長期下載入口。產物過期時�
 
 本機完整建置：
 
+建置只納入 Git 索引列出的靜態檔與說明文件；新增公開檔案請先加入索引。
+
 ```powershell
 .venv/Scripts/python.exe tools/run_checks.py --build --gas-repo .build/gas-contract
 ```

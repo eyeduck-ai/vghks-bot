@@ -6,6 +6,7 @@ import json
 from contextlib import nullcontext
 from datetime import date
 
+from .demographics import without_profile_contacts
 from .library import encoded
 from .patient_handoff import purge_sources
 from .settings import timestamp
@@ -15,6 +16,7 @@ CATEGORIES = {
     "profile": "基本資料", "registrations": "掛號紀錄", "analysis": "進階工具資料",
 }
 DEPENDENTS = {"numeric", "orders", "scans", "analysis"}
+ANALYSIS_MEMBER_TABLES = ("analysis_cohorts", "analysis_runs")
 
 
 def step_category(key, kind=""):
@@ -32,6 +34,52 @@ def step_category(key, kind=""):
     return "analysis"
 
 
+def profile_copies(db, mrns):
+    """Find private profile fields duplicated into older workbench snapshots."""
+    selected, known, documents, items = set(mrns), set(), [], []
+    packed = json.dumps(sorted(selected))
+    removed_inputs = {}
+    for row in db.execute("SELECT i.task_id,i.key,i.payload,json_extract(d.payload,'$.kind') AS kind "
+        "FROM bot_task_items i JOIN bot_documents d ON d.kind='task' AND d.id=i.task_id "
+        "WHERE json_extract(i.payload,'$.mrn') IN (SELECT value FROM json_each(?)) "
+        "AND json_extract(d.payload,'$.kind') IN ('review','resolve','profile') ORDER BY i.task_id,i.key", (packed,)):
+        value = json.loads(row["payload"])
+        mrn = value["mrn"]
+        known.add(mrn)
+        if row["kind"] == "review":
+            updated = without_profile_contacts(value)
+        elif value.get("status") == "resolved":
+            updated = {"status": "deleted", "mrn": mrn}
+            if row["kind"] == "resolve" and row["key"] != mrn:
+                removed_inputs.setdefault(row["task_id"], set()).add(row["key"])
+                updated = None  # The item key itself can contain the national ID.
+        else:
+            continue
+        if value != updated:
+            items.append((dict(row), updated))
+    members_selected = ("EXISTS (SELECT 1 FROM json_each(payload,'$.members') WHERE json_extract(value,'$.mrn') "
+                        "IN (SELECT value FROM json_each(:mrns)))")
+    sources = ["SELECT kind,id,payload FROM bot_documents WHERE "
+               "((kind='set' OR kind='task' AND json_extract(payload,'$.kind')='review') AND " + members_selected + ") "
+               "OR (kind='task' AND id IN (SELECT value FROM json_each(:resolve_tasks)))"]
+    sources.extend(f"SELECT '{table}' AS kind,id,payload FROM {table} WHERE " + members_selected
+                   for table in ANALYSIS_MEMBER_TABLES)
+    for row in db.execute(" UNION ALL ".join(sources) + " ORDER BY kind,id",
+                          {"mrns": packed, "resolve_tasks": json.dumps(list(removed_inputs))}):
+        value = json.loads(row["payload"])
+        if row["kind"] == "task" and (inputs := removed_inputs.get(row["id"])):
+            updated = {**value, **{field: [item for item in value[field] if item not in inputs]
+                                  for field in ("identifiers", "retry_only") if field in value}}
+        else:
+            members = value["members"]
+            known.update(member["mrn"] for member in members if member["mrn"] in selected)
+            updated = {**value, "members": [without_profile_contacts(member) if member["mrn"] in selected else member
+                                             for member in members]}
+        if value != updated:
+            documents.append((dict(row), updated))
+    return known, documents, items
+
+
 class LibraryData:
     def __init__(self, app):
         self.app = app
@@ -43,9 +91,10 @@ class LibraryData:
     def library(self):
         return self.app.store.library
 
-    def cleared(self, mrn):
+    def cleared(self, mrn, *, category=None, since=""):
         with self.library.connect() as db:
-            return bool(db.execute("SELECT 1 FROM clinical_cache_deletions WHERE mrn=?", (mrn,)).fetchone())
+            return bool(db.execute("SELECT 1 FROM clinical_cache_deletions WHERE mrn=? AND deleted_at>=? "
+                                   "AND (? IS NULL OR category=?)", (mrn, since, category, category)).fetchone())
 
     def soap_cleared(self, ids, mrns):
         resources = getattr(self.app, "resources", None)
@@ -103,6 +152,12 @@ class LibraryData:
         steps, versions, refs, assets, lists, records, documents = self._snapshot(mrns, list_keys)
         known = {row["mrn"] for row in steps + versions + refs + records}
         known.update(json.loads(row["payload"]).get("mrn") or row["id"] for row in documents)
+        copies = []
+        if "profile" in selected and getattr(self.app, "review", None):
+            with self.library.read_snapshot() as db:
+                copy_mrns, copy_documents, copy_items = profile_copies(db, mrns)
+            known.update(copy_mrns)
+            copies = [row for row, _ in copy_documents + copy_items]
         if not set(mrns).issubset(known):
             raise ValueError("病人不存在於此帳號的本機資料。")
         categories = set(selected)
@@ -133,10 +188,10 @@ class LibraryData:
             picked_lists.append(allowed_lists[(row["account"], row["day"])])
         fingerprint = hashlib.sha256(encoded([str(self.library.path), sorted(set(mrns)), sorted(set(selected)),
                                              sorted(categories), sorted(keys), removed_steps, removed_versions,
-                                             removed_documents, refs, picked_lists]).encode()).hexdigest()
+                                             removed_documents, refs, picked_lists, copies]).encode()).hexdigest()
         return {"mrns": sorted(set(mrns)), "categories": sorted(categories),
                 "requested_categories": sorted(set(selected)), "cascaded": sorted(categories - set(selected)),
-                "records": sum(row["kind"] != "numeric_structured" for row in removed_steps) + len(removed_documents),
+                "records": sum(row["kind"] != "numeric_structured" for row in removed_steps) + len(removed_documents) + len(copies),
                 "versions": len(removed_versions),
                 "attachments": len(freed), "attachment_bytes": sum(assets.get(sha, {}).get("size", 0) for sha in freed),
                 "lists": [{"account": row["account"], "day": row["day"]} for row in picked_lists],
@@ -179,6 +234,18 @@ class LibraryData:
                 db.executemany("INSERT OR REPLACE INTO clinical_cache_deletions VALUES(?,?,?)",
                                [(mrn, category, timestamp()) for mrn in selected for category in categories])
                 if review:
+                    if "profile" in categories:
+                        _, copy_documents, copy_items = profile_copies(db, selected)
+                        db.executemany("UPDATE bot_documents SET payload=? WHERE kind=? AND id=?",
+                                       [(encoded(value), row["kind"], row["id"]) for row, value in copy_documents
+                                        if row["kind"] not in ANALYSIS_MEMBER_TABLES])
+                        for table in ANALYSIS_MEMBER_TABLES:
+                            db.executemany(f"UPDATE {table} SET payload=? WHERE id=?",
+                                           [(encoded(value), row["id"]) for row, value in copy_documents if row["kind"] == table])
+                        db.executemany("UPDATE bot_task_items SET payload=? WHERE task_id=? AND key=?",
+                                       [(encoded(value), row["task_id"], row["key"]) for row, value in copy_items if value is not None])
+                        db.executemany("DELETE FROM bot_task_items WHERE task_id=? AND key=?",
+                                       [(row["task_id"], row["key"]) for row, value in copy_items if value is None])
                     for row in db.execute("SELECT * FROM bot_documents WHERE kind IN ('profile','registrations','visits','numeric','task') "
                         "AND coalesce(nullif(json_extract(payload,'$.mrn'),''),id) IN (SELECT value FROM json_each(?))", (packed,)).fetchall():
                         raw = json.loads(row["payload"])
@@ -195,14 +262,6 @@ class LibraryData:
                             if category in categories:
                                 db.execute("UPDATE bot_task_items SET payload=? WHERE task_id=?",
                                            (encoded({"status": "deleted", "mrn": mrn, "message": "本機資料已清除"}), row["id"]))
-                    # Resolve tasks carry multiple patients rather than a single mrn.
-                    if "profile" in categories:
-                        for row in db.execute("SELECT task_id,key,payload FROM bot_task_items WHERE json_extract(payload,'$.mrn') "
-                            "IN (SELECT value FROM json_each(?)) AND json_extract(payload,'$.status')='resolved'", (packed,)).fetchall():
-                            raw = json.loads(row["payload"])
-                            if raw.get("mrn") in selected and raw.get("status") == "resolved":
-                                db.execute("UPDATE bot_task_items SET payload=? WHERE task_id=? AND key=?",
-                                           (encoded({"status": "deleted", "mrn": raw["mrn"]}), row["task_id"], row["key"]))
                 db.executemany("DELETE FROM list_cache WHERE account=? AND day=?",
                                [(row["account"], row["day"]) for row in preview["lists"]])
             self.app.analysis.store.prune_assets()

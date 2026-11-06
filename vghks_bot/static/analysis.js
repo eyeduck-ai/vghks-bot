@@ -240,7 +240,7 @@ function examCard(row,type,exam,comparing=false) {
     card.append(el("span",labels[row.status]||row.status,"exam-status "+row.status));
     const assets=el("div",undefined,"asset-grid");
     for(const [i,asset] of (row.assets||[]).entries()) {
-      const link=el("a");link.href=scopedPath("/api/analysis/asset?id="+encodeURIComponent(asset.digest));link.target="_blank";link.rel="noopener";
+      const link=el("a");link.href=window.LocalSession.resourceURL(scopedPath("/api/analysis/asset?id="+encodeURIComponent(asset.digest)));link.target="_blank";link.rel="noopener";
       if(asset.mime==="application/pdf"){link.className="pdf-link";link.textContent="開啟 PDF "+(i+1)+" ↗";}
       else {const img=el("img");img.src=link.href;img.alt=dayText(row.date)+" "+exam+" 影像 "+(i+1);img.loading="lazy";img.width=360;img.height=240;link.append(img);link.setAttribute("aria-label","開啟原始影像 "+(i+1));}
       const assetBox=el("div"),name=[row.date,row.name||exam||"醫囑附件",i+1].filter(Boolean).join(" ");
@@ -570,7 +570,7 @@ function previewNode(value) {
     try {const result=await ap("surgery/apply",{id:value.id});container.replaceWith(previewNode(result));}
     finally {applyButton.disabled=false;}
   }),"primary");
-  applyButton.disabled=!value.can_apply||["applied","applied_changed"].includes(value.status);
+  applyButton.disabled=!!value.automatic||!value.can_apply||["applied","applied_changed"].includes(value.status);
   const checkButton=button("核對更新結果",()=>action(async()=>{
     checkButton.disabled=true;try {const result=await ap("surgery/check",{id:value.id});container.replaceWith(previewNode(result));}
     finally {checkButton.disabled=false;}

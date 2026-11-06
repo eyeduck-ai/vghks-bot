@@ -185,7 +185,8 @@ window.FileCompare = (() => {
     dialog.setAttribute("aria-describedby", "fileComparePatient");
     const tabs = make("div", undefined, "file-compare-tabs");
     tabs.id = "fileCompareTabs";
-    tabs.setAttribute("role", "tablist");
+    tabs.setAttribute("role", "group");
+    tabs.setAttribute("aria-label", "比較檔案切換");
     const panes = make("div", undefined, "file-compare-panes");
     panes.id = "fileComparePanes";
     const workspace = make("div", undefined, "file-compare-workspace");
@@ -196,7 +197,6 @@ window.FileCompare = (() => {
     numeric.hidden = true;
     workspace.append(numeric, panes);
     dialog.append(heading, tabs, workspace);
-    dialog.addEventListener("click", event => {if (event.target === dialog) dialog.close();});
     dialog.addEventListener("close", () => {
       numericKey = "";render();
       const trigger = compareTrigger;compareTrigger = null;
@@ -332,8 +332,9 @@ window.FileCompare = (() => {
     buttons.children[1].disabled = index === collection.length - 1;
     header.append(name, caption, buttons);
     const scroll = make("div", undefined, "file-compare-scroll");
-    const url = location.pathname === "/tools" && !new URLSearchParams(location.search).has("account")
+    const path = location.pathname === "/tools" && !new URLSearchParams(location.search).has("account")
       ? `/api/analysis/asset?id=${item.digest}` : `/api/accounts/${item.account}/analysis/asset?id=${item.digest}`;
+    const url = window.LocalSession.resourceURL(path);
     const documentNode = make(item.mime === "application/pdf" ? "iframe" : "img");
     documentNode.src = item.mime === "application/pdf" ? ClinicalUI.pdfURL(url) : url;
     documentNode.title = name.title;
@@ -366,6 +367,29 @@ window.FileCompare = (() => {
     file.style.height = item.mime === "application/pdf" ? (item.zoom * 100) + "%" : "auto";
     current.querySelector(".file-compare-zoom").textContent = Math.round(item.zoom * 100) + "%";
   }
+  function updateSwitches(host, collection, active, activate) {
+    const focused = host.ownerDocument.activeElement;
+    const restoreFocus = host.contains(focused);
+    const existing = new Map([...host.children].map(control => [control.dataset.digest, control]));
+    for (const [index, item] of collection.entries()) {
+      const label = ClinicalUI.comparisonName(item, collection);
+      const control = existing.get(item.digest) || button(label, () => activate(item.digest));
+      control.dataset.digest = item.digest;
+      if (control.textContent !== label) control.textContent = label;
+      control.setAttribute("aria-pressed", String(index === active));
+      const before = host.children[index] || null;
+      if (control !== before) {
+        if (control.parentElement === host && host.moveBefore) host.moveBefore(control, before);
+        else host.insertBefore(control, before);
+      }
+      existing.delete(item.digest);
+    }
+    for (const control of existing.values()) control.remove();
+    if (restoreFocus && host.ownerDocument.activeElement !== focused) {
+      const target = host.contains(focused) ? focused : host.children[active];
+      target?.focus({preventScroll:true});
+    }
+  }
   function renderInline(host = inlineHost) {
     if (!embedded || !host) return;
     inlineHost = host;
@@ -380,18 +404,17 @@ window.FileCompare = (() => {
     let tabs = host.querySelector(".file-compare-inline-tabs"), panes = host.querySelector(".file-compare-inline-panes");
     if (!tabs || !panes) {
       tabs = make("div", undefined, "file-compare-inline-tabs");panes = make("div", undefined, "file-compare-inline-panes");
+      tabs.setAttribute("role", "group");
+      tabs.setAttribute("aria-label", "比較檔案切換");
       host.replaceChildren(tabs, panes);
     }
-    tabs.replaceChildren();
-    tabs.setAttribute("aria-label", "比較檔案切換");
+    updateSwitches(tabs, remoteItems, inlineActive, digest => {
+      inlineActiveDigest = digest;
+      renderInline();
+    });
     const desired = new Set(remoteItems.map(item => item.digest));
     for (const existing of [...panes.children]) if (!desired.has(existing.dataset.digest)) existing.remove();
     for (const [index, item] of remoteItems.entries()) {
-      const tab = button(ClinicalUI.comparisonName(item, remoteItems), () => {
-        inlineActive = index; inlineActiveDigest = item.digest; renderInline();
-      });
-      tab.setAttribute("aria-pressed", String(index === inlineActive));
-      tabs.append(tab);
       let current = [...panes.children].find(node => node.dataset.digest === item.digest);
       if (!current) {current = pane(item, index, true);panes.append(current);}
       updatePane(current, item, index, remoteItems, inlineActive);
@@ -408,20 +431,20 @@ window.FileCompare = (() => {
     document.getElementById("fileComparePatient").textContent = (patientName || "姓名未提供") + " · 病歷號 " + mrn;
     document.getElementById("fileCompareCount").textContent = `${items.length} / ${limit} 份`;
     const tabs = document.getElementById("fileCompareTabs"), panes = document.getElementById("fileComparePanes");
-    tabs.replaceChildren();
     changed();
     window.UtilityDock?.sync();
     if (!document.getElementById("fileCompareDialog").open) {
+      tabs.replaceChildren();
       if (!items.length) panes.replaceChildren();
       sendState(linkedFrame); return;
     }
+    updateSwitches(tabs, items, activeIndex, digest => {
+      const index = items.findIndex(item => item.digest === digest);
+      if (index >= 0) {activeIndex = index; render();}
+    });
     const desired = new Set(items.map(item => item.digest));
     for (const existing of [...panes.children]) if (!desired.has(existing.dataset.digest)) existing.remove();
     for (const [index, item] of items.entries()) {
-      const label = ClinicalUI.comparisonName(item, items);
-      const tab = button(label, () => {activeIndex = index; render();});
-      tab.setAttribute("aria-pressed", String(index === activeIndex));
-      tabs.append(tab);
       let current = [...panes.children].find(element => element.dataset.digest === item.digest);
       if (!current) {current = pane(item, index); panes.append(current);}
       updatePane(current, item, index, items, activeIndex);

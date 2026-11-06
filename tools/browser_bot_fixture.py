@@ -30,10 +30,10 @@ class LocalBoardHandler(BotHandler):
             return True
         return super().local_request()
 
-    def reply(self, status, payload, *, mime="application/json; charset=utf-8", cookie=None, **options):
+    def reply(self, status, payload, *, mime="application/json; charset=utf-8", **options):
         if self.path == "/" and isinstance(payload, bytes) and mime.startswith("text/html"):
             payload = payload.replace(EBOARD_URL.encode(), (self.server.origin+"/synthetic-board").encode())
-        super().reply(status, payload, mime=mime, cookie=cookie, **options)
+        super().reply(status, payload, mime=mime, **options)
 
     def do_GET(self):
         if self.path == "/synthetic-board":

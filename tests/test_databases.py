@@ -1,6 +1,7 @@
 import json
 import shutil
 import sqlite3
+import stat
 import tempfile
 import unittest
 from contextlib import closing
@@ -28,6 +29,20 @@ class DatabaseTests(unittest.TestCase):
 
     def test_full_copy_readonly_backup_http_and_credentials(self):
         check_databases(self.path / "integration")
+
+    def test_write_protected_backup_can_open_read_only_without_changing_source(self):
+        backup = self.manager.handle("backup", {})
+        source = Path(backup["database"]["path"])
+        before = contents(source)
+        lock = source / ".lock"
+        lock.chmod(stat.S_IREAD)
+        try:
+            self.manager.open_entry(backup["entry"]["id"], readonly=True)
+            self.assertTrue(self.manager.current.read_only)
+            self.assertNotEqual(self.manager.current.directory, source)
+            self.assertEqual(contents(source), before)
+        finally:
+            lock.chmod(stat.S_IREAD | stat.S_IWRITE)
 
     def test_second_manager_cannot_overwrite_catalog(self):
         before = self.manager.catalog_path.read_bytes()

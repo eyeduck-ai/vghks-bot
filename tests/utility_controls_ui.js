@@ -32,6 +32,7 @@ function environment() {
       this.children.splice(index,0,child);
     }
     append(...values){for(const child of values)this._place(child,this.children.length);}
+    insertBefore(child,before){this._place(child,before?this.children.indexOf(before):this.children.length);}
     prepend(...values){for(let index=values.length-1;index>=0;index--)this._place(values[index],0);}
     moveBefore(child,before){this._place(child,before?this.children.indexOf(before):this.children.length,true);}
     remove(){if(this.parentElement){const parent=this.parentElement;parent.children.splice(parent.children.indexOf(this),1);this.parentElement=null;}if(this.contains(this.ownerDocument.activeElement))this.ownerDocument.activeElement=this.ownerDocument.body;}
@@ -200,6 +201,7 @@ function compareSetup({embedded=false}={}){
   const download=(url,name)=>{const link=s.document.createElement("a");link.className="attachment-control";link.href=url;link.download=name+".pdf";return link;};
   s.context.ClinicalUI={comparisonName:item=>item.date,pdfURL:url=>url,fileName:name=>name+".pdf",downloadLink:download,
     assetTools:({url,name})=>{const tools=s.document.createElement("span");tools.append(download(url,name));return tools;}};
+  s.load("vghks_bot/static/local-session.js");
   s.load("vghks_bot/static/file-compare.js");
   const ui=s.window.FileCompare;s.window.UtilityDock.context(accountA);ui.context(accountA,"SYN001","合成病人");
   const item=(digit,overrides={})=>({account:accountA,mrn:"SYN001",digest:digit.repeat(64),mime:"application/pdf",name:"合成附件 "+digit,date:"2026-10-27",...overrides});
@@ -235,6 +237,81 @@ function comparisonZoomReset(){
   inlinePane.querySelectorAll(".file-compare-pane-actions button")[2].dispatchEvent({type:"click"});assert.equal(inner.messages.at(-1).value.delta,-.25);
   host.querySelector(".file-compare-inline-tabs").children[0].dispatchEvent({type:"click"});assert.equal(inlinePane.querySelector("iframe"),inlinePDF,"switching inline tabs recreated the PDF");
   emit([{...one,zoom:3}],{account:accountB});assert.equal(inlineReset.textContent,"125%","foreign account state changed inline zoom");assert.equal(inner.requests.length,0);
+}
+
+function comparisonSwitchFocus(){
+  const s=compareSetup(),{ui,item}=s;
+  ui.add(item("1"));ui.add(item("2"));ui.open();
+  const buttons=s.document.getElementById("fileCompareTabs"),[first,second]=buttons.children;
+  assert.equal(buttons.getAttribute("role"),"group");
+  assert.equal(buttons.getAttribute("aria-label"),"比較檔案切換");
+  first.focus();first.dispatchEvent({type:"click"});
+  assert.equal(buttons.children[0],first);assert.equal(s.document.activeElement,first);
+  assert.equal(first.getAttribute("aria-pressed"),"true");assert.equal(second.getAttribute("aria-pressed"),"false");
+  const panes=s.document.getElementById("fileComparePanes");
+  panes.children[0].querySelectorAll(".file-compare-pane-actions button")[1].dispatchEvent({type:"click"});
+  assert.equal(buttons.children[1],first);assert.equal(s.document.activeElement,first,"reordering replaced or blurred a focused control");
+  ui.remove(item("1").digest);
+  assert.equal(s.document.activeElement,second,"removal left keyboard focus outside the remaining comparison choices");
+
+  const inner=compareSetup({embedded:true}),host=inner.element("div"),one=inner.item("3"),two=inner.item("4");
+  inner.ui.renderInline(host);
+  const send=items=>inner.window.dispatchEvent({type:"message",origin:inner.context.location.origin,source:inner.window.parent,
+    data:{type:"bot:compare-state",account:accountA,mrn:"SYN001",items}});
+  send([one,two]);
+  const switches=host.querySelector(".file-compare-inline-tabs"),inline=switches.children[1];
+  inline.focus();inline.dispatchEvent({type:"click"});send([two,one]);
+  assert.equal(switches.children[0],inline);assert.equal(inner.document.activeElement,inline);
+  assert.equal(inline.getAttribute("aria-pressed"),"true","a reordered frame changed the selected attachment");
+}
+
+async function scanPreviewLifecycle(){
+  const s=environment(),ready=deferred(),older=deferred(),newer=deferred(),stale=deferred(),secondPoll=deferred(),calls=[];
+  let indexReads=0,polls=0;
+  s.context.matchMedia=()=>({matches:false});
+  s.context.ClinicalUI={pdfURL:url=>url,assetTools:()=>s.document.createElement("a")};
+  s.window.JobProgress={ready:()=>ready.promise,wait:()=>secondPoll.promise,pending(){},publish(){}};
+  s.load("vghks_bot/static/local-session.js");
+  s.load("vghks_bot/static/scan-browser.js");
+  const scans=s.window.ScanBrowser, options={account:accountA,mrn:"SYN001",review_task_id:"SYN-TASK",resource:"case_scans",
+    allowFetch:()=>true,request:async(path,values)=>{
+      calls.push({path,values});
+      if(path==="/tasks/start")return {task_id:"SYN-INDEX"};
+      if(path.startsWith("/tasks/detail"))return {status:++polls<3?"running":"completed",revision:polls<3?1:2};
+      if(values.resource==="scan_asset")return {A:older,B:newer,C:stale}[values.reference].promise;
+      indexReads++;
+      return {complete:indexReads>1,data:{scans:["A","B","C"].map(id=>({id,category_label:id,date:indexReads>2?"2026-11-08":"2026-11-07"}))}};
+    }};
+  const opening=scans.open(options);
+  const tick=async()=>{for(let index=0;index<14;index++)await Promise.resolve();};
+  await tick();
+  const dialog=s.document.getElementById("scanBrowserDialog"),catalog=dialog.querySelector(".scan-browser-catalog");
+  const [first,second]=catalog.querySelectorAll(".scan-row").map(row=>row.querySelector("button"));
+  first.dispatchEvent({type:"click"});second.dispatchEvent({type:"click"});
+  const file=digit=>({data:{mime:"application/pdf",digest:digit.repeat(64)}});
+  newer.resolve(file("b"));await tick();
+  const frame=dialog.querySelector("iframe"),host=frame.parentElement.parentElement;
+  assert.match(frame.src,/b{64}/);older.resolve(file("a"));await tick();
+  assert.equal(dialog.querySelector("iframe"),frame,"an older selection replaced a more recent preview");
+  const contents=s.document.getElementById("scanBrowserContent"),replace=contents.replaceChildren.bind(contents);
+  let previewDetached=false;
+  contents.replaceChildren=(...children)=>{replace(...children);previewDetached ||= !frame.isConnected;};
+  const oldRow=catalog.querySelector(".scan-row");
+  ready.resolve();await tick();
+  assert.equal(catalog.querySelector(".scan-row"),oldRow,"unchanged scan index was rendered again");
+  const finish=deferred();s.window.JobProgress.wait=()=>finish.promise;
+  secondPoll.resolve();await tick();
+  assert.equal(indexReads,2,"unchanged task revision reloaded the scan index");
+  finish.resolve();await opening;
+  assert.notEqual(catalog.querySelector(".scan-row"),oldRow,"updated scan index was discarded");
+  assert.equal(host.querySelector("iframe"),frame);assert.equal(previewDetached,false,"refresh detached the selected PDF iframe");
+
+  const late=catalog.querySelectorAll(".scan-row")[2].querySelector("button");
+  late.dispatchEvent({type:"click"});dialog.close();
+  await scans.open({...options,mrn:"SYN002",request:async()=>({complete:true,data:{scans:[]}})});
+  stale.resolve({data:null});await tick();
+  assert.equal(calls.filter(call=>call.path==="/tasks/start").length,1,"closed preview started a stale attachment download");
+  assert.equal(dialog.querySelector(".scan-error"),null);
 }
 
 async function confirmationSafety(){
@@ -278,4 +355,4 @@ async function confirmationSafety(){
   assert.equal(s.requests.length,0,"cross-document updates unexpectedly fetched an attachment");
 }
 
-(async()=>{await clocksWhilePending();dockPlacement();progressClockCleanup();comparisonZoomReset();await confirmationSafety();process.stdout.write("Utility control clocks, dock placement, confirmations and selection isolation checks passed\nModal footer and persistent PDF/image zoom reset checks passed\n");})().catch(error=>{console.error(error);process.exitCode=1;});
+(async()=>{await clocksWhilePending();dockPlacement();progressClockCleanup();comparisonZoomReset();comparisonSwitchFocus();await scanPreviewLifecycle();await confirmationSafety();process.stdout.write("Utility control clocks, dock placement, confirmations and selection isolation checks passed\nModal footer and persistent PDF/image zoom reset checks passed\n");})().catch(error=>{console.error(error);process.exitCode=1;});

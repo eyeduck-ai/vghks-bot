@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import threading
 from collections import defaultdict
+from collections.abc import Mapping
 from contextlib import ExitStack
 from dataclasses import fields, replace
 from datetime import date, timedelta
@@ -39,12 +40,26 @@ from .settings import today
 from .soap_data import snapshot as soap_snapshot
 from .storage import StorageError
 
+# The remaining PRQ parameters are supplied by the adapter from the typed
+# visit fields and the active session. Keep only the extra visit selectors.
+VISIT_DETAIL_KEYS = {"dbSource", "hdisDt", "vsNo", "vsNm", "rsNo", "rsNm", "heramcas"}
+
+
+def visit_detail_params(value):
+    if not isinstance(value, Mapping):
+        return None
+    return {key: item for key, item in value.items() if key in VISIT_DETAIL_KEYS
+            and isinstance(item, str) and not any(char in item for char in "\x00\r\n")} or None
+
 
 def clean(value):
     value = to_jsonable(value)
     if isinstance(value, dict):
-        return {k: clean(v) for k, v in value.items() if k.casefold() not in {
+        result = {k: clean(v) for k, v in value.items() if k.casefold() not in {
             "hid", "ssid", "keyone", "keytwo", "keythree", "password", "cookie", "detail_params"}}
+        if params := visit_detail_params(value.get("detail_params")):
+            result["detail_params"] = params
+        return result
     if isinstance(value, (tuple, list)):
         return [clean(v) for v in value]
     return value
@@ -58,6 +73,7 @@ def model(cls, value):
         return pdf_reference(**values)
     if cls is VisitCase:
         values["visit_date"] = date.fromisoformat(values["visit_date"]) if values.get("visit_date") else None
+        values["detail_params"] = visit_detail_params(values.get("detail_params"))
     return cls(**values)
 
 

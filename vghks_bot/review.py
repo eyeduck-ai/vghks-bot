@@ -13,13 +13,13 @@ from vghks_sdk import __version__ as sdk_version
 from vghks_sdk.core.errors import error_info
 from vghks_sdk.identifiers import normalize_mrn, normalize_national_id
 
-from .analysis_fetch import clean, model, validate_patient
+from .analysis_fetch import clean, model, validate_patient, visit_detail_params
 from .analysis_store import digest
 from .approvals import KINDS as APPROVAL_KINDS
 from .bot_store import WorkbenchStore, fresh
 from .bounded_search import search as regex_search
 from .connection_state import should_pause
-from .demographics import merge_demographics
+from .demographics import merge_demographics, without_profile_contacts
 from .earnings import KINDS as EARNINGS_KINDS
 from .library import current_cache, registration_id
 from .patient_handoff import public_document
@@ -38,6 +38,13 @@ REGISTRATION_SCHEMA = 1  # Includes the explicit no_show icon, including null fo
 
 def case_key(case):
     return hashlib.sha256(repr(case.identity).encode()).hexdigest()[:24]
+
+
+def record_case(record, mrn):
+    return VisitCase(record.get("source_mrn") or mrn, date.fromisoformat(record["date"]), record.get("case_type", "O"),
+                     record["case_no"], record["section_code"], record["section"],
+                     index=record.get("case_index"), detail_params=visit_detail_params(record.get("detail_params")),
+                     doctor_name=record.get("doctor", ""), doctor_card=record.get("doctor_card", ""), lookup_mrn=mrn)
 
 
 def failure_status(exc):
@@ -164,7 +171,7 @@ class Review:
                     for key in ("mrn", "name", "sex", "age", "birthday", "birthday_raw")},
                     "registrations": [], "source_records": [], "origins": ["review"],
                     "handoff_sources": []})
-                member.update(merge_demographics(member, patient))
+                members[mrn] = member = without_profile_contacts(merge_demographics(member, patient))
                 for registration in patient.get("registrations", []):
                     if registration not in member["registrations"]:
                         member["registrations"].append(copy.deepcopy(registration))
@@ -326,7 +333,7 @@ class Review:
         if not 1 <= len(members) <= 20000:
             raise ValueError("請選取 1–20000 位已確認的病人。")
         name = str(values.get("name") or f"{today().isoformat()} 病人集合 · {len(members)} 位")[:100]
-        return public_document(self.db.save("set", {"name": name, "members": [self.member_demographics(m) for m in members.values()], "created_at": timestamp(),
+        return public_document(self.db.save("set", {"name": name, "members": [without_profile_contacts(self.member_demographics(m)) for m in members.values()], "created_at": timestamp(),
             "source_range": values.get("source_range", {}), "account_id": self.app.account_id}))
 
     def start(self, values, *, foreground=False):
@@ -353,10 +360,13 @@ class Review:
             task = self.db.get("task", values["resume"])
             if task["status"] in {"queued", "running", "cancelling"}:
                 raise ValueError("此任務仍在執行。")
+            if task.get("sheet_sync"):
+                raise ValueError("請從更新刀表重新取得當日 SOAP，或在待確認項目接續已保存的批次。")
             if task["kind"] in {"approval_refresh", "approval_sync"}:
                 self.app.approvals.tracker.require_idle()
             elif task["kind"] in EARNINGS_KINDS:
                 self.app.earnings.require_idle()
+                self.app.earnings.check_task_identity(task)
             elif task["kind"] == SURGERY_KIND:
                 self.app.surgery_schedule.require_idle()
             if task["kind"] in FOREGROUND_KINDS:
@@ -397,7 +407,7 @@ class Review:
                     department = {"department_keywords": checked_department_keywords(preferred["department_keywords"])}
                 else:
                     department = {"department_keyword": checked_department_keyword(preferred.get("department_keyword", "眼科"))}
-                task.update(name=group["name"], members=[self.member_demographics(m) for m in group["members"]], set_id=group["id"],
+                task.update(name=group["name"], members=[without_profile_contacts(self.member_demographics(m)) for m in group["members"]], set_id=group["id"],
                     **department, mode=mode, cutoff=cutoff,
                     categories=self.app.settings.public()["categories"])
             elif kind in APPROVAL_KINDS:
@@ -603,7 +613,7 @@ class Review:
                 if task.get("retry_only") and identifier not in task["retry_only"]:
                     continue
                 old = self.db.item(task["id"], identifier)
-                if old and old["status"] == "resolved":
+                if old and old["status"] in {"resolved", "deleted"}:
                     continue
                 self.report(state, task, stage="核對病人基本資料")
                 input_kind = task["identifier_kind"]
@@ -717,10 +727,7 @@ class Review:
         record = self.app.library_record(values.get("record_id"))
         if record["mrn"] != mrn:
             raise ValueError("病人與就診不符。")
-        case = VisitCase(record.get("source_mrn") or mrn, date.fromisoformat(record["date"]), "O",
-                         record["case_no"], record["section_code"], record["section"],
-                         index=record.get("case_index"), doctor_name=record.get("doctor", ""),
-                         doctor_card=record.get("doctor_card", ""), lookup_mrn=mrn)
+        case = record_case(record, mrn)
         cached = ClinicalResources.cached_numeric(self.app, mrn, case, allow_stale=True)
         if not cached:
             return None
@@ -752,6 +759,10 @@ class Review:
             known_name = latest.get("name") or task.get("patient_name", "")
             if known_name.strip() and "".join(known_name.split()) != "".join(value["name"].split()):
                 raise ValueError("回傳病人姓名不符，這筆基本資料未保存。")
+            if fields["national_id"]:
+                identifier = normalize_national_id(fields["national_id"])
+                self._verified_profile_identity(latest, identifier)
+                fields["national_id"] = identifier
             result = merge_demographics({**latest, "id": mrn, "mrn": mrn,
                                         "status": "resolved"}, fields)
             result.update(basic_info_at=timestamp(), cached=False)
@@ -761,7 +772,7 @@ class Review:
         profile = self.db.get("profile", member["mrn"], required=False) or {}
         if profile.get("status") != "resolved" or profile.get("mrn") != member["mrn"]:
             profile = {}
-        return merge_demographics(member, profile)
+        return merge_demographics(without_profile_contacts(member), profile)
 
     def cases(self, mrn, force=False):
         if resources := getattr(self.app, "resources", None):
@@ -778,7 +789,7 @@ class Review:
         return cases, saved["updated_at"]
 
     def patient(self, task, member, state):
-        member = self.member_demographics(member)
+        member = without_profile_contacts(self.member_demographics(member))
         mrn = member["mrn"]
         result = {**member, "records": [], "attempts": [], "status": "ready", "message": ""}
         if task["mode"] == "registration" and not member["registrations"]:
@@ -870,6 +881,8 @@ class Review:
                                 "section_code": case.section_code, "case_no": case.case_no,
                                 "source_mrn": case.mrn, "case_index": case.index, "doctor": case.doctor_name,
                                 "doctor_card": case.doctor_card, **soap_snapshot(soap)}
+                            if params := visit_detail_params(case.detail_params):
+                                record["detail_params"] = params
                             self.app.store.library.save_record(record, self.app.username, task["id"])
                             record = self.app.store.library.get_record(key)
                     record = {k: v for k, v in record.items() if k not in {"versions", "matches", "manual_tags"}}
@@ -903,6 +916,8 @@ class Review:
     def extension(self, task):
         mrn, kind = task["mrn"], task["kind"]
         if kind == "profile":
+            if self.app.library_data.cleared(mrn, category="profile", since=task["created_at"]):
+                return {"status": "deleted", "mrn": mrn, "message": "本機資料已清除"}
             return self.basic_info(task)
         key = task.get("record_id", mrn)
         cached = self.db.get(kind, key, required=False)
@@ -915,10 +930,7 @@ class Review:
             valid = bool(cached and cached.get("registration_schema") == REGISTRATION_SCHEMA
                          and fresh(cached["updated_at"], 60))
         if kind == "numeric" and (resources := getattr(self.app, "resources", None)):
-            source_mrn = record.get("source_mrn") or mrn
-            case = VisitCase(source_mrn, date.fromisoformat(record["date"]), "O", record["case_no"],
-                             record["section_code"], record["section"], index=record.get("case_index"),
-                             doctor_name=record.get("doctor", ""), doctor_card=record.get("doctor_card", ""), lookup_mrn=mrn)
+            case = record_case(record, mrn)
             acquired = resources.case_numeric(mrn, case, force=task["force"])
             return {"id": key, "mrn": mrn, "record_id": key, "status": "ready", "payload": acquired.value,
                     "cached": acquired.source != "network", "updated_at": acquired.saved_at}
@@ -926,10 +938,7 @@ class Review:
             return {**cached, "cached": True}
         with self.app.sdk_factory(self.app.settings) as sdk:
             if kind == "numeric":
-                source_mrn = record.get("source_mrn") or mrn
-                case = VisitCase(source_mrn, date.fromisoformat(record["date"]), "O",
-                                 record["case_no"], record["section_code"], record["section"],
-                                 index=record.get("case_index"), lookup_mrn=mrn)
+                case = record_case(record, mrn)
                 report = sdk.records.get_numeric_report(case)
                 if report.case.identity != case.identity or report.case.patient_mrn != mrn:
                     raise ValueError("數值報告就診不符。")
@@ -953,6 +962,9 @@ class Review:
             value = self.task_progress(task)
             return {**task, "progress": value, "done": value["done"], "total": value["total"]}
         task = self.db.get("task", key)
+        if task["kind"] in EARNINGS_KINDS:
+            self.app.earnings.check_task_identity(task)
+            task.pop("earnings_scope", None)
         items = self.db.items(key)
         value = self.task_progress(task)
         return {**task, "items": items, "progress": value, "done": value["done"], "total": value["total"]}

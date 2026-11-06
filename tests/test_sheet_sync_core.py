@@ -12,6 +12,7 @@ from vghks_bot.analysis import Analysis
 from vghks_bot.analysis_store import digest
 from vghks_bot.bot import BotApplication
 from vghks_bot.google_sheets import SheetUnavailable
+from vghks_bot.scanner import Cancelled
 from vghks_bot.selftest_bot import BotSyntheticSDK
 from vghks_bot.settings import Settings, today
 from vghks_bot.sheet_identity import header_columns
@@ -29,6 +30,10 @@ class Documents:
 
     def documents(self, table):
         return [copy.deepcopy(v) for (t, _), v in self.values.items() if t == table]
+
+    def unresolved_automatic_sources(self):
+        return {key for row in self.documents("sheet_previews") if row.get("automatic")
+                and row["status"] in {"applying", "uncertain"} for key in row["source_records"]}
 
 
 class SyncCoreTests(unittest.TestCase):
@@ -51,6 +56,28 @@ class SyncCoreTests(unittest.TestCase):
         return next(e for sheet in self.client.book["sheets"] if sheet["properties"]["title"].isdigit()
                     for e in entries(sheet)
                     if e["kind"] == "patient" and e["fields"]["mrn"] == "0000003")
+
+    def test_cancelling_before_send_allows_clean_replan(self):
+        def cancel_before_send():
+            if any(v["status"] == "applying" for v in self.store.documents("sheet_previews")):
+                raise Cancelled()
+
+        self.scan.check_cancel = cancel_before_send
+        with self.assertRaises(Cancelled):
+            self.run_sync()
+        self.assertEqual(self.client.writes, 0)
+        self.assertEqual([row["status"] for row in self.store.documents("sheet_previews")], ["cancelled"])
+        self.scan.check_cancel = lambda: None
+        self.assertEqual(self.run_sync()["updated"], 1)
+
+    def test_multi_patient_unchanged_run_reads_the_book_once(self):
+        records = [soap_record(f"{n:07d}") for n in range(3, 6)]
+        self.assertEqual(self.run_sync(records)["updated"], len(records))
+        with patch.object(self.client, "read", wraps=self.client.read) as read:
+            result = self.run_sync(records)
+        self.assertEqual(result["updated"], 0)
+        self.assertFalse(result["pending"])
+        read.assert_called_once()
 
     def test_manual_route_wins_while_iol_changes_and_id_binding_survives(self):
         result = self.run_sync()
@@ -234,6 +261,41 @@ class SchedulerTests(unittest.TestCase):
         self.work.gateway.online = False
         self.work.sheet_sync.schedule()
         self.assertFalse(self.work.sheet_sync.status()["running"])
+
+    def test_incomplete_source_stays_pending_until_targeted_retry(self):
+        original = self.work.review.patient
+        incomplete = []
+
+        def fail_first(task, member, state):
+            result = original(task, member, state)
+            if incomplete or not result["records"]:
+                return result
+            incomplete.append(member["mrn"])
+            return {**result, "status": "partial", "attempts": [*result["attempts"],
+                    {"status": "forbidden", "message": "synthetic source denied"}]}
+
+        with patch.object(self.work.review, "patient", side_effect=fail_first):
+            key = self.work.sheet_sync.run()["task_id"]
+            self.assertTrue(self.work.idle.wait(10))
+        sync = self.work.sheet_sync
+        status = sync.status()
+        self.assertEqual(self.work.review.task(key, summary=True)["status"], "partial")
+        issue = next(row for row in status["pending"] if row.get("kind") == "source" and row["mrn"] == incomplete[0])
+        self.assertEqual(issue["mrn"], incomplete[0])
+        self.assertIn("synthetic source denied", issue["reason"])
+        self.assertTrue(issue["can_retry"])
+        self.assertTrue(all(r["mrn"] != issue["mrn"] for call in
+                            self.work.analysis.automatic_sheet_sync.call_args_list for r in call.args[0]))
+        self.work.analysis.automatic_sheet_sync.reset_mock()
+        with patch.object(self.work.review, "patient", wraps=original) as patient:
+            retry = sync.review({"id": issue["id"], "action": "retry_source"})["task_id"]
+            self.assertTrue(self.work.idle.wait(10))
+        self.assertEqual([call.args[1]["mrn"] for call in patient.call_args_list], incomplete)
+        self.assertEqual(self.work.review.task(retry, summary=True)["status"], "completed")
+        self.assertFalse(any(row["id"] == issue["id"] for row in sync.status()["pending"]))
+        self.assertEqual(sync.settings()["next_run_at"], status["settings"]["next_run_at"])
+        with self.assertRaisesRegex(ValueError, "待確認"):
+            sync.review({"id": issue["id"], "action": "retry_source"})
 
     def test_google_outage_retains_sources_and_explicit_retry_does_not_need_hospital_login(self):
         from vghks_bot.sheet_sync import SheetSync

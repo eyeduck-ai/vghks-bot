@@ -5,7 +5,8 @@ import copy
 import uuid
 
 from .analysis_store import digest
-from .google_sheets import SheetUncertain
+from .google_sheets import SheetError, SheetUncertain
+from .scanner import Cancelled
 from .settings import timestamp
 from .sheet_identity import (
     MONTH_PATTERN,
@@ -437,7 +438,7 @@ class SheetSyncCore:
         if shared["issues"]:
             raise ValueError("雲端同步基準無效，未寫入。")
         if not prefix and not shared["requests"] and all("createDeveloperMetadata" in r for r in preview["requests"]):
-            return {**preview, "status": "unchanged", "message": "已核對，無需更新。"}
+            return {**preview, "status": "unchanged", "message": "已核對，無需更新。"}, original
         library = getattr(self.analysis.store, "library", None)
         if library:
             for source in state.get("source_bindings", []):
@@ -447,42 +448,67 @@ class SheetSyncCore:
                     raise ValueError("來源 SOAP 版本已在處理期間變更，停止此筆更新。")
         preview.update(requests=prefix + preview["requests"] + shared["requests"],
                        baseline=fingerprint(original), sync_states={item["sync_id"]: shared["states"][item["sync_id"]]},
-                       automatic=True, status="applying")
-        self.analysis.store.save_document("sheet_previews", preview)
+                       automatic=True)
+        return self._write_automatic(client, preview, checkpoint)
+
+    def _write_automatic(self, client, preview, checkpoint):
+        def save(record):
+            self.analysis.store.save_document("sheet_previews", record)
+
         if fingerprint(self.read(client)) != preview["baseline"]:
             preview.update(status="stale", message="刀表出現並行異動，已停止此筆更新。")
-            self.analysis.store.save_document("sheet_previews", preview)
+            save(preview)
             raise ValueError(preview["message"])
+        preview.update(status="applying", message="正在套用刀表更新…")
+        save(preview)
         try:
             checkpoint()
+        except Cancelled:
+            preview.update(status="cancelled", message="已在送出前停止，可重新規劃此筆。")
+            save(preview)
+            raise
+        try:
             client.write(preview["requests"])
-            readback = self.read(client)
-            ok = verify(readback, preview) == "verified" and all(
-                read_sync_state(readback)["states"].get(uid) == value for uid, value in preview["sync_states"].items())
-            preview.update(status="applied" if ok else "uncertain",
-                           message="已寫入並核對。" if ok else "讀回資料有變動，請核對此批次。")
-            if ok:
-                confirm(preview, preview["id"])
         except SheetUncertain:
             preview.update(status="uncertain", message="寫入結果尚未確認，請先核對此批次。")
-        finally:
-            self.analysis.store.save_document("sheet_previews", preview)
-        if preview["status"] == "applied":
-            reclaim(client, readback, [(preview, OPD_KEY, [preview["id"]],
-                                       lambda p: self.analysis.store.save_document("sheet_previews", p))])
-        return preview
+            save(preview)
+            return preview, None
+        except SheetError:
+            preview.update(status="failed", message="更新遭拒絕，可重新讀取刀表後再試。")
+            save(preview)
+            raise
+        try:
+            readback = self.read(client)
+        except SheetError:
+            preview.update(status="uncertain", message="已送出更新，讀回核對失敗；請先核對此批次。")
+            save(preview)
+            return preview, None
+        checked = read_sync_state(readback)["states"]
+        ok = verify(readback, preview) == "verified" and all(
+            checked.get(uid) == value for uid, value in preview["sync_states"].items())
+        preview.update(status="applied" if ok else "uncertain",
+                       message="已寫入並核對。" if ok else "讀回資料有變動，請核對此批次。")
+        if ok:
+            confirm(preview, preview["id"])
+        save(preview)
+        if ok:
+            reclaim(client, readback, [(preview, OPD_KEY, [preview["id"]], save)])
+        return preview, readback
 
     def automatic(self, client, records, cohort_id, scan_state, *, default_hospital=None):
-        from .sheet_plan import FUPlanner
-
         result = {"updated": 0, "pending": [], "preview_ids": []}
         hospital = account_hospital(self.analysis.app) if default_hospital is None else default_hospital
         rows = candidates(records, structured_only=True, strict=True, default_hospital=hospital)
+        fu = followup_candidates(records, self.analysis.app.settings, default_hospital=hospital)
+        if not rows and not fu:
+            return result
+        unresolved = self.analysis.store.unresolved_automatic_sources()
+        scan_state.check_cancel()
+        original = self.read(client)
         # Remember an ambiguous intermediate version even if no patient fields
         # can be written. Otherwise single A → A+B → single B could reuse key 0.
         multiple = {s["record_id"] for row in rows for s in row["sources"] if s.get("block_count", 1) > 1}
-        if multiple:
-            original = self.read(client)
+        if multiple and not multiple.intersection(unresolved):
             shared = read_sync_state(original)
             updates = {}
             for uid, state in shared["states"].items():
@@ -496,30 +522,15 @@ class SheetSyncCore:
                 requests = planned["requests"] + [{"createDeveloperMetadata": {"developerMetadata": {
                     "metadataId": metadata_id, "metadataKey": "vghks.opd.update", "metadataValue": key,
                     "location": {"spreadsheet": True}, "visibility": "DOCUMENT"}}}]
-                preview = {"id": key, "automatic": True, "spreadsheet_id": client.key, "status": "applying",
+                preview = {"id": key, "automatic": True, "spreadsheet_id": client.key,
                            "created_at": timestamp(), "items": [], "structures": [], "expectations": [],
                            "mrns": [], "source_records": sorted(multiple), "can_apply": False,
                            "baseline": fingerprint(original), "metadata_id": metadata_id, "requests": requests,
                            "sync_states": {uid: planned["states"][uid] for uid in updates}}
-                self.analysis.store.save_document("sheet_previews", preview)
-                try:
-                    if fingerprint(self.read(client)) != preview["baseline"]:
-                        raise ValueError("刀表出現並行異動，請重新核對多段來源。")
-                    scan_state.check_cancel()
-                    client.write(requests)
-                    readback = self.read(client)
-                    checked = read_sync_state(readback)["states"]
-                    ok = verify(readback, preview) == "verified" and all(checked.get(uid) == state for uid, state in preview["sync_states"].items())
-                    preview["status"] = "applied" if ok else "uncertain"
-                    if ok:
-                        confirm(preview, key)
-                except SheetUncertain:
-                    preview["status"] = "uncertain"
-                finally:
-                    self.analysis.store.save_document("sheet_previews", preview)
-                if preview["status"] == "applied":
-                    reclaim(client, readback, [(preview, OPD_KEY, [key], lambda p: self.analysis.store.save_document("sheet_previews", p))])
-        fu = followup_candidates(records, self.analysis.app.settings, default_hospital=hospital)
+                preview, original = self._write_automatic(client, preview, scan_state.check_cancel)
+                result["preview_ids"].append(key)
+                if preview["status"] == "uncertain":
+                    unresolved.update(multiple)
         seen_fu = set()
         for row in rows + fu:
             scan_state.check_cancel()
@@ -527,17 +538,16 @@ class SheetSyncCore:
             if is_fu and row["id"] in seen_fu:
                 continue
             seen_fu.add(row["id"])
-            original = self.read(client)
+            source_ids = row.get("source_records") or [source["record_id"] for source in row.get("sources", [])]
+            if unresolved.intersection(source_ids):
+                result["pending"].append(pending(row, "此來源有尚未確認的舊批次，請先核對更新結果。"))
+                continue
+            if original is None:
+                original = self.read(client)
             setup = plan_identity_setup(original)
             book, shared = setup["book"], read_sync_state(setup["book"])
             if setup["issues"] or shared["issues"]:
                 result["pending"].append(pending(row, _setup_error(setup["issues"], "刀表欄位、識別碼或共享基準有異常，未寫入。")))
-                continue
-            unresolved = [p for p in self.analysis.store.documents("sheet_previews")
-                          if p.get("automatic") and p.get("status") in {"applying", "uncertain"}
-                          and set(p.get("source_records", [])).intersection(row.get("source_records", [s["record_id"] for s in row["sources"]]))]
-            if unresolved:
-                result["pending"].append(pending(row, "此來源有尚未確認的舊批次，請先核對更新結果。"))
                 continue
             try:
                 if is_fu:
@@ -565,12 +575,14 @@ class SheetSyncCore:
                     if proposal is None:
                         continue
                     planner = Planner(book, client.key, [proposal])
-                preview = self.commit(client, original, planner, state, setup["requests"], checkpoint=scan_state.check_cancel)
+                preview, original = self.commit(client, original, planner, state, setup["requests"], checkpoint=scan_state.check_cancel)
                 result["preview_ids"].append(preview["id"])
                 if preview["status"] == "applied":
                     result["updated"] += 1
                 elif preview["status"] != "unchanged":
                     result["pending"].append(pending(row, preview["message"]))
+                    unresolved.update(preview.get("source_records", []))
             except ValueError as exc:
+                original = None
                 result["pending"].append(pending(row, str(exc)))
         return result

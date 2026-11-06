@@ -197,7 +197,7 @@ class LibraryDataTests(unittest.TestCase):
 
         def post(account, route, body, csrf=True):
             connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
-            headers = {"Cookie": f"opd_session={self.app.session_token}", "Content-Type": "application/json"}
+            headers = {"X-VGHKS-Session": self.app.session_token, "Content-Type": "application/json"}
             if csrf:
                 headers["X-CSRF-Token"] = self.app.csrf_token
             connection.request("POST", f"/api/accounts/{account}/library/data/{route}", json.dumps(body), headers)

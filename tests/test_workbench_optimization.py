@@ -218,7 +218,7 @@ class WorkbenchOptimizationTests(unittest.TestCase):
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         def request(path, body=None):
-            headers = {"Cookie": "opd_session=" + self.app.session_token}
+            headers = {"X-VGHKS-Session": self.app.session_token}
             if body is not None:
                 headers.update({"Content-Type": "application/json", "X-CSRF-Token": self.app.csrf_token,
                                 "X-Database-Context": self.app.context_token, "Origin": server.origin})

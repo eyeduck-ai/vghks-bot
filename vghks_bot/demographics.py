@@ -7,6 +7,12 @@ from datetime import date, datetime
 
 from .settings import today
 
+PROFILE_CONTACT_FIELDS = ("national_id", "mobile_phone", "home_phone", "phone", "contact", "basic_info_at")
+
+
+def without_profile_contacts(patient):
+    return {key: value for key, value in patient.items() if key not in PROFILE_CONTACT_FIELDS}
+
 
 def birthday_iso(value):
     if isinstance(value, datetime):
@@ -56,8 +62,7 @@ def merge_demographics(patient, *preferred, on_date=None):
                      if source.get(key) is not None and str(source[key]).strip()), "")
 
     result = {**patient, **{key: first(key) for key in (
-        "name", "sex", "age", "national_id", "mobile_phone", "home_phone", "phone", "contact",
-        "basic_info_at")}}
+        "name", "sex", "age", *PROFILE_CONTACT_FIELDS)}}
     birthday_source = next((source for source in sources if birthday_iso(source.get("birthday"))), None)
     if birthday_source is not None:
         birthday = birthday_iso(birthday_source["birthday"])

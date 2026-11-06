@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 from vghks_bot.selftest import SyntheticSDK
-from vghks_bot.server import Application, LocalServer
+from vghks_bot.server import Application, LocalServer, resource_token
 from vghks_bot.settings import Settings
 
 
@@ -29,7 +29,7 @@ class ServerTests(unittest.TestCase):
         connection = http.client.HTTPConnection("127.0.0.1",self.server.server_port,timeout=4)
         request_headers = {}
         if auth:
-            request_headers["Cookie"] = f"opd_session={self.app.session_token}"
+            request_headers["X-VGHKS-Session"] = self.app.session_token
         if csrf:
             request_headers["X-CSRF-Token"] = self.app.csrf_token
         if body is not None:
@@ -49,7 +49,7 @@ class ServerTests(unittest.TestCase):
         self.assertNotIn(self.app.launch_token.encode(),body)
         self.assertEqual(headers["Cache-Control"],"no-store")
         self.assertIn("frame-ancestors 'none'",headers["Content-Security-Policy"])
-        for path in ("/app.js","/workspace.js","/analysis.js","/patient-tags.js","/analysis.css","/style.css","/favicon.svg"):
+        for path in ("/app.js","/local-session.js","/workspace.js","/analysis.js","/patient-tags.js","/analysis.css","/style.css","/favicon.svg"):
             self.assertEqual(self.request(path,auth=False)[0],200)
         for path in ("/api/demo","/api/clear"):
             self.assertEqual(self.request(path,{})[0],404)
@@ -75,6 +75,12 @@ class ServerTests(unittest.TestCase):
         self.assertEqual((code, body), (200, content))
         self.assertEqual(headers["Content-Type"], "application/pdf")
         self.assertEqual(headers["Cache-Control"], "no-store")
+        direct = url + "&access=" + resource_token(self.app.session_token)
+        code, headers, body = self.request(direct, auth=False, headers={"Range": "bytes=0-7"})
+        self.assertEqual((code, body), (206, content[:8]))
+        self.assertEqual(headers["Referrer-Policy"], "no-referrer")
+        self.assertEqual(self.request(direct + "&access=duplicate", auth=False)[0], 401)
+        self.assertEqual(self.request(direct, {}, auth=False)[0], 401)
         code, headers, body = self.request(url, headers={"Range": "bytes=0-7"})
         self.assertEqual((code, body), (206, content[:8]))
         self.assertEqual(headers["Content-Range"], "bytes 0-7/" + str(len(content)))
@@ -83,14 +89,20 @@ class ServerTests(unittest.TestCase):
         self.app.analysis.store.delete_patients(["TEST"])
         self.assertEqual(self.request(url)[0], 404)
 
-    def test_session_cookie_csrf_host_origin_and_fetch_site(self):
+    def test_origin_session_csrf_host_and_fetch_site(self):
         self.assertEqual(self.request("/api/session",{"token":"wrong"},auth=False)[0],401)
-        status,headers,_ = self.request("/api/session",{"token":self.app.launch_token},auth=False)
+        status,headers,body = self.request("/api/session",{"token":self.app.launch_token},auth=False)
         self.assertEqual(status,200)
-        self.assertIn("HttpOnly",headers["Set-Cookie"])
-        self.assertIn("SameSite=Strict",headers["Set-Cookie"])
+        self.assertNotIn("Set-Cookie", headers)
+        self.assertEqual(headers["Cache-Control"], "no-store")
+        credentials = json.loads(body)
+        self.assertEqual(credentials["session"], self.app.session_token)
+        self.assertNotEqual(credentials["resource"], credentials["session"])
+        self.assertEqual(self.request("/api/bootstrap", auth=False, headers={"Cookie": "opd_session=" + credentials["session"]})[0], 401)
+        self.assertEqual(self.request("/api/bootstrap?access=" + credentials["resource"], auth=False)[0], 401)
+        self.assertEqual(self.request("/api/bootstrap", auth=False, headers={"X-VGHKS-Session": credentials["resource"]})[0], 401)
         self.assertEqual(self.request("/api/settings",{},csrf=False)[0],403)
-        for headers in ({"Host":"evil.example"},{"Origin":"http://evil.example"},{"Sec-Fetch-Site":"cross-site"}):
+        for headers in ({"Host":"evil.example"},{"Origin":"http://127.0.0.1:1"},{"Sec-Fetch-Site":"cross-site"}):
             self.assertEqual(self.request("/api/history",headers=headers)[0],403)
             self.assertEqual(self.request("/api/settings",{},headers=headers)[0],403)
 

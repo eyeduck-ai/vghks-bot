@@ -25,8 +25,8 @@ def check_launcher(directory):
             def post(path, values, *, authenticated=False):
                 headers = {"Content-Type": "application/json"}
                 if authenticated:
-                    headers.update(Cookie=f"opd_session={server.application.session_token}",
-                                   **{"X-CSRF-Token": server.application.csrf_token})
+                    headers.update({"X-VGHKS-Session": server.application.session_token,
+                                    "X-CSRF-Token": server.application.csrf_token})
                 with closing(http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=3)) as connection:
                     connection.request("POST", path, json.dumps(values), headers)
                     response = connection.getresponse()
