@@ -448,12 +448,16 @@ function layoutTests(){
 async function sidebarTests(){
  const source=fs.readFileSync("vghks_bot/static/bot.js","utf8"),start=source.indexOf("function initializeSidebar()"),end=source.indexOf('$("#loginAccount")',start);
  const stored=new Map(),preference="vghks.sidebar-collapsed";
- function create(storage){
+ function create(storage,{narrow=false}={}){
   const s=surface(),c=s.context,$=s.$;
+  c.page="review";c.epoch=1;
   c.window.localStorage=storage;
+  c.window.matchMedia=()=>({matches:narrow});
+  c.window.scrollX=0;c.window.scrollY=0;
+  c.window.scrollTo=value=>{c.window.scrollX=value.left;c.window.scrollY=value.top;};
   $("#shell").className="shell";
-  $("#shell").append($("#featureSidebar"),$("#sidebarRestore"),$("#mainShell"));
-  $("#featureSidebar").append($("#sidebarCollapse"),$("#sidebarAccount"));
+  $("#shell").append($("#featureSidebar"),$("#sidebarCollapse"),$("#sidebarRestore"),$("#mainShell"));
+  $("#featureSidebar").append($("#sidebarAccount"));
   $("#sidebarRestore").append($("#sidebarExpand"));
   vm.runInContext(source.slice(start,end),c);
   return s;
@@ -464,6 +468,7 @@ async function sidebarTests(){
  assert.equal($("#sidebarCollapse").getAttribute("aria-expanded"),"true");
  $("#sidebarAccount").open=true;await $("#sidebarCollapse").emit("click");
  assert.equal($("#featureSidebar").hidden,true);assert.equal($("#sidebarRestore").hidden,false);
+ assert.equal($("#sidebarCollapse").hidden,true,"the boundary control stayed visible after collapse");
  assert.equal($("#sidebarAccount").open,false);assert.ok($("#shell").classList.contains("sidebar-collapsed"));
  assert.equal(c.document.activeElement,$("#sidebarExpand"),"collapse left focus inside the hidden sidebar");
  assert.equal($("#sidebarExpand").getAttribute("aria-expanded"),"false");assert.equal(stored.get(preference),"1");
@@ -472,12 +477,40 @@ async function sidebarTests(){
  assert.equal(restored.context.document.activeElement,null,"applying a preference stole focus");
  await $("#sidebarExpand").emit("click");
  assert.equal($("#featureSidebar").hidden,false);assert.equal($("#sidebarRestore").hidden,true);
+ assert.equal($("#sidebarCollapse").hidden,false);
  assert.equal(c.document.activeElement,$("#sidebarCollapse"));assert.equal(stored.get(preference),"0");
  assert.equal($("#sidebarCollapse").getAttribute("aria-expanded"),"true");
  const denied=create({getItem(){throw new Error("storage unavailable");},setItem(){throw new Error("storage unavailable");}});
  assert.equal(denied.$("#featureSidebar").hidden,false);
  await denied.$("#sidebarCollapse").emit("click");assert.equal(denied.$("#featureSidebar").hidden,true);
  await denied.$("#sidebarExpand").emit("click");assert.equal(denied.$("#featureSidebar").hidden,false);
+
+ const mobile=create(storage,{narrow:true}),m=mobile.context,m$=mobile.$,scrolls=[];
+ m.window.scrollTo=value=>{scrolls.push(value);m.window.scrollX=value.left;m.window.scrollY=value.top;};
+ for(const id of ["sidebarExpand","sidebarCollapse"]){
+  m$("#"+id).focus=options=>{m.document.activeElement=m$("#"+id);if(!options?.preventScroll)m.window.scrollY=0;};
+ }
+ await m$("#sidebarCollapse").emit("click");m.window.scrollX=12;m.window.scrollY=2050;
+ await m$("#sidebarExpand").emit("click");assert.equal(m.window.scrollY,0,"opening the mobile menu did not reveal its controls");
+ await m$("#sidebarCollapse").emit("click");
+ assert.equal(m.window.scrollY,2050,"closing the mobile menu lost the SOAP reading position");assert.equal(m.window.scrollX,12);
+ assert.equal(m.document.activeElement,m$("#sidebarExpand"));
+ for(const field of ["account","epoch","page","currentReview","reviewPatient"]){
+  m.window.scrollY=1900;await m$("#sidebarExpand").emit("click");
+  const original=m[field];m[field]=field+"-changed";const count=scrolls.length;
+  await m$("#sidebarCollapse").emit("click");assert.equal(scrolls.length,count,"a stale "+field+" restored an old reading position");
+  m[field]=original;
+ }
+ m.window.scrollY=1800;await m$("#sidebarExpand").emit("click");
+ await m$("#featureSidebar").emit("click",{target:{closest:()=>m$("#someNavigation")}});
+ const count=scrolls.length;await m$("#sidebarCollapse").emit("click");
+ assert.equal(scrolls.length,count,"menu navigation restored a previous page's position");
+ m.window.scrollY=1700;await m$("#sidebarExpand").emit("click");await m$("#sidebarCollapse").emit("click");
+ assert.equal(m.window.scrollY,1700,"a new menu opening retained an invalidated reading position");
+ const desktop=create(storage),d=desktop.context,d$=desktop.$;let desktopRestores=0;
+ d.window.scrollTo=()=>{desktopRestores++;};d.window.scrollY=900;
+ await d$("#sidebarCollapse").emit("click");await d$("#sidebarExpand").emit("click");await d$("#sidebarCollapse").emit("click");
+ assert.equal(desktopRestores,0,"desktop navigation overrode native reading anchors");
 }
 async function identifierTests(){
  const s=surface(),c=s.context,$=s.$,starts=[],resolved=[],states=[],details=new Map();c.epoch=0;

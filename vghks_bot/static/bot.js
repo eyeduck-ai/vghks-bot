@@ -818,22 +818,29 @@ function openRules(){window.ToolWorkspace?.beginSettings();$("#ruleTags").replac
 
 function initializeSidebar(){
  const shell=$("#shell"),panel=$("#featureSidebar"),restore=$("#sidebarRestore"),collapse=$("#sidebarCollapse"),expand=$("#sidebarExpand");
- const preference="vghks.sidebar-collapsed";
- setIcon(collapse,"panelClose","收合功能面板");setIcon(expand,"panelOpen","展開功能面板");
+ const preference="vghks.sidebar-collapsed",narrow=window.matchMedia("(max-width:780px)");
+ const readingScope=()=>JSON.stringify([account,epoch,page,currentReview,reviewPatient]);
+ let returnScroll=null;
  function apply(collapsed,focus=false){
-  panel.hidden=collapsed;restore.hidden=!collapsed;shell.classList.toggle("sidebar-collapsed",collapsed);
+  panel.hidden=collapsed;collapse.hidden=collapsed;restore.hidden=!collapsed;shell.classList.toggle("sidebar-collapsed",collapsed);
   collapse.setAttribute("aria-expanded",String(!collapsed));expand.setAttribute("aria-expanded",String(!collapsed));
   if(collapsed)$("#sidebarAccount").open=false;
-  if(focus)(collapsed?expand:collapse).focus();
+  if(focus)(collapsed?expand:collapse).focus({preventScroll:collapsed&&narrow.matches});
  }
  function change(collapsed){
+  if(!collapsed&&narrow.matches)returnScroll={left:window.scrollX,top:window.scrollY,scope:readingScope()};
   apply(collapsed,true);
+  if(collapsed){
+   if(returnScroll&&narrow.matches&&returnScroll.scope===readingScope())window.scrollTo({left:returnScroll.left,top:returnScroll.top,behavior:"instant"});
+   returnScroll=null;
+  }
   try{window.localStorage.setItem(preference,collapsed?"1":"0");}catch(_){/* This tab still supports the control when storage is unavailable. */}
  }
  let collapsed=false;
  try{collapsed=window.localStorage.getItem(preference)==="1";}catch(_){/* Start expanded when browser storage is unavailable. */}
  apply(collapsed);
  collapse.addEventListener("click",()=>change(true));expand.addEventListener("click",()=>change(false));
+ panel.addEventListener("click",event=>{if(event.target.closest("[data-page],[data-tool]"))returnScroll=null;});
 }
 initializeSidebar();
 

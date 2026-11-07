@@ -126,14 +126,15 @@ async function adaptiveWidth(){
  const s=setup(1000,true),c=s.context,$=s.$,properties=new Map(),rail=$("#reviewPatients");
  $("#reviewLayout").style={setProperty:(name,value)=>properties.set(name,value),getPropertyValue:name=>properties.get(name)||"",removeProperty:name=>properties.delete(name)};
  rail.offsetWidth=264;
- c.getComputedStyle=element=>({fontWeight:element.tagName==="strong"?"700":"400",fontSize:element.tagName==="strong"?"13px":"10px",fontFamily:"sans-serif",paddingLeft:"2px",paddingRight:"6px",columnGap:"6px",width:"24px"});
+ c.getComputedStyle=element=>({fontWeight:element.tagName==="strong"?"700":"400",fontSize:element.tagName==="strong"?"13px":element.classList.contains("patient-select")?"14px":"10px",fontFamily:"sans-serif",paddingLeft:"2px",paddingRight:"6px",columnGap:"6px",width:"24px"});
  c.document.createElement=()=>({getContext:()=>({measureText:text=>({width:[...text].length*10})})});
  await s.ui.load();
  const width=()=>parseInt(properties.get("--review-patient-content-width"),10);
  assert.ok(width()>=184&&width()<248,"short identities did not release width for SOAP");
  s.all[0].name="合成姓名非常長".repeat(4);s.setTaskRevision(2);await s.ui.load();
  assert.equal(width(),248,"long identity did not widen within the maximum");
- const before=rail.scrollTop;await s.scroll(500);assert.equal(width(),248,"scrolling to short names made SOAP jump horizontally");
+ for(const patient of s.all.slice(40))patient.dates=[];
+ const before=rail.scrollTop;await s.scroll(500);assert.equal(width(),248,"scrolling to short identities without dates reset the fitted width through a font fallback");
  assert.equal(c.reviewPatient,"P1","fitting list width changed the selected patient");assert.equal(before,0);
  $("#reviewQuery").value="last";await s.ui.load();
  assert.ok(width()>=184&&width()<248,"a new filtered scope retained an unrelated long identity width");

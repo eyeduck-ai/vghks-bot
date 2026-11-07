@@ -8,7 +8,7 @@ window.ReviewPaging=(()=>{
  let owner="",pageData=null,detail=null,navigation=null,filtersKey="",collection="",listSequence=0,detailSequence=0,selectionSequence=0,statusSignature="",detailSignature="",busy=false;
  let scrollTimer=null,scrollJob=null,scrollWanted=false,scrollLoading=false,listError="",prefetchTimer=null,prefetchJob=null,prefetchSequence=0,boundRail=null;
  let resizeObserver=null,resizeFrame=null,railResized=false,railWidth=0;
- let contentWidth=184,widthFonts="",textMeasure=null;
+ let contentWidth=184,textMeasure=null;
  const scope=()=>JSON.stringify([account,currentReview,epoch]);
  const taskSignature=(task,revisions={})=>JSON.stringify([task?.revision??task?.updated_at,task?.status,revisions.profile,revisions.review_note,revisions.patient_tags,revisions.preferences,revisions.records,revisions.registrations]);
  const visible=()=>page==="review"&&!document.hidden;
@@ -31,15 +31,14 @@ window.ReviewPaging=(()=>{
   for(const row of observedRows)resizeObserver.unobserve(row);
   observedRows.clear();
  }
- function resetWidth(){contentWidth=184;widthFonts="";$("#reviewLayout").style.removeProperty?.("--review-patient-content-width");}
+ function resetWidth(){contentWidth=184;$("#reviewLayout").style.removeProperty?.("--review-patient-content-width");}
  function fitWidth(rail){
   if(rail.hidden||typeof getComputedStyle!=="function")return;
   const rows=[...rail.querySelectorAll(".review-patient-row")],sample=rows[0];if(!sample)return;
   textMeasure ||= document.createElement("canvas").getContext?.("2d");if(!textMeasure)return;
   const selectors=["strong",".review-sequence",".review-patient-id",".review-patient-dates"];
   const styles=selectors.map(selector=>getComputedStyle(rail.querySelector(selector)||sample.querySelector(".patient-select")));
-  const fonts=styles.map(style=>`${style.fontWeight} ${style.fontSize} ${style.fontFamily}`),signature=fonts.join("|");
-  if(signature!==widthFonts){contentWidth=184;widthFonts=signature;}
+  const fonts=styles.map(style=>`${style.fontWeight} ${style.fontSize} ${style.fontFamily}`);
   function textWidth(element,index){
    if(!element)return 0;
    textMeasure.font=fonts[index];const style=styles[index];

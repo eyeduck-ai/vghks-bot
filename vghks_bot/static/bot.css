@@ -326,7 +326,7 @@ body.review-result-compact .review-page .review-layout{flex:1;height:auto;max-he
 }
 @media(max-width:780px){main{min-height:0}}
 #reviewProgress:empty{display:none}
-#reviewSearchForm{display:flex;align-items:center;flex-wrap:nowrap;gap:5px;padding:5px 7px;margin-bottom:6px}
+#reviewSearchForm{display:flex;align-items:center;flex-wrap:wrap;gap:5px;padding:5px 7px;margin-bottom:6px}
 :root[data-density] #reviewSearchForm input,:root[data-density] #reviewSearchForm select{margin:0;min-height:29px;height:29px;padding:3px 6px;font-size:12px}
 #reviewSearchForm #reviewQuery{flex:1;min-width:60px;width:auto}
 #reviewSearchMode{width:65px}
@@ -569,15 +569,32 @@ button.patient-chip .patient-chip-remove{flex:none;color:#738973;font-size:14px;
  .task-note-tools{flex-basis:100%;margin-left:0;padding-left:0;border-left:0;justify-content:space-between}
 }
 
-/* The collapsed feature panel keeps one reachable restore control beside the workspace. */
-:root[data-density] .sidebar-toggle,.sidebar-toggle{display:inline-flex;align-items:center;justify-content:center;flex:none;width:28px;min-width:28px;min-height:28px;height:28px;padding:4px;background:var(--paper);border:1px solid #bdcdb5}
-.shell.sidebar-collapsed{grid-template-columns:32px minmax(0,1fr)}
-.sidebar-restore{position:sticky;top:0;align-self:start;height:100dvh;padding:10px 2px;background:#e8eee3;border-right:1px solid #d4dece}
-@media(max-width:780px){
- .shell.sidebar-collapsed{display:block}
- .sidebar-restore{z-index:5;height:auto;padding:4px 12px;border-right:0;border-bottom:1px solid #d4dece}
-}
+/* Small boundary arrows keep their click target separate from their visual size. */
+.shell>.sidebar,.shell>.sidebar-restore{grid-area:1/1}
+.shell>.main-shell{grid-area:1/2}
+:root[data-density] .sidebar-toggle,.sidebar-toggle{display:inline-flex;align-items:center;justify-content:center;flex:none;width:20px;min-width:20px;min-height:36px;height:36px;padding:0;border:0;border-radius:0;background:transparent;color:#738473;box-shadow:none}
+.sidebar-toggle:hover{background:rgb(35 92 76 / 7%);color:var(--green)}
+.sidebar-toggle:focus-visible{outline:2px solid #92b88c;outline-offset:0;background:rgb(35 92 76 / 7%)}
+.sidebar-arrow{width:0;height:0;border-top:4px solid transparent;border-bottom:4px solid transparent;border-right:5px solid currentColor}
+#sidebarCollapse{grid-area:1/1;position:sticky;z-index:5;align-self:start;justify-self:end;top:calc(50dvh - 18px);margin-top:calc(50dvh - 18px);margin-right:-10px}
+.shell.sidebar-collapsed{grid-template-columns:16px minmax(0,1fr)}
+.sidebar-restore{position:sticky;top:0;align-self:start;height:100dvh;border-right:1px solid var(--line)}
+#sidebarExpand{position:absolute;top:50%;left:0;transform:translateY(-50%);width:16px;min-width:16px}
+#sidebarExpand .sidebar-arrow{border-right:0;border-left:5px solid currentColor}
 @media(pointer:coarse){
  :root[data-density] .sidebar-toggle,.sidebar-toggle{width:44px;min-width:44px;min-height:44px;height:44px}
- .shell.sidebar-collapsed{grid-template-columns:48px minmax(0,1fr)}
+ #sidebarCollapse{top:calc(50dvh - 22px);margin-top:calc(50dvh - 22px);margin-right:-22px}
+ .shell.sidebar-collapsed{grid-template-columns:24px minmax(0,1fr)}
+ #sidebarExpand{width:44px;min-width:44px}
+}
+@media(max-width:780px){
+ .shell.sidebar-collapsed{display:block}
+ .shell>.sidebar,.shell>.sidebar-restore,.shell>.main-shell{grid-area:auto}
+ :root[data-density] #sidebarCollapse,:root[data-density] #sidebarExpand{grid-area:auto;position:sticky;top:0;left:auto;z-index:5;display:flex;width:100%;min-width:0;min-height:18px;height:18px;margin:0;transform:none}
+ .sidebar-restore{z-index:5;height:18px;border-right:0;border-bottom:1px solid var(--line)}
+ #sidebarCollapse .sidebar-arrow{border:0;border-left:4px solid transparent;border-right:4px solid transparent;border-bottom:5px solid currentColor}
+ #sidebarExpand .sidebar-arrow{border:0;border-left:4px solid transparent;border-right:4px solid transparent;border-top:5px solid currentColor}
+}
+@media(max-width:780px) and (pointer:coarse){
+ :root[data-density] #sidebarCollapse,:root[data-density] #sidebarExpand,.sidebar-restore{min-height:44px;height:44px}
 }
