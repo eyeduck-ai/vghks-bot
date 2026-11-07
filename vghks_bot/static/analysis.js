@@ -8,10 +8,10 @@ $("#analysisPane").innerHTML = [
   '<details id="cohortDetails" class="analysis-members"><summary id="cohortSummary">抓取帳號</summary><div class="table-wrap"><table class="patient-table"><thead><tr><th scope="col">病人</th><th scope="col">病歷號</th><th scope="col">來源紀錄</th><th scope="col">抓取帳號</th><th scope="col">清單</th></tr></thead><tbody id="cohortMembers"></tbody></table></div></details>',
   '<div class="analysis-step-heading"><h3><span>2</span> 選擇模組與檢查期間</h3></div><div class="analysis-run-controls"><fieldset class="analysis-modules"><legend>執行模組</legend><label class="check-label"><input type="checkbox" name="analysisModule" value="retina" checked>視網膜</label><label class="check-label"><input type="checkbox" name="analysisModule" value="cataract">白內障</label><label class="check-label"><input type="checkbox" name="analysisModule" value="surgery">刀表更新</label></fieldset><label>檢查起日<input id="analysisStart" type="date" min="1912-01-01"></label><label>檢查迄日<input id="analysisEnd" type="date" min="1912-01-01"></label><label>資料來源<select id="analysisRefresh"><option value="cache">使用快取、補抓缺漏</option><option value="refresh">更新索引與缺少的報告</option><option value="force">強制重新抓取</option></select></label><button id="startAnalysis" type="button" class="primary">執行分析</button></div>',
   '<p class="small muted analysis-hint">日期留白：歷年資料。分析範圍與門診篩選日期分開。</p><div id="analysisRuns" aria-live="polite"></div>',
-  '<div class="analysis-step-heading"><h3><span>3</span> 檢閱分析結果</h3></div><div id="cataractLayout" class="cataract-layout"><aside id="cataractPatients" class="cataract-patients" aria-label="術前分析病人清單" hidden></aside><div class="cataract-main"><div class="analysis-view-toolbar"><label>查看病人<select id="analysisPatient"></select></label><label>模組<select id="analysisView"><option value="retina">視網膜</option><option value="cataract">白內障術前分析</option><option value="surgery">刀表更新</option></select></label><button id="reloadAnalysis" type="button">檢閱本機資料</button><button id="cataractUpdate" type="button" hidden>更新歷年資料</button><button id="analysisScans" type="button" hidden>歷年掃描病歷</button><button id="analysisJSON" type="button">JSON ↓</button></div>',
-  '<div id="analysisCoverage" class="small muted"></div><div id="analysisResults"><p class="empty-result">從門診清單或病歷管理選取病人</p></div></div></div>',
-  '<div id="comparisonBar" class="comparison-bar" hidden><span id="comparisonCount"></span><button id="showComparison" type="button" class="primary">並排比較</button><button id="clearComparison" type="button">清除選取</button></div>',
-  '<div id="surgeryWorkspace" hidden><div class="section-heading"><h3>刀表候選</h3><div class="actions"><button id="reloadSurgery" type="button">重新整理候選</button><button id="previewSheet" type="button" class="primary">產生刀表差異預覽</button></div></div><div id="surgeryCandidates"></div><div id="sheetPreview"></div></div>'
+  '<div class="analysis-step-heading"><h3><span>3</span> 檢閱分析結果</h3></div><div id="cataractLayout" class="cataract-layout"><aside id="cataractPatients" class="cataract-patients" aria-label="術前分析病人清單" hidden></aside><div class="cataract-main"><div class="analysis-view-toolbar"><div id="analysisSelectedPatient" class="analysis-patient-identity" hidden></div><label>查看病人<select id="analysisPatient"></select></label><label>模組<select id="analysisView"><option value="retina">視網膜</option><option value="cataract">白內障術前分析</option><option value="surgery">刀表更新</option></select></label><button id="reloadAnalysis" type="button">檢閱本機資料</button><button id="cataractUpdate" type="button" hidden>更新歷年資料</button><button id="analysisScans" type="button" hidden>歷年掃描病歷</button><button id="analysisJSON" type="button">JSON ↓</button></div>',
+  '<div id="analysisCoverage" class="small muted"></div><div id="analysisResults"><p class="empty-result">從門診清單或病歷管理選取病人</p></div>',
+  '<div id="surgeryWorkspace" hidden><div class="section-heading"><h3>刀表候選</h3><div class="actions"><button id="reloadSurgery" type="button">重新整理候選</button><button id="previewSheet" type="button" class="primary">產生刀表差異預覽</button></div></div><div id="surgeryCandidates"></div><div id="sheetPreview"></div></div></div></div>',
+  '<div id="comparisonBar" class="comparison-bar" hidden><span id="comparisonCount"></span><button id="showComparison" type="button" class="primary">並排比較</button><button id="clearComparison" type="button">清除選取</button></div>'
 ].join("");
 document.body.insertAdjacentHTML("beforeend", [
   '<dialog id="cohortDialog" aria-labelledby="cohortDialogTitle"><form id="createCohortForm" method="post"><div class="dialog-heading"><h2 id="cohortDialogTitle">建立分析清單</h2><button type="button" data-analysis-close="cohortDialog" aria-label="關閉">×</button></div><div class="record-body"><fieldset id="cohortAccountFields" hidden disabled><legend class="sr-only">選擇抓取帳號</legend><label>抓取帳號<select id="manualAccount" name="account_id" required></select></label><button id="manualAccountSettings" type="button" class="quiet-button">設定登入帳號</button></fieldset><label>清單名稱<input id="newCohortName" name="name" required maxlength="100"></label><p id="newCohortInfo" class="small muted"></p><p id="cohortError" class="form-error" role="alert" hidden></p><div class="dialog-actions"><button type="submit" class="primary">保存清單並選擇模組</button></div></div></form></dialog>',
@@ -355,16 +355,20 @@ async function loadSurgery() {
   const cohortId=currentCohort.id, data=await ap("surgery/candidates",{cohort_id:cohortId});
   if(currentCohort?.id!==cohortId)return;
   surgeryEditors.clear();$("#sheetPreview").replaceChildren();
-  $("#surgeryCandidates").replaceChildren(...data.candidates.map(row=>row.kind==="fu"?fuCard(row,data.fields):surgeryCard(row,data.fields)));
+  $("#surgeryCandidates").replaceChildren(...data.candidates.map(row=>{const card=row.kind==="fu"?fuCard(row,data.fields):surgeryCard(row,data.fields);card.dataset.patientMrn=row.fields.mrn;return card;}));
   const offered=new Set(data.candidates.filter(row=>row.kind!=="fu").map(row=>row.fields.mrn));
   for(const member of currentCohort.members.filter(member=>!offered.has(member.mrn))){
-    const empty=el("section",undefined,"surgery-candidate");
+    const empty=el("section",undefined,"surgery-candidate");empty.dataset.patientMrn=member.mrn;
     empty.append(el("h3",(member.name||member.mrn)+" · "+member.mrn),el("p","未找到可解析的手術項目。可新增手動項目並填寫刀日、眼別與術式。","small muted"));
     const add=button("新增手動刀表項目",()=>action(async()=>{
       await ap("surgery/drafts",{cohort_id:cohortId,mrn:member.mrn});await loadSurgery();
     }));add.disabled=!!config?.read_only;empty.append(add);$("#surgeryCandidates").append(empty);
   }
   if(!currentCohort.members.length)$("#surgeryCandidates").append(el("p","待處理清單尚無病人。","empty-result"));
+}
+function focusSurgeryPatient(mrn) {
+  const card=$$(".surgery-candidate",$("#surgeryCandidates")).find(item=>item.dataset.patientMrn===mrn);
+  card?.scrollIntoView({block:"start"});
 }
 function fuCard(row,labels) {
   const card=el("article",undefined,"surgery-candidate"),selectLabel=el("label",undefined,"check-label"),selected=el("input"),inputs={};

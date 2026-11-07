@@ -32,14 +32,18 @@ html[data-density=compact] .tool-embedded .analysis-run-controls{padding:12px;ga
 .surgery-edit-grid .choice-field{margin-top:5px}
 
 /* The cataract workbench keeps patient selection beside the clinical record. */
-.cataract-layout.active{display:grid;grid-template-columns:176px minmax(0,1fr);gap:10px;align-items:start}
+.cataract-layout.active{display:grid;grid-template-columns:fit-content(248px) 16px minmax(0,1fr);gap:0;align-items:start}
 .cataract-main{min-width:0}
-.cataract-patients{position:sticky;top:8px;max-height:calc(100dvh - 32px);overflow:auto;border:1px solid var(--line);border-radius:6px;background:#fff;padding:5px}
-.cataract-patients h3{font-size:12px;padding:7px 6px;color:var(--muted)}
-.cataract-patient{display:flex;flex-direction:column;align-items:flex-start;width:100%;min-height:0!important;white-space:normal;text-align:left;gap:2px;margin:2px 0;padding:7px!important;border:1px solid transparent;background:transparent;overflow-wrap:anywhere}
-.cataract-patient[aria-current=true]{background:#edf4e9;border-color:#bdd0b7}
-.cataract-patient strong{font-size:12px}.cataract-patient .small,.cataract-patient-status{font-size:10px}
-.cataract-patient-status{color:var(--green)}
+.analysis-patient-identity{flex:1 1 14rem;min-width:0;margin-right:auto;font-size:14px;font-weight:650;line-height:1.4;overflow-wrap:anywhere}
+.cataract-patients{position:sticky;top:8px;width:max-content;min-width:184px;max-width:248px;max-height:min(calc(100dvh - 24px),var(--patient-rail-height,100dvh));overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable;border:0;border-right:1px solid var(--line);border-radius:0;background:#fafbf8;padding:0}
+.cataract-patients h3{position:sticky;top:0;z-index:1;margin:0;padding:6px 7px 5px;border-bottom:1px solid var(--line);background:#f2f6ee;font-size:11px;line-height:16px;color:var(--muted)}
+.cataract-patients>.cataract-patient{display:grid;grid-template-columns:minmax(0,1fr) fit-content(90px);grid-template-rows:18px minmax(15px,auto);align-items:center;width:100%;min-height:38px!important;white-space:normal;text-align:left;gap:1px 6px;margin:0;padding:2px 6px!important;border:0;border-bottom:1px solid var(--line);border-radius:0;background:transparent;line-height:1.25}
+.cataract-patients>.cataract-patient[aria-current=true]{background:#e6efdf;box-shadow:inset 3px 0 var(--green)}
+.cataract-patient:focus-visible{outline-offset:-2px}
+.cataract-patient strong{grid-column:1/-1;min-width:0;font-size:14px;line-height:18px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cataract-patient .cataract-patient-id,.cataract-patient-status{min-width:0;font-size:11px;line-height:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cataract-patient-id{grid-column:1;grid-row:2;font-variant-numeric:tabular-nums}
+.cataract-patient-status{grid-column:2;grid-row:2;color:var(--muted);text-align:right}
 .cataract-layout.active .analysis-view-toolbar{margin:0 0 7px;padding:5px 0;gap:6px;border-top:0}
 .cataract-layout.active #analysisCoverage{font-size:11px;line-height:1.4;margin-bottom:6px}
 .cataract-identity{font-size:17px;margin:4px 0 10px}
@@ -113,9 +117,8 @@ html[data-density=compact] .tool-embedded .analysis-run-controls{padding:12px;ga
 .cataract-comparison>.cataract-orders{display:none}
 .cataract-files{min-width:0;min-height:65dvh}
 .cataract-mobile-switch{display:none}
-@media(max-width:1150px) and (min-width:781px){.cataract-layout.active{grid-template-columns:156px minmax(0,1fr)}}
 @media(max-width:1100px) and (min-width:781px){.cataract-workspace{grid-template-columns:minmax(210px,30%) minmax(185px,26%) minmax(0,1fr)}.cataract-comparison{grid-template-columns:minmax(210px,30%) minmax(0,1fr)}}
-@media(max-width:780px){.cataract-layout.active{grid-template-columns:minmax(0,1fr)}.cataract-patients{position:static;display:flex;gap:5px;overflow:auto;max-height:none;max-width:100%;padding:5px}.cataract-patients h3{flex:none;align-self:center}.cataract-patient{flex:0 0 140px}.cataract-section .table-wrap{max-height:none}
+@media(max-width:780px){.cataract-layout.active{grid-template-columns:minmax(0,1fr)}.cataract-patients{position:static;display:block;width:100%;min-width:0;max-width:none;max-height:min(280px,40dvh,var(--patient-rail-height,40dvh))}.cataract-section .table-wrap{max-height:none}
   .cataract-workspace,.cataract-comparison,.cataract-comparison.numeric-closed{display:block;min-height:0}
   .cataract-numeric,.cataract-orders{position:static;max-height:none;overflow:visible}
   .cataract-mobile-switch{display:flex;gap:5px;overflow:auto;padding:5px 0 8px}.cataract-mobile-switch button{min-height:30px;padding:4px 10px;font-size:11px}.cataract-mobile-switch button[aria-pressed=true]{background:#e2eee5;border-color:#92b69b;color:var(--green)}
@@ -127,15 +130,10 @@ html[data-density=compact] .tool-embedded .analysis-run-controls{padding:12px;ga
 
 /* Cataract: compact patient rail, two-column overview and persistent order viewer. */
 .cataract-embedded #analysisPane>.section-heading{display:none}
-.cataract-layout.active{grid-template-columns:156px 16px minmax(0,1fr);gap:4px;align-items:start}
 .cataract-layout.active.patients-collapsed{grid-template-columns:16px minmax(0,1fr)}
 .cataract-layout.active.patients-collapsed>.cataract-patients{display:none}
-.cataract-patients-toggle{position:sticky;top:47dvh;width:16px;min-width:16px;min-height:38px!important;padding:0!important;border:1px solid var(--line);border-radius:5px;background:#fff;color:var(--green);font-size:14px;line-height:1;z-index:2}
+.cataract-patients-toggle{position:sticky;top:calc(50dvh - 18px)}
 .cataract-patients-toggle[hidden]{display:none}
-.cataract-patients{padding:3px;scrollbar-gutter:stable}
-.cataract-patients h3{margin:2px 0;padding:4px;font-size:11px}
-.cataract-patient{gap:0;margin:0;padding:4px 5px!important;line-height:1.25}
-.cataract-patient strong{font-size:11px}.cataract-patient .small,.cataract-patient-status{font-size:9px}
 .cataract-result-heading{position:relative;gap:4px 8px;padding:0 0 5px;margin-bottom:6px;min-height:30px}
 .cataract-result-heading .cataract-identity{font-size:15px;line-height:1.3;margin:0 auto 0 0}
 .cataract-view-nav{gap:3px}
@@ -175,9 +173,9 @@ html[data-density=compact] .tool-embedded .analysis-run-controls{padding:12px;ga
 .cataract-report-preview{min-height:calc(100dvh - 100px)}
 .cataract-report-preview .cataract-asset{margin:0;padding:0;border:0;background:transparent}
 .cataract-report-preview .cataract-asset :is(iframe,img){height:calc(100dvh - 115px);min-height:400px}
-@media(max-width:1150px) and (min-width:781px){.cataract-layout.active{grid-template-columns:140px 16px minmax(0,1fr)}.cataract-workspace{grid-template-columns:minmax(185px,26%) minmax(155px,22%) minmax(0,1fr)}}
+@media(max-width:1150px) and (min-width:781px){.cataract-workspace{grid-template-columns:minmax(185px,26%) minmax(155px,22%) minmax(0,1fr)}}
 @media(max-width:1000px) and (min-width:781px){.cataract-overview-grid{grid-template-columns:minmax(0,1fr)}.cataract-overview-grid>.cataract-section,.cataract-overview-numeric>.cataract-numeric{max-height:none}}
-@media(max-width:780px){.cataract-layout.active,.cataract-layout.active.patients-collapsed{grid-template-columns:minmax(0,1fr)}.cataract-patients-toggle{position:static;justify-self:end;min-height:22px!important;width:28px}.cataract-overview-grid{display:block}.cataract-overview[data-mobile=soap] .cataract-overview-numeric,.cataract-overview[data-mobile=numeric] .cataract-soap{display:none}.cataract-overview-grid>.cataract-section,.cataract-overview-numeric>.cataract-numeric{max-height:none}.cataract-workspace,.cataract-workspace.numeric-closed{display:block;min-height:0}.cataract-work-view[data-mobile=numeric] .cataract-workspace>.cataract-numeric{display:block}.cataract-work-view[data-mobile=orders] .cataract-workspace>.cataract-orders{display:block}.cataract-work-view[data-mobile=files] .cataract-workspace>.cataract-report-preview{display:block}.cataract-rail-toggle{display:none}.cataract-header-tools-panel{width:min(525px,calc(100vw - 24px))}.cataract-report-preview .cataract-asset :is(iframe,img){height:65dvh;min-height:0}}
+@media(max-width:780px){.cataract-layout.active,.cataract-layout.active.patients-collapsed{grid-template-columns:minmax(0,1fr)}.cataract-patients-toggle{position:static;justify-self:end}.cataract-overview-grid{display:block}.cataract-overview[data-mobile=soap] .cataract-overview-numeric,.cataract-overview[data-mobile=numeric] .cataract-soap{display:none}.cataract-overview-grid>.cataract-section,.cataract-overview-numeric>.cataract-numeric{max-height:none}.cataract-workspace,.cataract-workspace.numeric-closed{display:block;min-height:0}.cataract-work-view[data-mobile=numeric] .cataract-workspace>.cataract-numeric{display:block}.cataract-work-view[data-mobile=orders] .cataract-workspace>.cataract-orders{display:block}.cataract-work-view[data-mobile=files] .cataract-workspace>.cataract-report-preview{display:block}.cataract-rail-toggle{display:none}.cataract-header-tools-panel{width:min(525px,calc(100vw - 24px))}.cataract-report-preview .cataract-asset :is(iframe,img){height:65dvh;min-height:0}}
 .cataract-identity{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
 .cataract-order-item .cataract-file-choices{display:flex;flex-direction:column;gap:0;margin:1px 0 5px 7px;padding:0;border:0}
 .cataract-file-choice{display:grid!important;grid-template-columns:16px minmax(0,1fr) auto;gap:5px;align-items:center;min-height:27px;padding:0 3px;border-bottom:1px solid #e6eded;background:transparent}

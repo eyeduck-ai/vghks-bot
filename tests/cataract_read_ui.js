@@ -5,12 +5,12 @@ const fs = require("node:fs");
 const vm = require("node:vm");
 const nodes = new Map(), messages = new Map();
 class Node {
-  constructor() {this.children=[];this.value="";this.dataset={};this.scrollTop=0;this.classList={toggle(){}};}
+  constructor() {this.children=[];this.value="";this.dataset={};this.scrollTop=0;this.classList={toggle(){}};this.attributes={};}
   set id(value) {nodes.set("#"+value,this);}
   before() {} after() {} closest() {return new Node();}
   append(...values) {this.children.push(...values);}
   replaceChildren(...values) {this.children=values;}
-  contains() {return false;} setAttribute() {} getAttribute() {return "";}
+  contains() {return false;} setAttribute(name,value) {this.attributes[name]=String(value);} getAttribute(name) {return this.attributes[name]||"";}
   querySelectorAll() {return [];} querySelector() {return null;} addEventListener() {} focus() {}
 }
 const $ = selector => {
@@ -19,7 +19,7 @@ const $ = selector => {
   return nodes.get(selector);
 };
 const deferred = () => {let resolve;const promise=new Promise(done=>resolve=done);return {promise,resolve};};
-const calls = [], updates = [];
+const calls = [], updates = [], surgeryFocus = [];
 let respond, pending = 0;
 const context = {
   $, $$:()=>[], el:()=>new Node(), button:(text,run)=>{const node=new Node();node.click=run;return node;}, embeddedAccount:"b".repeat(32),
@@ -30,6 +30,7 @@ const context = {
   ClinicalUI:{mrnBadge:()=>new Node(),ageBadge:()=>new Node(),patientAge:()=>"未提供",pacsControl:()=>new Node()},
   JobProgress:{pending:()=>{pending++;return {remove(){}};}},
   loadAnalysisResult:async options=>updates.push(options), notify(){}, action:run=>run(),
+  focusSurgeryPatient:mrn=>surgeryFocus.push(mrn),
   ap:(path,values)=>{calls.push({path,values});return respond(path,values);}
 };
 context.parent=context.window;context.parent.postMessage=()=>{};
@@ -88,6 +89,21 @@ async function main() {
     data:{type:"bot:data-cleared",account:context.embeddedAccount,mrns:["TEST001"]}});
   response.resolve(data("TEST001","deleted"));await cleared;
   assert.equal(ui.cachedResult(values("TEST001")),null,"in-flight response restored cleared local data");
+  const toggle=$("#cataractPatientsToggle");
+  assert.equal(toggle.children.length,1,"collapse control has no decorative arrow");assert.equal(toggle.children[0].getAttribute("aria-hidden"),"true");
+  $("#cataractPatients").scrollTop=75;await toggle.click();assert.equal($("#cataractPatients").hidden,true);assert.equal(toggle.getAttribute("aria-expanded"),"false");
+  await toggle.click();assert.equal($("#cataractPatients").hidden,false);assert.equal($("#cataractPatients").scrollTop,75);assert.equal(toggle.getAttribute("aria-expanded"),"true");
+  $("#analysisView").value="retina";ui.layout();
+  assert.equal($("#cataractPatients").hidden,false,"retina has no patient rail");assert.equal($("#cataractUpdate").hidden,true);
+  const beforeRetinaCalls=calls.length,beforeRetinaUpdates=updates.length;
+  await $("#cataractPatients").children.find(node=>node.dataset.patientMrn==="TEST002").click();
+  assert.equal($("#analysisPatient").value,"TEST002");assert.equal(updates.length,beforeRetinaUpdates+1);assert.equal(calls.length,beforeRetinaCalls,"retina selection touched the cataract queue");
+  ui.renderPatients();assert.ok($("#analysisSelectedPatient").textContent.includes("TEST002"),"retina header lost the selected patient identity");
+  await toggle.click();assert.equal($("#analysisSelectedPatient").hidden,false,"collapsed retina rail hid the patient identity");await toggle.click();
+  $("#analysisView").value="surgery";ui.layout();const beforeSurgeryUpdates=updates.length;
+  await $("#cataractPatients").children.find(node=>node.dataset.patientMrn==="TEST001").click();
+  assert.deepEqual(surgeryFocus,["TEST001"]);assert.equal(updates.length,beforeSurgeryUpdates,"surgery navigation rebuilt unsaved candidate editors");assert.equal(calls.length,beforeRetinaCalls);
+  const selected=$("#cataractPatients").children.find(node=>node.dataset.patientMrn==="TEST001");assert.equal(selected.getAttribute("aria-current"),"true");
   console.log("Patient cache, request coalescing, completed queue suppression and stale context checks passed.");
 }
 main().catch(error=>{console.error(error);process.exitCode=1;});

@@ -225,18 +225,18 @@ window.ClinicalUI = (() => {
   }
   const pacsRequests = new Map();
   let pacsControlId = 0;
-  function pacsControl({request, scope, enabled = true, current = () => true}) {
+  function pacsControl({request, scope, enabled = true, current = () => true, buttonText = "開啟本地 PACS", compact = false}) {
     const area = document.createElement("div"), button = document.createElement("button"),
       message = document.createElement("span"), selection = document.createElement("div"),
       label = document.createElement("label"), select = document.createElement("select");
     area.className = "pacs-control";button.type = "button";button.className = "quiet attachment-control";
-    button.textContent = "開啟本地 PACS";button.disabled = !enabled;
+    button.textContent = buttonText;button.disabled = !enabled;
     button.title = "使用本機已啟動的院方 PACS 檢閱器開啟這筆醫囑";
     message.className = "caption pacs-message";message.setAttribute("role", "status");
     select.id = "pacs-study-" + (++pacsControlId);select.name = "pacs_study";
     label.textContent = "PACS 檢查";label.htmlFor = select.id;
     selection.className = "pacs-selection";selection.append(label, select);selection.hidden = true;
-    message.textContent = enabled ? "" : "登入後可使用本機 PACS 檢閱器。";
+    message.textContent = enabled || compact ? "" : "登入後可使用本機 PACS 檢閱器。";
     area.append(selection, button, message);
     const key = JSON.stringify(scope);
     const visible = () => area.isConnected !== false && current();

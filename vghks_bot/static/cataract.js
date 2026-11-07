@@ -2,8 +2,9 @@
 
 // The embedded cataract view keeps one patient's cached workbench in place.
 window.CataractUI = (() => {
-  let status = null, orderSequence = 0, patientsCollapsed = false;
+  let status = null, orderSequence = 0, patientsCollapsed = false, patientsScroll = 0;
   let currentKey = "", currentState = null, currentUI = null;
+  let patientFitFrame = null, patientResize = null;
   const patientStates = new Map();
   const resultCache = new Map(), resultReads = new Map();
   let cacheContext = "", statusRead = null, statusAt = 0;
@@ -72,6 +73,20 @@ window.CataractUI = (() => {
     }
   } catch (_) { /* The tool can also run outside the same-origin workbench. */ }
   const activeView = () => !!embeddedAccount && $("#analysisView").value === "cataract";
+  const patientView = () => !!embeddedAccount && ["retina", "cataract", "surgery"].includes($("#analysisView").value);
+  function fitPatientRail() {
+    const list = $("#cataractPatients");
+    if (!patientView() || list.hidden || typeof list.getBoundingClientRect !== "function" || patientFitFrame !== null) return;
+    const fit = () => {
+      patientFitFrame = null;
+      if (list.hidden || !patientView()) return;
+      const top = Math.max(8, list.getBoundingClientRect().top), height = Math.max(120, window.innerHeight - top - 12) + "px";
+      if (list.style.getPropertyValue("--patient-rail-height") !== height) list.style.setProperty("--patient-rail-height", height);
+    };
+    if (typeof requestAnimationFrame === "function") patientFitFrame = requestAnimationFrame(fit);else fit();
+  }
+  window.addEventListener("resize", fitPatientRail, {passive:true});
+  window.addEventListener("scroll", fitPatientRail, {passive:true});
 
   function stateFor(member) {
     const key = [embeddedAccount, currentCohort?.id, member.mrn].join(":");
@@ -92,34 +107,39 @@ window.CataractUI = (() => {
   }
 
   function layout() {
-    const enabled = activeView();
-    if (enabled && cacheContext !== contextKey()) {
+    const enabled = patientView(), cataract = activeView();
+    if (cataract && cacheContext !== contextKey()) {
       cacheContext = contextKey();
       resultCache.clear();resultReads.clear();patientStates.clear();
       status = null;statusRead = null;statusAt = 0;
       currentKey = "";currentState = null;currentUI = null;orderSequence++;
     }
-    if (!enabled || !currentCohort) restoreHeaderTools();
+    if (!cataract || !currentCohort) restoreHeaderTools();
     const area = $("#cataractLayout"), list = $("#cataractPatients");
+    if (!patientResize && typeof ResizeObserver === "function") {
+      patientResize = new ResizeObserver(fitPatientRail);patientResize.observe($("#analysisPane"));
+    }
     area.classList.toggle("active", enabled);
     area.classList.toggle("patients-collapsed", patientsCollapsed);
+    area.dataset.module = $("#analysisView").value;
+    list.setAttribute("aria-label", "病人清單");
     list.hidden = !enabled || patientsCollapsed;
     $("#analysisPatient").closest("label").hidden = enabled;
-    $("#cataractUpdate").hidden = !enabled;
+    $("#cataractUpdate").hidden = !cataract;
     let exportButton = $("#cataractExport");
     if (!exportButton) {exportButton = button("匯出報告 ZIP", () => window.CataractExport.open());exportButton.id = "cataractExport";$("#cataractUpdate").after(exportButton);}
-    exportButton.hidden = !enabled;
-    $("#reloadAnalysis").hidden = enabled;
+    exportButton.hidden = !cataract;
+    $("#reloadAnalysis").hidden = cataract;
     let toggle = $("#cataractPatientsToggle");
     if (enabled && !toggle) {
-      toggle = button("‹", () => {patientsCollapsed = !patientsCollapsed; layout();}, "cataract-patients-toggle patient-rail-toggle");
+      toggle = button("", () => {if(!patientsCollapsed)patientsScroll=list.scrollTop;patientsCollapsed = !patientsCollapsed;layout();if(!patientsCollapsed)list.scrollTop=patientsScroll;}, "cataract-patients-toggle patient-rail-toggle");
+      const arrow = el("span", undefined, "sidebar-arrow");arrow.setAttribute("aria-hidden", "true");toggle.append(arrow);
       toggle.id = "cataractPatientsToggle";
       toggle.setAttribute("aria-controls", "cataractPatients");
       list.after(toggle);
     }
     if (toggle) {
       toggle.hidden = !enabled;
-      toggle.textContent = patientsCollapsed ? "›" : "‹";
       toggle.setAttribute("aria-expanded", String(!patientsCollapsed));
       toggle.setAttribute("aria-label", patientsCollapsed ? "展開病人清單" : "收合病人清單");
       toggle.title = toggle.getAttribute("aria-label");
@@ -175,14 +195,18 @@ window.CataractUI = (() => {
 
   function renderPatients() {
     const list = $("#cataractPatients");
+    const selected = currentCohort?.members.find(member => member.mrn === $("#analysisPatient").value), identity = $("#analysisSelectedPatient");
+    identity.hidden = !patientView() || activeView();
+    identity.textContent = selected ? ($("#analysisView").value === "surgery" ? "定位：" : "") + [selected.name || "姓名未提供", selected.mrn].join(" · ") : "";
+    if (list.hidden) return;
     const previousScroll = list.scrollTop;
     const focused = list.contains(document.activeElement) ? document.activeElement.dataset : null;
     const focusKey = focused?.queueAction ? "queue" : focused?.patientMrn;
     list.replaceChildren();
-    if (!activeView() || !currentCohort) return;
+    if (!patientView() || !currentCohort) return;
     const heading = el("h3", `病人清單 · ${currentCohort.members.length} 位`);
     list.append(heading);
-    const queue = status?.queue;
+    const cataract = activeView(), queue = cataract ? status?.queue : null;
     if (queue && !["idle", "completed"].includes(queue.state)) {
       const controls = el("div", undefined, "cataract-queue-controls");
       const paused = queue.state === "paused";
@@ -202,17 +226,25 @@ window.CataractUI = (() => {
         queue?.pending?.includes(member.mrn) ? "等待中" :
         state?.cache_cleared ? "本機資料已清除" : state?.attempted ? "部分待續跑" : "尚未抓取";
       const item = button("", () => action(async () => {
+        if ($("#analysisView").value === "surgery") {
+          $("#analysisPatient").value = member.mrn;
+          renderPatients();focusSurgeryPatient(member.mrn);return;
+        }
         if ($("#analysisPatient").value === member.mrn) return;
         $("#analysisPatient").value = member.mrn;
         const displayed = loadAnalysisResult();
-        void enqueue("prioritize").catch(error => notify(error.message, true));
+        if (activeView()) void enqueue("prioritize").catch(error => notify(error.message, true));
         await displayed;
         if ($("#analysisPatient").value === member.mrn) $("#analysisResults").scrollTop = 0;
       }), "cataract-patient");
       item.setAttribute("aria-current", String($("#analysisPatient").value === member.mrn));
       item.dataset.patientMrn = member.mrn;
-      item.append(el("strong", member.name || "姓名未提供"), el("span", member.mrn, "small muted"),
-        el("span", label, "cataract-patient-status"));
+      const name = member.name || "姓名未提供";
+      item.title = [name, member.mrn, cataract ? label : ""].filter(Boolean).join(" · ");
+      item.setAttribute("aria-label", item.title);
+      const identity = el("strong", name);identity.title = name;
+      item.append(identity, el("span", member.mrn, "small muted cataract-patient-id"));
+      if (cataract) item.append(el("span", label, "cataract-patient-status"));
       list.append(item);
     }
     list.scrollTop = previousScroll;
@@ -221,6 +253,7 @@ window.CataractUI = (() => {
         focusKey === "queue" ? item.dataset.queueAction : item.dataset.patientMrn === focusKey);
       target?.focus({preventScroll:true});
     }
+    fitPatientRail();
   }
 
   async function start({refresh: update = false, automatic = false, resume = false} = {}) {

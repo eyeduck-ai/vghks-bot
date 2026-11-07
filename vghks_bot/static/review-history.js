@@ -3,15 +3,16 @@
 window.ReviewHistoryUI=(()=>{
  const titles={numeric:"歷年數值類報告",orders:"歷年醫囑清單",visits:"歷次就診紀錄",
   case_numeric:"該次數值類報告",case_orders:"該次醫囑清單",order_report:"醫囑報告內容",visit_soap:"歷史 SOAP"};
- let context=null,stack=[],taskId="",sequence=0,signature="",renderSignature="",polling=null,loadingStarted=0,orderQuery="",orderGroup="date",orderCategory="all",orderPage=0,visitPage=0,frame=null,orderView=null,reportView=null;
+ let context=null,stack=[],taskId="",sequence=0,signature="",renderSignature="",polling=null,loadingStarted=0,orderQuery="",orderSort="name",orderDirection="ascending",orderCategory="all",orderPage=0,visitPage=0,frame=null,orderView=null,reportView=null;
  const panel=()=>$("#dataContent"),modal=()=>$("#dataDialog");
  const scans=new Set(["scans","case_scans"]);
+ const orderLists=new Set(["orders","case_orders"]);
  const openScans=next=>window.ScanBrowser.open({...next,account,
   patient_name:reviewPatientIdentity(next.mrn,next.review_task_id).name,
   request:api,allowFetch:()=>!!work?.online&&!root.read_only});
  const same=(a,b)=>a&&b&&a.review_task_id===b.review_task_id&&a.cohort_id===b.cohort_id&&a.mrn===b.mrn&&a.resource===b.resource&&a.reference===b.reference;
  function clearView(){reportView?.gallery.dispose();frame?.navigation.remove();frame=orderView=reportView=null;}
- function reset(){clearView();modal().classList.remove("report-view-dialog");context=null;stack=[];taskId="";signature=renderSignature="";loadingStarted=0;sequence++;}
+ function reset(){clearView();modal().classList.remove("report-view-dialog");modal().classList.remove("order-list-dialog");context=null;stack=[];taskId="";signature=renderSignature="";loadingStarted=0;sequence++;}
  function active(){return modal().open&&modal().dataset.view==="history"&&context;}
  function assetUrl(asset){return window.LocalSession.resourceURL("/api/accounts/"+encodeURIComponent(account)+"/analysis/asset?id="+encodeURIComponent(asset.digest));}
  function action(label,callback){const button=btn(label,callback,"quiet");button.classList.add("history-action");return button;}
@@ -23,12 +24,13 @@ window.ReviewHistoryUI=(()=>{
  async function load(next,{push=false,force=false}={}){
   if(push&&context)stack.push(context);
   const retaining=same(context,next)&&frame;
-  if(!same(context,next)){clearView();orderQuery="";orderGroup=next.resource==="orders"?"name":"date";orderCategory="all";orderPage=visitPage=0;}
+  if(!same(context,next)){clearView();orderQuery="";orderSort="name";orderDirection="ascending";orderCategory=next.resource==="orders"?"ophthalmic":"all";orderPage=visitPage=0;}
   context=next;taskId="";signature=renderSignature="";loadingStarted=Date.now();const request=++sequence;
   extensionTask="";
   window.FileCompare?.context(account,next.mrn,reviewPatientIdentity(next.mrn,next.review_task_id).name);
   dialog("dataDialog");modal().dataset.view="history";$("#dataTitle").textContent=titles[next.resource];
   modal().classList.toggle("report-view-dialog",next.resource==="order_report");window.UtilityDock?.sync();
+  modal().classList.toggle("order-list-dialog",orderLists.has(next.resource));
   setPatientDialogContext("dataDialog",next.mrn,"",next.review_task_id);
   if(!retaining)panel().replaceChildren(ClinicalUI.loading("正在讀取已存報告…",{startedAt:loadingStarted}));
   try{
@@ -72,15 +74,16 @@ window.ReviewHistoryUI=(()=>{
  function jump(resource,reference=""){const next={...context,resource,reference};return scans.has(resource)?openScans(next):load(next,{push:true});}
  function goBack(){const previous=stack.pop();if(previous)return load(previous);}
  function navigation(content,result){
-  const controls=node("div",undefined,"history-controls dialog-toolbar"),isReport=context.resource==="order_report";
+  const controls=node("div",undefined,"history-controls dialog-toolbar"),isReport=context.resource==="order_report",isOrders=orderLists.has(context.resource);
   if(stack.length)controls.append(action("← 返回清單",goBack));
   if(isReport){
    const order=result.data?.order||{},summary=[order.date,order.name,order.case_no].filter(Boolean).join(" · "),meta=node("span",summary,"history-report-meta");meta.title=summary;controls.append(meta);
   }
-  const status=node("span",result.updated_at?"已存資料 · "+time(result.updated_at):"尚無已存資料","caption");
+  const status=node("span",result.updated_at?(isOrders?"已存 ":"已存資料 · ")+time(result.updated_at):"尚無已存資料","caption");
   if(isReport){status.classList.add("history-report-state");status.title=status.textContent;}
   controls.append(status);
-  if(work?.online&&!root.read_only){const update=action("更新資料",()=>load(context,{force:true}));if(isReport){setIcon(update,"refresh","更新資料");update.classList.add("history-report-refresh","dialog-header-control");}controls.append(update);}
+  if(isOrders&&context.resource==="orders"&&result.coverage?.orders_start){const range=node("span","索引自 "+result.coverage.orders_start,"caption history-index-range");range.title="更早的醫囑可由歷次就診補查";controls.append(range);}
+  if(work?.online&&!root.read_only){const update=action("更新資料",()=>load(context,{force:true}));if(isReport||isOrders){setIcon(update,"refresh","更新資料");update.classList.add("history-report-refresh","dialog-header-control");}controls.append(update);}
   if(!result.complete&&work?.online&&!root.read_only)controls.append(action("重試未完成",()=>load(context)));
   if(isReport&&!root.read_only){const scope={...context},sourceAccount=account;controls.append(ClinicalUI.pacsControl({
    scope:{...scope,account:sourceAccount},enabled:!!work?.online,
@@ -91,7 +94,6 @@ window.ReviewHistoryUI=(()=>{
  function coverage(content,result){
   const value=result.coverage||{};
   if(context.resource==="numeric")content.append(node("p","歷年數值索引約自 "+value.numeric_start+" 起；更早門診可由歷次就診選取後補查。","caption"));
-  if(context.resource==="orders")content.append(node("p","歷年醫囑索引約自 "+value.orders_start+" 起；更早門診可由歷次就診選取後補查。","caption"));
  }
  function render(result,{loading=false}={}){
   if(!active())return;
@@ -99,8 +101,9 @@ window.ReviewHistoryUI=(()=>{
   if(next===renderSignature)return;
   renderSignature=next;
   panel().querySelector(".history-load-error")?.remove();
-  if(!frame){const content=panel();content.replaceChildren();const area=node("div",undefined,"history-frame");frame={navigation:node("div",undefined,"history-navigation"),coverage:node("div"),issues:node("p",undefined,"error history-index-issues"),body:node("div",undefined,"history-report-content"),waiting:node("div")};area.append(frame.coverage,frame.issues,frame.body,frame.waiting);if(context.resource!=="order_report")area.prepend(frame.navigation);content.append(area);}
-  if(context.resource==="order_report"&&frame.navigation.parentElement!==$("#dataDialogActions"))$("#dataDialogActions").append(frame.navigation);
+  const headerNavigation=context.resource==="order_report"||orderLists.has(context.resource);
+  if(!frame){const content=panel();content.replaceChildren();const area=node("div",undefined,"history-frame");frame={navigation:node("div",undefined,"history-navigation"),coverage:node("div"),issues:node("p",undefined,"error history-index-issues"),body:node("div",undefined,"history-report-content"),waiting:node("div")};area.append(frame.coverage,frame.issues,frame.body,frame.waiting);if(!headerNavigation)area.prepend(frame.navigation);content.append(area);}
+  if(headerNavigation&&frame.navigation.parentElement!==$("#dataDialogActions"))$("#dataDialogActions").append(frame.navigation);
   frame.navigation.replaceChildren();navigation(frame.navigation,result);frame.coverage.replaceChildren();coverage(frame.coverage,result);
   frame.issues.textContent=result.issues?.length?`已顯示可確認的資料；另有 ${result.issues.length} 項未能確認，可按「重試未完成」重試。`:"";frame.issues.hidden=!result.issues?.length;
   const content=frame.body;
@@ -114,7 +117,7 @@ window.ReviewHistoryUI=(()=>{
    appendNumericTables(content,data.tables||[]);
    if(context.resource==="numeric")content.append(action("從歷次就診選擇更早報告",()=>jump("visits")));
   }else if(context.resource==="orders"||context.resource==="case_orders"){
-   if(!orderView){content.replaceChildren();orderView=renderOrders(content);if(context.resource==="orders")content.append(action("從歷次就診選擇更早醫囑",()=>jump("visits")));}
+   if(!orderView){content.replaceChildren();orderView=renderOrders(content);}
    orderView.update(data);
   }else if(context.resource==="visits"){content.replaceChildren();renderVisits(content,data);}
   else if(context.resource==="visit_soap"){
@@ -128,33 +131,54 @@ window.ReviewHistoryUI=(()=>{
   if(!frame.waiting.querySelector(".clinical-loading")){const value=ClinicalUI.loading("正在取得其他資料，已存結果可先檢閱…",{startedAt:loadingStarted});value.classList.add("is-compact");frame.waiting.append(value);}
  }
  function renderOrders(content){
-  let rows=[];const controls=node("div",undefined,"history-filter"),categories=node("div",undefined,"history-order-classification"),search=node("input"),group=node("select"),results=node("div"),pager=node("div"),summary=node("p",undefined,"caption");
+  let rows=[];const scope={...context},sourceAccount=account;
+  const controls=node("div",undefined,"history-order-toolbar"),categories=node("div",undefined,"history-order-classification"),search=node("input"),results=node("div",undefined,"history-orders-scroll"),pager=node("div"),footer=node("div",undefined,"history-orders-footer");
   search.type="search";search.placeholder="搜尋醫囑名稱或日期";search.setAttribute("aria-label","搜尋醫囑名稱或日期");search.value=orderQuery;
-  group.setAttribute("aria-label","醫囑分類排序");group.append(new Option("依日期分類（新到舊）","date"),new Option("依名稱分類","name"));group.value=orderGroup;
-  function draw(){
-   categories.replaceChildren();
-   for(const [key,label] of [["all","全部"],["ophthalmic","眼科檢查"],["other","其他"]]){const count=rows.filter(row=>key==="all"||!!row.ophthalmic===(key==="ophthalmic")).length,choose=action(`${label}（${count}）`,()=>{orderCategory=key;orderPage=0;draw();});choose.setAttribute("aria-pressed",String(orderCategory===key));categories.append(choose);}
-   let visible=rows.filter(row=>(orderCategory==="all"||!!row.ophthalmic===(orderCategory==="ophthalmic"))&&(!orderQuery||[row.name,row.date,row.order_date,row.execution_date].filter(Boolean).join(" ").toLocaleLowerCase().includes(orderQuery.toLocaleLowerCase())));
-   visible=[...visible].sort((a,b)=>Number(!!b.ophthalmic)-Number(!!a.ophthalmic)||(orderGroup==="name"?String(a.name||"").localeCompare(String(b.name||""),"zh-Hant")||String(b.date||"").localeCompare(String(a.date||"")):String(b.date||"").localeCompare(String(a.date||""))));
-   orderPage=Math.max(0,Math.min(orderPage,Math.ceil(visible.length/40)-1));
-   const pageRows=visible.slice(orderPage*40,orderPage*40+40),groups=new Map();
-   for(const row of pageRows){const category=row.ophthalmic?"眼科檢查":"其他",key=orderGroup==="name"?(row.name||"未命名醫囑"):(String(row.date||"").slice(0,7)||"日期未提供");if(!groups.has(category))groups.set(category,new Map());const classified=groups.get(category);if(!classified.has(key))classified.set(key,[]);classified.get(key).push(row);}
-   results.replaceChildren();
-   for(const [category,classified] of groups){const categorySection=node("section",undefined,"history-order-category");categorySection.append(node("h3",category));
-    for(const [name,items] of classified){const section=node("section",undefined,"history-group");section.append(node("h4",name));
-     section.append(table(["使用／開單日期","醫囑名稱","就診案例","報告"],items.map(row=>{
-     const date=[row.execution_date||row.order_date||"日期未提供",row.execution_date&&row.order_date&&row.execution_date!==row.order_date?"開單 "+row.order_date:""].filter(Boolean).join(" · ");
-     return [date,row.name||"未命名醫囑",row.case_no||"—",action("查看內容",()=>jump("order_report",row.id))];
-     })));categorySection.append(section);}
-    results.append(categorySection);
-   }
-   if(!pageRows.length)results.append(empty("沒有符合的醫囑。"));
-   paginate(pager,orderPage,visible.length,index=>{orderPage=index;draw();modal().scrollTop=0;panel().scrollTop=0;});
+  results.setAttribute("role","region");results.setAttribute("aria-label","醫囑清單");results.tabIndex=0;
+  const grid=node("table",undefined,"history-order-table"),head=node("thead"),heading=node("tr"),body=node("tbody"),sortHeaders=new Map(),emptyState=empty("沒有符合的醫囑。");
+  grid.append(node("caption","醫囑清單","sr-only"));head.append(heading);grid.append(head,body);results.append(grid,emptyState);
+  for(const [key,label] of [["name","醫囑名稱"],["order_date","開單時間"],["execution_date","執行時間"],["case_no","就診案例"],["actions","檢閱"]]){
+   const cell=node("th");cell.setAttribute("scope","col");
+   if(key==="name"||key==="order_date"||key==="execution_date"){
+    const choose=action(label,()=>{orderDirection=orderSort===key?(orderDirection==="ascending"?"descending":"ascending"):key==="name"?"ascending":"descending";orderSort=key;orderPage=0;draw(true);}),indicator=node("span");indicator.setAttribute("aria-hidden","true");choose.append(indicator);choose.classList.add("history-sort");cell.append(choose);sortHeaders.set(key,{cell,choose,indicator});
+   }else cell.textContent=label;
+   heading.append(cell);
   }
-  search.addEventListener("input",()=>{orderQuery=search.value;orderPage=0;draw();});
-  group.addEventListener("change",()=>{orderGroup=group.value;orderPage=0;draw();});
-  controls.append(search,group);content.append(controls,categories,summary,results,pager);
-  return {update(next){rows=next;summary.textContent=rows.length+" 筆醫囑 · 點選後才讀取報告內容";draw();}};
+  function compareValue(a,b,direction=1){
+   const left=String(a||""),right=String(b||"");
+   if(!left||!right){if(left!==right)return left?-1:1;}
+   return left.localeCompare(right,"zh-Hant",{numeric:true,sensitivity:"base"})*direction;
+  }
+  function compare(a,b){
+   return compareValue(a[orderSort],b[orderSort],orderDirection==="ascending"?1:-1)||compareValue(a.order_date,b.order_date,-1)||compareValue(a.name,b.name)||String(a.id).localeCompare(String(b.id));
+  }
+  function draw(resetScroll=false){
+   categories.replaceChildren();
+   for(const [key,label] of [["all","全部"],["ophthalmic","眼科檢查"],["other","其他"]]){const count=rows.filter(row=>key==="all"||!!row.ophthalmic===(key==="ophthalmic")).length,choose=action(`${label}（${count}）`,()=>{orderCategory=key;orderPage=0;draw(true);});choose.setAttribute("aria-pressed",String(orderCategory===key));categories.append(choose);}
+   const visible=rows.filter(row=>(orderCategory==="all"||!!row.ophthalmic===(orderCategory==="ophthalmic"))&&(!orderQuery||[row.name,row.date,row.order_date,row.execution_date].filter(Boolean).join(" ").toLocaleLowerCase().includes(orderQuery.toLocaleLowerCase()))).sort(compare);
+   orderPage=Math.max(0,Math.min(orderPage,Math.ceil(visible.length/40)-1));
+   const pageRows=visible.slice(orderPage*40,orderPage*40+40);body.replaceChildren();
+   for(const row of pageRows){
+    const line=node("tr"),actions=node("div",undefined,"history-order-actions");actions.append(action("查看內容",()=>jump("order_report",row.id)));
+    if(!root.read_only)actions.append(ClinicalUI.pacsControl({scope:{...scope,resource:"order_report",reference:row.id,account:sourceAccount},buttonText:"本地 PACS",compact:true,enabled:!!work?.online,
+     current:()=>active()&&account===sourceAccount&&same(context,scope)&&!!work?.online&&!root.read_only,
+     request:values=>api("/reviews/pacs/open",values)}));
+    for(const [index,value] of [row.name||"未命名醫囑",row.order_date||"—",row.execution_date||"—",row.case_no||"—",actions].entries()){
+     const cell=node("td");if(index===4)cell.append(value);else{cell.textContent=value;if(index===1||index===2)cell.className="history-order-time";}line.append(cell);
+    }
+    body.append(line);
+   }
+   grid.hidden=!pageRows.length;emptyState.hidden=!!pageRows.length;
+   for(const [key,{cell,choose,indicator}] of sortHeaders){const selected=key===orderSort;if(selected)cell.setAttribute("aria-sort",orderDirection);else cell.removeAttribute("aria-sort");indicator.textContent=selected?(orderDirection==="ascending"?" ↑":" ↓"):" ↕";choose.title=selected?(orderDirection==="ascending"?"由小到大；按一下反向排序":"由大到小；按一下反向排序")+(key==="name"?"；同名檢查依開單時間由新到舊":""):"依"+({name:"醫囑名稱",order_date:"開單時間",execution_date:"執行時間"}[key])+"排序";}
+   paginate(pager,orderPage,visible.length,index=>{orderPage=index;draw(true);modal().scrollTop=0;panel().scrollTop=0;});
+   pager.hidden=visible.length<=40;
+   if(resetScroll)results.scrollTop=0;
+  }
+  search.addEventListener("input",()=>{orderQuery=search.value;orderPage=0;draw(true);});
+  controls.append(search,categories);footer.append(pager);
+  if(context.resource==="orders"){const older=action("更早醫囑",()=>jump("visits"));older.title="從歷次就診選擇更早醫囑";footer.append(older);}
+  content.append(controls,results,footer);
+  return {update(next){rows=next;draw();}};
  }
  function renderVisits(content,rows){
   const results=node("div"),pager=node("div");

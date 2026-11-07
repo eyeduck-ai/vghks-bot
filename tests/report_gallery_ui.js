@@ -204,11 +204,11 @@ async function historyTests(){
  const pdf=asset("PDFREF","PDF","application/pdf"),image=asset("IMAGEREF","IMG");
  const items=[{ref_key:"PDFREF",ordinal:1,status:"ready",kind:"pdf"},{ref_key:"IMAGEREF",ordinal:2,status:"pending",kind:"image"}];
  const details=[{fields:{檢查項目:"合成眼科醫囑"}}];let data={...payload(items,[pdf]),details};
- c.ClinicalUI.loading=()=>s.node("div","等待","clinical-loading");c.ClinicalUI.textDownload=()=>s.node("button","文字報告");c.ClinicalUI.pacsControl=()=>s.node("div","開啟本地 PACS");
+ c.ClinicalUI.loading=()=>s.node("div","等待","clinical-loading");c.ClinicalUI.textDownload=()=>s.node("button","文字報告");c.ClinicalUI.pacsControl=options=>{const value=s.node("div","本地 PACS","pacs-control");value.options=options;return value;};
  c.window.FileCompare={context(){}};c.work.online=true;c.extensionTask="";c.dialog=()=>{$("#dataDialog").open=true;};c.setPatientDialogContext=()=>{};c.reviewPatientIdentity=()=>({name:"合成病人"});c.JobProgress={pending(){},publish(){}};
  c.Option=function(label,value){const option=s.node("option",label);option.value=value;return option;};
  c.table=(_headers,rows)=>{shown.push(rows);return s.node("table");};c.paginate=(_host,page,total,change)=>{pages.push({page,total,change});};
- c.api=async(path,values)=>{calls.push({path,values});if(path==="/reviews/history/read")return {data,complete,updated_at:"same-second",issues:[]};if(path==="/tasks/start"){if(startGate)await startGate.promise;return {task_id:"TASK"};}if(path.startsWith("/tasks/detail"))return {status,revision,updated_at:"same-second"};throw new Error(path);};
+ c.api=async(path,values)=>{calls.push({path,values});if(path==="/reviews/history/read")return {data,complete,updated_at:"same-second",issues:[],coverage:{orders_start:"2015-11-25"}};if(path==="/reviews/pacs/open")return {status:"HANDOFF_SENT",message:"合成交接"};if(path==="/tasks/start"){if(startGate)await startGate.promise;return {task_id:"TASK"};}if(path.startsWith("/tasks/detail"))return {status,revision,updated_at:"same-second"};throw new Error(path);};
  s.run("vghks_bot/static/review-history.js");const ui=c.window.ReviewHistoryUI;
  await ui.open("order_report","TEST001","ORDER");
  const panel=$("#dataContent"),viewport=panel.querySelector(".report-gallery-viewport"),stage=viewport.firstElementChild,iframe=stage.firstElementChild,detailDisclosure=panel.querySelector("details");viewport.scrollTop=77;
@@ -226,19 +226,51 @@ async function historyTests(){
  assert.equal(calls.filter(value=>value.path==="/tasks/start").at(-1).values.force,true);startGate.resolve();await force;startGate=null;
  status="partial";revision++;await ui.poll();await controls().find(value=>value.textContent==="重試未完成").run();
  assert.equal(calls.filter(value=>value.path==="/tasks/start").at(-1).values.force,false,"retry unnecessarily forced successful branches");
- complete=true;status="completed";data=[...Array.from({length:45},(_,index)=>({id:"EYE"+index,name:"眼科 "+index,date:"2026-10-27",ophthalmic:true})),...Array.from({length:60},(_,index)=>({id:"OTHER"+index,name:"其他 "+index,date:"2026-09-01",ophthalmic:false}))];
- await ui.open("orders","TEST001");assert.equal($("#dataDialog").classList.contains("report-view-dialog"),false,"report-only layout leaked into order list");assert.equal($("#dataDialogActions").querySelector(".history-controls"),null);assert.equal(pages.at(-1).total,105,"default classification hid other reports");
- assert.equal(panel.querySelectorAll(".history-action").find(value=>value.textContent.startsWith("全部"))["aria-pressed"],"true");
- const grouping=panel.querySelector("select");grouping.value="date";await grouping.emit("change");
- assert.equal(shown.at(-1).length,40);assert.ok(shown.at(-1).every(row=>row[1].startsWith("眼科")));
- const beforeSecondPage=shown.length;pages.at(-1).change(1);const secondPage=shown.slice(beforeSecondPage).flat();
- assert.equal(secondPage.length,40);assert.ok(secondPage.slice(0,5).every(row=>row[1].startsWith("眼科")));assert.ok(secondPage.slice(5).every(row=>row[1].startsWith("其他")),"classification happened after page slicing");
- assert.deepEqual(panel.querySelectorAll(".history-order-category").map(section=>section.firstElementChild.textContent),["眼科檢查","其他"]);
+ complete=true;status="completed";data=[...Array.from({length:45},(_,index)=>({id:"EYE"+index,name:"Beta "+index,date:"2026-10-27",order_date:"2026-10-27",execution_date:"2026-10-28",ophthalmic:true})),...Array.from({length:60},(_,index)=>({id:"OTHER"+index,name:"Alpha "+index,date:"2026-09-01",order_date:"2026-09-01",ophthalmic:false}))];
+ await ui.open("orders","TEST001");assert.equal($("#dataDialog").classList.contains("report-view-dialog"),false,"report-only layout leaked into order list");assert.equal($("#dataDialog").classList.contains("order-list-dialog"),true);assert.ok($("#dataDialogActions").querySelector(".history-controls"));assert.equal(panel.querySelector(".history-controls"),null);assert.equal(pages.at(-1).total,45,"historical orders did not default to ophthalmic checks");
+ assert.equal(panel.querySelectorAll(".history-action").find(value=>value.textContent.startsWith("眼科檢查"))["aria-pressed"],"true");
+ const grid=panel.querySelector(".history-order-table"),headers=grid.querySelectorAll("th"),names=()=>grid.querySelector("tbody").children.map(row=>row.children[0].textContent);
+ assert.deepEqual(names().slice(0,3),["Beta 0","Beta 1","Beta 2"]);
+ await panel.querySelectorAll(".history-action").find(value=>value.textContent.startsWith("全部")).run();assert.equal(pages.at(-1).total,105,"all tab hid other reports");
+ assert.equal(panel.querySelectorAll("table").length,1,"orders were split into multiple tables");
+ assert.equal(headers[0]["aria-sort"],"ascending");assert.deepEqual(names().slice(0,3),["Alpha 0","Alpha 1","Alpha 2"]);
+ assert.equal(names().length,40);assert.equal(grid.querySelector("tbody").firstElementChild.children[2].textContent,"—","execution date was inferred from the order date");
+ assert.equal(panel.querySelectorAll(".history-order-category").length,0);assert.equal(panel.querySelectorAll("h4").length,0);
+ assert.equal(panel.all().some(value=>value.textContent.includes("點選後才讀取")),false);
+ const listScroll=panel.querySelector(".history-orders-scroll");listScroll.scrollTop=120;
+ await headers[0].firstElementChild.run();assert.equal(headers[0]["aria-sort"],"descending");assert.equal(names()[0],"Beta 44");assert.equal(listScroll.scrollTop,0,"sorting left the new first rows off-screen");
+ await headers[1].firstElementChild.run();assert.equal(headers[1]["aria-sort"],"descending");assert.equal(headers[0]["aria-sort"],undefined);assert.ok(names().every(name=>name.startsWith("Beta")));
+ listScroll.scrollTop=180;pages.at(-1).change(1);assert.equal(listScroll.scrollTop,0,"pagination retained the previous page's scroll position");assert.equal(names().length,40);assert.ok(names().slice(0,5).every(name=>name.startsWith("Beta")));assert.ok(names().slice(5).every(name=>name.startsWith("Alpha")),"sorting happened after page slicing");
+ await headers[1].firstElementChild.run();assert.equal(headers[1]["aria-sort"],"ascending");assert.equal(pages.at(-1).page,0);assert.ok(names().every(name=>name.startsWith("Alpha")));
  const search=panel.querySelector("input");search.value="2026-09";await search.emit("input");assert.equal(pages.at(-1).total,60,"date search discarded matching other orders");
  assert.equal(panel.querySelectorAll(".history-action").find(value=>value.textContent.startsWith("全部"))["aria-pressed"],"true","cross-category search changed the default scope");
- search.value="其他 59";await search.emit("input");assert.equal(pages.at(-1).total,1);assert.equal(shown.at(-1)[0][1],"其他 59");
+ search.value="Alpha 59";await search.emit("input");assert.equal(pages.at(-1).total,1);assert.equal(names()[0],"Alpha 59");
+ const direct=panel.querySelector(".pacs-control").options;
+ assert.equal(direct.scope.resource,"order_report");assert.equal(direct.scope.reference,"OTHER59");assert.equal(direct.scope.mrn,"TEST001");assert.equal(direct.buttonText,"本地 PACS");assert.equal(direct.current(),true);
+ assert.equal(calls.filter(call=>call.path==="/reviews/pacs/open").length,0,"rendering sent a native command");await direct.request(direct.scope);assert.equal(calls.at(-1).path,"/reviews/pacs/open");assert.equal($("#dataDialog").classList.contains("order-list-dialog"),true,"direct PACS opened the JPG report");
  search.value="";await search.emit("input");await panel.querySelectorAll(".history-action").find(value=>value.textContent.startsWith("眼科檢查")).run();assert.equal(pages.at(-1).total,45);
  await panel.querySelectorAll(".history-action").find(value=>value.textContent.startsWith("其他（")).run();assert.equal(pages.at(-1).page,0);assert.equal(pages.at(-1).total,60);
- assert.equal(panel.querySelector("input"),search,"filtering replaced the focused search input");ui.reset();
+ assert.equal(panel.querySelector("input"),search,"filtering replaced the focused search input");assert.equal(panel.querySelector(".history-order-table"),grid,"sorting replaced the keyboard-focused headers");
+ data=[{id:"FIRST",name:"Alpha",order_date:"2025-01-01",execution_date:"2026-02-01"},{id:"SECOND",name:"Beta",order_date:"2026-01-01",execution_date:"2025-02-01"},{id:"MISSING",name:"Gamma"}];
+ await ui.open("case_orders","TEST001","VISIT");assert.equal(direct.current(),false,"old list scope remained active after changing visits");
+ const caseGrid=panel.querySelector("table"),caseBody=caseGrid.querySelector("tbody");assert.equal(caseBody.firstElementChild.children[0].textContent,"Alpha","case orders did not default to name sorting");
+ await caseGrid.querySelectorAll("th")[1].firstElementChild.run();assert.equal(caseBody.firstElementChild.children[0].textContent,"Beta","sorting used execution time instead of order time");assert.equal(caseBody.children.at(-1).children[0].textContent,"Gamma");
+ await caseGrid.querySelectorAll("th")[1].firstElementChild.run();assert.equal(caseBody.children.at(-1).children[0].textContent,"Gamma","missing dates sorted before known dates");
+ await caseGrid.querySelectorAll("th")[2].firstElementChild.run();assert.equal(caseBody.firstElementChild.children[0].textContent,"Alpha","execution sorting used order time");assert.equal(caseGrid.querySelectorAll("th")[2]["aria-sort"],"descending");assert.equal(caseGrid.querySelectorAll("th")[1]["aria-sort"],undefined);
+ await caseGrid.querySelectorAll("th")[2].firstElementChild.run();assert.equal(caseBody.firstElementChild.children[0].textContent,"Beta");assert.equal(caseBody.children.at(-1).children[0].textContent,"Gamma","missing execution dates sorted before known dates");
+ c.root.read_only=true;await ui.open("case_orders","TEST001","VISIT");assert.equal(panel.querySelectorAll(".pacs-control").length,0);ui.reset();assert.equal($("#dataDialog").classList.contains("order-list-dialog"),false);
+ c.root.read_only=false;data=[
+  {id:"A-OLD",name:"Alpha",ophthalmic:true,order_date:"2024-01-01",execution_date:"2026-01-01"},
+  {id:"B-NEW",name:"Beta",ophthalmic:true,order_date:"2026-01-01",execution_date:"2024-01-01"},
+  {id:"A-NEW",name:"Alpha",ophthalmic:true,order_date:"2025-01-01",execution_date:"2025-01-01"},
+  {id:"A-MISSING",name:"Alpha",ophthalmic:true,date:"2027-01-01"},
+  {id:"OTHER",name:"Aardvark",ophthalmic:false,order_date:"2027-01-01"}];
+ await ui.open("orders","TEST001");
+ const groupedGrid=panel.querySelector("table"),orderedIds=()=>groupedGrid.querySelector("tbody").children.map(row=>row.querySelector(".pacs-control").options.scope.reference);
+ assert.deepEqual(orderedIds(),["A-NEW","A-OLD","A-MISSING","B-NEW"],"default name groups did not put newest order times first or inferred a missing order date");
+ await groupedGrid.querySelectorAll("th")[1].firstElementChild.run();assert.deepEqual(orderedIds(),["B-NEW","A-NEW","A-OLD","A-MISSING"]);
+ await groupedGrid.querySelectorAll("th")[2].firstElementChild.run();assert.deepEqual(orderedIds(),["A-OLD","A-NEW","B-NEW","A-MISSING"]);
+ await groupedGrid.querySelectorAll("th")[2].firstElementChild.run();assert.deepEqual(orderedIds(),["B-NEW","A-NEW","A-OLD","A-MISSING"]);
+ await groupedGrid.querySelectorAll("th")[0].firstElementChild.run();assert.deepEqual(orderedIds(),["A-NEW","A-OLD","A-MISSING","B-NEW"]);ui.reset();
 }
 (async()=>{await galleryTests();await imageFitTests();await thumbnailTests();await historyTests();process.stdout.write("Report gallery revision polling, classification, fit and manual zoom, lazy thumbnails and cleanup passed\n");})().catch(error=>{console.error(error);process.exitCode=1;});
