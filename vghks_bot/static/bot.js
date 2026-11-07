@@ -167,7 +167,7 @@ async function enter(key){
 }
 function updateReviewLayout(){document.body.classList.toggle("review-result-compact",page==="review"&&!!reviewData&&!reviewSetupExpanded);}
 function showPage(name){if(page==="module"&&name!=="module")captureCataractScroll();page=name;document.body.classList.toggle("module-workspace",name==="module");$("#sidebarAccount").open=false;Choices.sync();window.ToolWorkspace?.visibility(name);window.SurgerySystem?.visibility(name);window.SheetManagement?.visibility(name);for(const section of $$("main>.page"))section.hidden=section.id!==name+"Page";for(const b of $$("[data-page]"))b.classList.toggle("active",b.dataset.page===name);updateReviewLayout();window.WorkspacePoll?.visibility();window.ReviewPaging?.visibility();}
-function toggleReviewPatients(){const hidden=!$("#reviewPatientPanel").hidden;$("#reviewPatientPanel").hidden=hidden;$("#reviewPatients").hidden=hidden;$("#reviewPager").hidden=hidden;$("#reviewLayout").classList.toggle("patients-collapsed",hidden);const toggle=$("#reviewPatientsToggle");toggle.setAttribute("aria-expanded",String(!hidden));toggle.textContent=hidden?"›":"‹";toggle.title=hidden?"展開病人清單":"收合病人清單";toggle.setAttribute("aria-label",toggle.title);}
+function toggleReviewPatients(){const hidden=!$("#reviewPatientPanel").hidden;$("#reviewPatientPanel").hidden=hidden;$("#reviewPatients").hidden=hidden;$("#reviewPager").hidden=hidden;$("#reviewLayout").classList.toggle("patients-collapsed",hidden);const toggle=$("#reviewPatientsToggle");toggle.setAttribute("aria-expanded",String(!hidden));toggle.title=hidden?"展開病人清單":"收合病人清單";toggle.setAttribute("aria-label",toggle.title);}
 async function navigate(name){if(page==="review"&&name!=="review"&&!await window.ReviewNotesUI?.flushAll())throw new Error("有備註尚未儲存，請重試後再切換頁面。");showPage(name);if(name==="library")await loadLibrary();if(name==="tags")await loadTags();if(name==="tasks")await refresh();if(name==="approvals"){await window.Approvals.enter();}if(name==="earnings")await window.Earnings.open();if(name==="surgery")await window.SurgerySystem.open();if(name==="sheetManagement")await window.SheetManagement.open();}
 const draftValue=()=>({start:$("#startDate").value,end:$("#endDate").value,mode:$("#dateMode").value,selected:[...selected],manual,tab:listTab});
 function draftSave(){if(root.read_only)return;clearTimeout(draftTimer);const key=account;draftTimer=setTimeout(()=>{if(key!==account)return;act(()=>api("/draft/save",draftValue()));},250);}
@@ -593,16 +593,16 @@ function renderReviewDetail(){
  const autoTags=new Map(),summary=node("div",undefined,"review-tag-summary");
  for(const record of p.records||[])for(const tag of record.matches||[])if(!autoTags.has(tag.category))autoTags.set(tag.category,tag);
  if(autoTags.size){
-  const group=node("div",undefined,"review-tag-group");group.append(node("strong","自動 TAG"));
+  const group=node("div",undefined,"review-tag-group review-tag-section"),items=node("span",undefined,"review-tag-items");group.append(node("strong","自動 TAG"),items);
   for(const tag of autoTags.values()){
    const target=tagTargets.get(tag.category),badge=btn("",()=>SOAPView.reveal(target),"badge tag-evidence");
    badge.append(node("span",tag.category_name||tag.category),node("small",tag.keyword,"tag-keyword"));
    badge.setAttribute("aria-label",`${tag.category_name||tag.category}：定位到 ${tag.keyword} 的 SOAP 依據`);
-   badge.title=target?"跳到 SOAP 依據":"此 TAG 的依據尚無法定位";badge.disabled=!target;group.append(badge);
+   badge.title=target?"跳到 SOAP 依據":"此 TAG 的依據尚無法定位";badge.disabled=!target;items.append(badge);
   }
   summary.append(group);
  }
- if(p.manual_tags?.length){const group=node("div",undefined,"review-tag-group");group.append(node("strong","手動 TAG"),badges(p.manual_tags));summary.append(group);}
+ if(p.manual_tags?.length){const group=node("div",undefined,"review-tag-group review-tag-section"),items=badges(p.manual_tags);items.className="review-tag-items";group.append(node("strong","手動 TAG"),items);summary.append(group);}
  if(searchTargets.length){
   const group=node("div",undefined,"review-tag-group review-search-group");group.append(node("strong","搜尋命中"));
   const choices=node("span",undefined,"review-search-choices"),moreChoices=node("span",undefined,"review-search-choices");

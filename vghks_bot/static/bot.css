@@ -32,11 +32,15 @@ dialog.approval-dialog{padding:0;max-height:90dvh}
 .detail-shortcuts{display:flex;align-items:center;gap:5px;flex-wrap:wrap;justify-content:flex-start}
 .review-control-divider{width:1px;height:27px;background:var(--line);flex:none}
 .review-page .review-controls .detail-actions{margin:0}
-.review-tag-summary{display:flex;flex-wrap:wrap;gap:8px 18px;padding:10px 12px;background:#f0f5eb;border:1px solid #d7e3d1;border-radius:5px;margin:0 0 10px}
+.review-tag-summary{display:grid;gap:8px;padding:10px 12px;background:#f0f5eb;border:1px solid #d7e3d1;border-radius:5px;margin:0 0 10px}
 .review-tag-group{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0}
 .review-tag-group>strong{font-size:11px;color:#4d6853;white-space:nowrap}
 .review-tag-group .badge{font-size:11px;margin:0;padding:3px 8px}
 .review-tag-group button.badge{min-height:30px;display:inline-flex;align-items:center;gap:5px;font-weight:650}
+.review-tag-section{display:grid;grid-template-columns:58px minmax(0,1fr);align-items:start;gap:8px}
+.review-tag-section>strong{line-height:18px;padding:5px 0}
+.review-tag-items{display:flex;align-items:flex-start;flex-wrap:wrap;gap:6px;min-width:0}
+:root[data-density] .review-tag-items>.badge,.review-tag-items>.badge{display:inline-flex;align-items:center;flex-wrap:wrap;gap:4px;max-width:100%;min-height:28px;padding:3px 8px;font-size:12px;font-weight:500;line-height:20px;text-align:left;white-space:normal;overflow-wrap:anywhere}
 .review-tag-group button.badge:hover{background:#deecd5;border-color:#83a876}
 .review-tag-group .tag-keyword{font-size:10px;font-weight:400;color:#55704b}
 .review-tag-group .tag-keyword::before{content:"· ";}
@@ -268,11 +272,7 @@ button.panel-toggle.icon-button:hover{background:#dce8d7;border-color:#c4d4bd}
 .review-layout.patients-collapsed{grid-template-columns:minmax(0,1fr)}
 .review-layout{--review-patient-width:clamp(184px,var(--review-patient-content-width,184px),248px);grid-template-columns:var(--review-patient-width) minmax(0,1fr);position:relative}
 .review-layout.patients-collapsed{grid-template-columns:minmax(0,1fr)}
-#reviewPatientsToggle{position:absolute;z-index:4;left:calc(var(--review-patient-width) + 2px);top:11px;transform:none;width:18px;min-width:18px;height:22px;min-height:22px;flex:0 0 18px;padding:2px!important;border:1px solid var(--line)!important;border-radius:4px;background:var(--paper)!important;box-shadow:none}
-#reviewPatientsToggle .icon{width:10px;height:10px;flex-basis:10px}
-#reviewPatientsToggle:hover{background:var(--soft)!important}
-.review-layout.patients-collapsed #reviewPatientsToggle{left:2px}
-.review-layout.patients-collapsed .detail-meta{padding-left:10px}
+.review-layout.patients-collapsed .detail-meta{padding-left:0}
 .review-detail .detail-meta{display:flex;flex-direction:row;align-items:center;justify-content:flex-start;gap:6px 10px;flex-wrap:wrap;margin-bottom:8px}
 .review-detail .detail-meta h2{line-height:1.25;overflow-wrap:anywhere}
 .review-detail .review-identity-line .review-demographics,.review-detail .review-identity-line .review-contact-info{display:contents}
@@ -297,9 +297,7 @@ button.panel-toggle.icon-button:hover{background:#dce8d7;border-color:#c4d4bd}
 .dialog-header-actions:empty{display:none}
 .dialog-heading button.dialog-header-control{display:inline-flex;align-items:center;justify-content:center;flex:none;width:var(--dialog-header-size,32px);min-width:var(--dialog-header-size,32px);height:var(--dialog-header-size,32px);min-height:var(--dialog-header-size,32px);padding:0;line-height:1}
 #dataDialogActions .data-dialog-refresh{border:1px solid var(--line);background:#fff}
-@media(max-width:780px){.review-layout{display:flex;flex-direction:column}#reviewPatientsToggle,.review-layout.patients-collapsed #reviewPatientsToggle{position:relative;left:auto;top:auto;align-self:center;margin:-9px 0;flex:none}.review-layout.patients-collapsed .detail-meta{padding-left:0}.review-page .review-detail{padding-top:23px}}
-@media(pointer:coarse){#reviewPatientsToggle{width:22px;min-width:22px;height:26px;min-height:26px;flex-basis:22px;left:calc(var(--review-patient-width) + 1px)}}
-@media(max-width:780px) and (pointer:coarse){#reviewPatientsToggle,.review-layout.patients-collapsed #reviewPatientsToggle{left:auto}}
+@media(max-width:780px){.review-layout{display:flex;flex-direction:column}.review-page .review-detail{padding-top:16px}}
 @media(max-width:480px){.review-detail .detail-meta{gap:5px 7px}.review-detail .detail-meta h2{font-size:16px}.review-data-values{grid-template-columns:minmax(0,1fr);gap:2px}.review-data-values dd{margin-bottom:6px}}
 @media(max-width:380px){.review-detail .detail-meta h2{font-size:14px}}
 .history-controls,.history-filter,.history-visit-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
@@ -355,13 +353,6 @@ body.review-result-compact .review-page .review-layout{flex:1;height:auto;max-he
 .activity-child .activity-title{font-size:13px}
 .activity-child .caption{font-size:11px}
 @media(max-width:780px){.task-search{flex-wrap:wrap}.task-search #taskQuery{flex-basis:calc(100% - 160px);min-width:100px}.activity-children{padding-left:12px}.task-row .actions{gap:4px}.activity-patient>.activity-children{padding-left:8px}}
-@media(min-width:781px){
- .review-layout{grid-template-columns:var(--review-patient-width) 20px minmax(0,1fr)}
- .review-layout.patients-collapsed{grid-template-columns:20px minmax(0,1fr)}
- .review-layout #reviewPatientsToggle,.review-layout.patients-collapsed #reviewPatientsToggle{position:static;left:auto;top:auto;transform:none;align-self:center;justify-self:center;margin:0;z-index:1;width:18px;min-width:18px;height:24px;min-height:24px;flex:none}
- .review-layout.patients-collapsed .detail-meta{padding-left:0}
-}
-@media(min-width:781px) and (pointer:coarse){.review-layout{grid-template-columns:var(--review-patient-width) 24px minmax(0,1fr)}.review-layout.patients-collapsed{grid-template-columns:24px minmax(0,1fr)}.review-layout #reviewPatientsToggle,.review-layout.patients-collapsed #reviewPatientsToggle{width:22px;min-width:22px;height:30px;min-height:30px}}
 .review-patient-top{display:flex;align-items:baseline;justify-content:space-between;gap:4px;min-width:0}
 .review-patient-top strong{min-width:0;overflow-wrap:anywhere}
 .review-patient-top .review-sequence{flex:none;font-size:10px;color:#4c674e;background:#edf4e8;border-radius:3px;padding:1px 3px;white-space:nowrap}
@@ -384,7 +375,6 @@ body.review-result-compact .review-page .review-layout{flex:1;height:auto;max-he
  body.review-result-compact .review-page .review-layout{height:auto;min-height:0}
  #reviewSearchForm{flex-wrap:wrap}
  #reviewSearchForm #reviewQuery{flex-basis:calc(100% - 115px)}
- .review-layout #reviewPatientsToggle,.review-layout.patients-collapsed #reviewPatientsToggle{position:relative;left:auto;top:auto;align-self:center;margin:-9px 0;z-index:1}
 }
 @media print{
  @page{size:A4;margin:14mm}
@@ -586,11 +576,16 @@ button.patient-chip .patient-chip-remove{flex:none;color:#738973;font-size:14px;
 .sidebar-restore{position:sticky;top:0;align-self:start;height:100dvh;border-right:1px solid var(--line)}
 #sidebarExpand{position:absolute;top:50%;left:0;transform:translateY(-50%);width:16px;min-width:16px}
 #sidebarExpand .sidebar-arrow{border-right:0;border-left:5px solid currentColor}
+:root[data-density] #reviewPatientsToggle{position:relative;left:auto;top:auto;transform:none;align-self:center;justify-self:start;margin:0 0 0 -10px;z-index:2}
+:root[data-density] .patients-collapsed #reviewPatientsToggle{width:16px;min-width:16px;margin:0}
+#reviewPatientsToggle[aria-expanded=false] .sidebar-arrow{border-right:0;border-left:5px solid currentColor}
 @media(pointer:coarse){
  :root[data-density] .sidebar-toggle,.sidebar-toggle{width:44px;min-width:44px;min-height:44px;height:44px}
  #sidebarCollapse{top:calc(50dvh - 22px);margin-top:calc(50dvh - 22px);margin-right:-22px}
  .shell.sidebar-collapsed{grid-template-columns:24px minmax(0,1fr)}
  #sidebarExpand{width:44px;min-width:44px}
+ :root[data-density] #reviewPatientsToggle{margin-left:-22px}
+ :root[data-density] .patients-collapsed #reviewPatientsToggle{width:44px;min-width:44px;margin-left:-10px}
 }
 @media(max-width:780px){
  .shell.sidebar-collapsed{display:block}
@@ -599,7 +594,11 @@ button.patient-chip .patient-chip-remove{flex:none;color:#738973;font-size:14px;
  .sidebar-restore{z-index:5;height:18px;border-right:0;border-bottom:1px solid var(--line)}
  #sidebarCollapse .sidebar-arrow{border:0;border-left:4px solid transparent;border-right:4px solid transparent;border-bottom:5px solid currentColor}
  #sidebarExpand .sidebar-arrow{border:0;border-left:4px solid transparent;border-right:4px solid transparent;border-top:5px solid currentColor}
+ :root[data-density] .review-layout #reviewPatientsToggle,:root[data-density] .review-layout.patients-collapsed #reviewPatientsToggle{align-self:stretch;justify-self:auto;width:100%;min-width:0;min-height:18px;height:18px;margin:0;flex:none}
+ #reviewPatientsToggle .sidebar-arrow{border:0;border-left:4px solid transparent;border-right:4px solid transparent;border-bottom:5px solid currentColor}
+ #reviewPatientsToggle[aria-expanded=false] .sidebar-arrow{border:0;border-left:4px solid transparent;border-right:4px solid transparent;border-top:5px solid currentColor}
 }
 @media(max-width:780px) and (pointer:coarse){
  :root[data-density] #sidebarCollapse,:root[data-density] #sidebarExpand,.sidebar-restore{min-height:44px;height:44px}
+ :root[data-density] .review-layout #reviewPatientsToggle,:root[data-density] .review-layout.patients-collapsed #reviewPatientsToggle{min-height:44px;height:44px}
 }

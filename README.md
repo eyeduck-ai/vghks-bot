@@ -2,48 +2,44 @@
 
 [![Windows build](https://github.com/eyeduck-ai/vghks-bot/actions/workflows/windows.yml/badge.svg)](https://github.com/eyeduck-ai/vghks-bot/actions/workflows/windows.yml)
 
-VGHKS 院內系統的本機工作台：Windows 單檔 EXE、瀏覽器介面與 SQLite，透過 [vghks-sdk](https://github.com/eyeduck-ai/vghks-sdk) 存取院內功能。版本 **6.16.3**，共用刀表契約 **1.3.0**。
+VGHKS 院內系統的本機工作台，提供 Windows 單檔 EXE、瀏覽器介面及 SQLite 儲存。版本 **6.16.3**，使用固定的 SDK **0.23.6** 與共用刀表契約 **1.3.0**。
 
 ## 下載與更新
 
-1. 從 [Releases](https://github.com/eyeduck-ai/vghks-bot/releases/latest) 下載 `VGHKS-bot.exe` 或附文件的 Windows x64 ZIP。
-2. 放在可寫入的資料夾後執行，瀏覽器會開啟本機介面。院內功能需要醫院網路及有效帳號；Google 刀表可獨立使用。
-3. 更新前用側欄「結束程式」關閉舊版，更換 EXE 並保留完整 `VGHKS-bot-data/`。
+1. 從 [Releases](https://github.com/eyeduck-ai/vghks-bot/releases/latest) 下載 `VGHKS-bot.exe` 或完整 Windows x64 ZIP，放在可寫入的資料夾。
+2. 更新前按側欄「結束程式」，更換 EXE 並保留同層完整的 `VGHKS-bot-data/`。
+3. 執行 EXE 開啟本機介面。院內功能需要醫院網路及有效帳號；Google 刀表可獨立連線。
 
-關閉瀏覽器不會停止程式；再次執行 EXE 可開啟現有介面。多帳號各自保存資料、任務與院內 session。
-
-**日曆監控已移至 [vghks-sheet2cal](https://github.com/eyeduck-ai/vghks-sheet2cal)**，由指定主機常駐執行；本 repo 與發行包只包含主程式。
+關閉瀏覽器不會停止程式，再次執行 EXE 可重新開啟介面。多帳號各自保存資料、憑證與院內工作階段。資料目錄含可攜式憑證及解密資訊，請連同病歷視為私人資料保管；發布包不包含這些內容。
 
 ## 功能
 
-| 系統 | 功能 |
+| 區域 | 主要用途 |
 | --- | --- |
-| 門診與檢閱 | 掛號名單、病人集合、SOAP、歷年醫囑／數值、掃描病歷、附件及備註 |
-| 進階工具 | 病人轉送、白內障術前分析、Google 刀表預覽及每小時 SOAP 更新 |
-| 手術 | 即時刀房、指定醫師排程、未來與過去分區 |
-| 線上刀表 | 月份／刀日、永久 ID、統計、水晶體清單、原生年度封存及離線待處理操作 |
-| 審查與薪資 | 查詢、快取、版本、監控及匯出 |
-| 資料庫 | 本機保存、離線檢閱、備份、匯入及切換 |
+| 門診與病歷檢閱 | 掛號清單、病人集合、SOAP、按需查閱基本資料／歷年檢查、報告及備註 |
+| 進階工具 | 視網膜比較、白內障術前分析、附件比較與離線匯出 |
+| 手術與刀表 | 即時刀房、醫師排程、SOAP 刀表預覽／更新、月份／刀日、統計及原生封存 |
+| 審查與薪資 | 查詢、版本、監控與匯出 |
+| 資料庫 | 離線檢閱、備份、唯讀開啟、匯入及切換 |
 
-月份患者日期與院區取自上方刀日；患者醫院欄可留白或手填，程式不再補齊或覆寫。主程式與獨立監控使用同一固定版本的 `vghks-sheet-core`；GAS 以相同合成案例驗證。[刀表操作與共用規格](docs/SHEET_SYNC.md)
+病人清單依內容調寬，TAG 最多顯示兩行，其餘以「+N」查看；功能面板及檢閱清單均可用邊線小箭頭收合。醫囑附件逐份驗證、保存及顯示，同份報告的指定附件免額外等待，其他爬蟲節流與病人核對保留。
 
-## 資料與文件
+主程式只更新刀表；日曆監控由獨立 [vghks-sheet2cal](https://github.com/eyeduck-ai/vghks-sheet2cal) 的指定主機執行。
 
-資料預設存放在 EXE 同層的 `VGHKS-bot-data/`。搬移及備份須攜帶完整資料夾；憑證解密資訊也保存在資料庫，請依私有資料保管。發布包不包含帳密、Google 金鑰、個人刀表設定或患者資料。
+## 文件
 
-- [操作說明](docs/USER_GUIDE.md)
-- [Google 服務帳戶設定](docs/GOOGLE_SHEETS_SETUP.md)
-- [刀表、協作與封存](docs/SHEET_SYNC.md)
-- [架構](docs/ARCHITECTURE.md)、[開發](docs/DEVELOPMENT.md)、[驗證範圍](docs/VALIDATION.md)
-- [發布流程](docs/RELEASING.md)、[版本紀錄](CHANGELOG.md)
-- [效率量測](docs/PERFORMANCE.md)、[DEBUG](docs/DEBUG.md)
+- [操作與問題處理](docs/USER_GUIDE.md)
+- [Google 刀表連線設定](docs/GOOGLE_SHEETS_SETUP.md)
+- [刀表更新、協作與封存](docs/SHEET_SYNC.md)
+- [開發、架構、驗證及發布](docs/DEVELOPMENT.md)
+- [版本紀錄](CHANGELOG.md)
 
-## 建置
+## 開發與建置
 
-Windows x64、Python 3.11、Git 與 Node.js 24：
+Windows x64、Python 3.11、Git、Node.js 24：
 
 ```powershell
 ./build.ps1
 ```
 
-完整合成測試、來源自測、EXE 自測及封裝核對通過後，產物位於 `dist/`。CI 的 PR 執行完整驗證；main 另建置主程式，版本標籤沿用同一 commit 的已驗證產物發布。SDK 固定為 0.23.6／`cfdf041`，SDK 與共用核心都核對實際完整 Git commit。
+完整測試、來源及 EXE 自測、封裝驗證通過後，產物位於 `dist/`。CI 對 PR 執行完整驗證，`main` 成功後建置 EXE；版本標籤沿用同一 commit 的已驗證產物發布。SDK 與共用核心均固定完整 Git commit，執行時不自動升級。

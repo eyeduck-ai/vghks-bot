@@ -189,7 +189,7 @@ async function externalNoteTests(){
 async function profileTests(){
  const s=surface(),c=s.context,$=s.$,calls=[],noteLoads=[],reviewLoads=[],copied=[],historyActions=[];
  const source=fs.readFileSync("vghks_bot/static/bot.js","utf8");
- c.Node=s.node("div").constructor;c.epoch=0;c.page="review";c.extensionContext=null;c.extensionTask="";c.work.online=true;
+ c.Node=s.node("div").constructor;Object.defineProperty(c.Node.prototype,"childElementCount",{get(){return this.children.length;}});c.epoch=0;c.page="review";c.extensionContext=null;c.extensionTask="";c.work.online=true;
  c.document.createElement=tag=>s.node(tag);c.window.addEventListener=()=>{};
  c.navigator={clipboard:{writeText:async value=>copied.push(value)}};
  s.run("vghks_bot/static/clinical-ui.js");c.ClinicalUI=c.window.ClinicalUI;
@@ -201,6 +201,7 @@ async function profileTests(){
  vm.runInContext(source.match(/function dialog\(id\)\{[^\n]+/)[0],c);
  vm.runInContext(source.split("\n").find(line=>line.startsWith('$("#dataDialog").addEventListener("close",')),c);
  vm.runInContext(source.match(/function table\(headers,rows\)\{[^\n]+/)[0],c);
+ vm.runInContext(source.split("\n").find(line=>line.startsWith("function badges(")),c);
  vm.runInContext(source.slice(source.indexOf("function patientContactRows("),source.indexOf("async function showDiagnostics(")),c);
  vm.runInContext(source.slice(source.indexOf("async function extension("),source.indexOf("const eyeNumericPatterns=")),c);
  vm.runInContext(source.slice(source.indexOf("function renderExtension("),source.indexOf("const libraryFilters=")),c);
@@ -254,6 +255,20 @@ async function profileTests(){
  }
  c.reviewData.patients[0]={...saved,...metadataPatient,records:[{...metadataPatient.records[0],doctor:"合成醫師",updated_at:undefined}]};c.renderReviewDetail();
  assert.equal($("#reviewDetail").querySelector(".soap-record").querySelector(".caption").textContent,"合成醫師 · ONE · 沿用本機版本","missing SOAP acquisition time gained a fallback timestamp");
+ const revealed=[];c.SOAPView={create:()=>{const soap=s.node("div","合成 SOAP"),mark=s.node("mark","合成依據");mark.dataset.tagCategories=JSON.stringify(["AUTO1"]);soap.append(mark);return soap;},reveal:target=>revealed.push(target)};
+ c.reviewData.patients[0]={...saved,records:[{id:"TAG-SOAP",date:"2026-11-07",section:"眼科",matches:[{category:"AUTO1",category_name:"影像分類",keyword:"完整的合成比對依據"},{category:"AUTO2",category_name:"待確認分類",keyword:"尚未定位"}]}],manual_tags:[{name:"手動長分類"},{name:"追蹤右眼"}]};c.renderReviewDetail();
+ const tagGroups=$("#reviewDetail").querySelectorAll(".review-tag-section");
+ assert.deepEqual(tagGroups.map(group=>group.querySelector("strong").textContent),["自動 TAG","手動 TAG"],"automatic/manual classification labels were lost");
+ const tagItems=tagGroups.map(group=>group.querySelector(".review-tag-items"));
+ assert.ok(tagItems.every((items,index)=>items&&items.parentElement===tagGroups[index]),"automatic/manual TAGs do not share the same wrap container");
+ assert.deepEqual(tagItems.map(items=>items.children.length),[2,2]);
+ assert.deepEqual(tagItems[1].children.map(tag=>tag.textContent),["手動長分類","追蹤右眼"]);
+ assert.ok(tagItems.every(items=>items.children.every(tag=>tag.classList.contains("badge"))),"automatic/manual TAGs lost their shared badge style");
+ const evidence=tagItems[0].children[0];assert.equal(evidence.querySelector(".tag-keyword").textContent,"完整的合成比對依據");
+ assert.equal(evidence.disabled,false);await evidence.run();assert.equal(revealed.length,1);assert.equal(revealed[0].textContent,"合成依據","automatic TAG no longer reveals its SOAP evidence");
+ assert.equal(tagItems[0].children[1].disabled,true,"unlocatable evidence gained an invalid jump action");
+ assert.ok(tagItems[1].children.every(tag=>tag.tagName==="span"),"manual TAGs gained misleading SOAP evidence buttons");
+ assert.equal(calls.length,0,"rendering or revealing local TAGs started a data request");
  c.reviewData.patients[0]={...saved,records:[]};c.renderReviewDetail();contacts=$("#reviewDetail").querySelector(".review-contact-info");
  assert.deepEqual(contacts.children.map(child=>child.textContent),["身分證 A123456789","手機 0912000000","住家電話 07-0000000","電話 07-1111111"]);
  assert.equal(calls.length,0,"rendering saved patient identity contacted the server");

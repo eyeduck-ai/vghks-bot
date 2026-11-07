@@ -1,137 +1,141 @@
-# 開發與建置
+# 開發、架構、驗證與發布
 
-## 環境
+## 環境與目錄
 
-- Windows x64、Python 3.11、Git、Node.js 24。
-- SDK 與 Python 套件固定於 `requirements-build.lock.txt`。SDK commit 也列在 `pyproject.toml`，兩者必須一致。
-- 不需要院內帳密、Google 金鑰或真實資料庫即可測試及打包。
+使用 Windows x64、Python 3.11、Git 與 Node.js 24。依賴固定於 `requirements-build.lock.txt`，SDK 0.23.6／`cfdf0411021b14c8bf18a0c84c136c445ce39ae5` 與共用核心 1.3.0／`3e4babe8bbb799d103372732bd2e45bc1405fb83` 也固定於 `pyproject.toml`；不可只按版本號判定安裝來源。
 
 ```powershell
-git clone https://github.com/eyeduck-ai/vghks-bot.git
-cd vghks-bot
 py -3.11 -m venv .venv
 .venv/Scripts/python.exe -m pip install -r requirements-build.lock.txt
-```
-
-### 資料夾與套件名稱
-
-外層專案資料夾可命名為 `vghks-bot`；主程式套件為 `vghks_bot/`，`run.py` 與命令列入口都載入 `vghks_bot.app:main`。套件包含後端、資料儲存及 `static/` 介面，不能當作暫存移除。
-
-既有工作區改名時，先關閉執行中的程式及使用該目錄的終端，再於檔案總管改名。在 Codex 既有專案的「Edit project」調整資料夾，將新路徑設為主要資料夾；保留原專案及對話，不需要刪除後重建。舊對話記錄的工作目錄可能仍是舊路徑，執行命令時應確認目前位於新目錄。
-
-Python 虛擬環境的啟動腳本與部分命令列程式含建立時的絕對路徑，單純搬移 `.venv` 不代表環境已重建。在新資料夾執行建置，腳本會檢查啟動路徑；缺少或不符目前路徑時自動重建並重新安裝固定依賴：
-
-```powershell
-./build.ps1
-
-# 環境損壞或要明確重新安裝時。
-./build.ps1 -RebuildEnvironment
-```
-
-重建只處理目前專案的 `.venv`，遇到連結或 junction 會停止。建置工具依自身位置取得專案根目錄，不需修改 Git remote；若有設定外部資料庫，仍須保留其資料夾及有效路徑。
-
-可核對 `.venv/pyvenv.cfg` 的建立命令與 `Scripts/activate.bat` 的 `VIRTUAL_ENV` 是否為新路徑，再確認 Python 套件及命令列啟動器：
-
-```powershell
-.venv/Scripts/python.exe -c "import sys, vghks_bot; print(sys.executable); print(sys.prefix); print(vghks_bot.__file__)"
-.venv/Scripts/pip.exe --version
-.venv/Scripts/ruff.exe --version
-```
-
-## 執行與測試
-
-```powershell
-# 真實工作區；明確指定資料位置，避免與其他執行中的程式共用。
 .venv/Scripts/python.exe run.py --data-dir ./VGHKS-bot-data
-
-# 合成瀏覽器測試，院內刀房也替換成 localhost。
-.venv/Scripts/python.exe tools/browser_bot_fixture.py --followup --library --local-board
-
-# 全部檢查，不打包。
-.venv/Scripts/python.exe tools/run_checks.py
-
-# 個別測試。
-.venv/Scripts/python.exe -m unittest discover -s tests -p test_surgery_schedule.py -v
 ```
 
-瀏覽器 fixture 會印出帶本機登入 token 的 URL；開啟後以「結束程式」離開。進階工具目前仍使用嵌入的 `/tools` 比較頁，因此 `index.html`、`app.js`、`analysis.js` 等檔案仍是正式程式的一部分。可用 `tools/browser_analysis_fixture.py` 單獨驗證比較頁。
+| 位置 | 用途與保留原則 |
+| --- | --- |
+| `vghks_bot/` | 正式 Python 後端與 `static/` 介面，不能當暫存清除 |
+| `tests/`、`tools/` | 合成測試、契約、建置、驗證及量測工具 |
+| `docs/` | 操作、Google 設定、刀表規則及本文四份文件 |
+| `.github/` | 完整 Windows 驗證及已驗證產物發布流程 |
+| `.venv/` | 可重建的固定依賴環境，通常保留以免重裝 |
+| `.build/` | 建置、測試、合成資料及驗證暫存；清理前分辨仍需的 helper、checkout、報告與備份 |
+| `output/`、`.playwright-cli/` | 本機截圖、瀏覽器快照及日誌，不加入 Git |
+| `.local/` | 需保留的私人診斷、歷史封存與本機備份，不加入 Git |
+| `dist/` | 當前 EXE、配套驗證檔及正式 ZIP；更新須先核對相同來源與 hash |
+| `VGHKS-bot-data/` 或外部資料庫 | 真實帳密、病歷、附件及工作狀態，不是建置快取 |
 
-掛號紀錄可使用 `tools/browser_bot_fixture.py --registrations --local-board`，提供完整掛號欄位、明確未到診、未知圖示、取消及日期不明的合成案例。`tests/test_registration_history.py` 另經真實 SDK 與合成 HTTP 驗證快取升級及身分拒收；不需讀取院內 ZIP 或 HAR。
+工作區改名／搬移後，`.venv` 啟動腳本可能仍指向舊路徑。`./build.ps1` 會核對路徑及依賴，需要時重建；也可明確使用 `-RebuildEnvironment`。資料目錄及外部資料庫路徑另行保留。
 
-資料視窗的頁首及操作列用共用容器垂直置中，以 `gap` 控制間距。同行的按鈕、連結與勾選用一致的控制高度；窄畫面依操作群組換行，維持鍵盤操作順序。用 `tools/browser_bot_fixture.py --report-gallery --local-board` 驗收縮圖、圖片最適比例、PDF 與比較入口。
+## 架構與不變條件
 
-刀表合成資料由 `tests/fixtures/` 與相關整合測試維護。`tools/verify_sheet_contract.py` 離線核對主程式採用的共用核心與 GAS 匯出的 82 組格式契約；指定 `--gas-repo <GAS checkout>` 時，另從該 checkout 執行 GAS 匯出器，並實際執行主程式封存請求後交由 GAS 續封，驗證雙向相容。`tests/fixtures/gas_contract.json` 固定 GAS commit，`gas_archives.json` 保存原生封存匯出。需要線上只讀檢查時，使用 `tools/check_sheet_contract.py`，依 `--help` 指定外部服務帳戶檔、刀表、日曆與報告路徑；憑證及線上報告不加入 Git。
+```text
+瀏覽器 → 127.0.0.1 本機 HTTP → DatabaseManager／BotApplication
+  → 每帳號 Workspace
+      ├─ AccountGateway → 固定版本 vghks-sdk → 院內系統
+      ├─ Review／ReviewHistory／Analysis／ScannedRecords
+      ├─ Approvals／Earnings／SurgerySchedule
+      └─ SQLite、附件、診斷；SheetService → Google Sheets
+```
 
-來源邊界檢查同時涵蓋 Git 已追蹤檔案與尚未提交、未被忽略的新檔案，不需要先 stage 才能檢查。提交前仍以 `git add <明確路徑>` 或明確的來源目錄選取變更；不要加入真實資料庫或病歷 fixture。失敗重現請建立合成資料。
+| 模組 | 責任 |
+| --- | --- |
+| `app.py`、`bot.py`、`bot_server.py`、`launcher.py` | 啟動、帳號及資料庫生命週期、本機 API 與可信重連 |
+| `bot_gateway.py`、`clinical_identity.py`、`encoding.py` | 同帳號序列操作、完整病人／就診核對、節流及回應解碼 |
+| `review*.py`、`analysis*.py`、`scanned_records.py` | SOAP、歷史檢查、按需報告與完整性／續跑 |
+| `databases.py`、`bot_store.py`、`library*.py`、`migrations.py` | 帳號 SQLite、快照、版本、索引與可回復更新 |
+| `sheet_service.py`、`sheet_*.py` | 連線、共用寫入鎖、差異預覽、永久 ID、核對及封存 |
+| `debug_*.py`、`diagnostics.py`、`connection_state.py` | 異常證據、錯誤分類及恢復結果 |
+| `static/` | 正式 UI；主畫面與嵌入 `/tools` 比較頁皆需保留 |
 
-## 主程式 EXE
+- 帳號、資料庫、病人與完整就診 selector 都屬於資料身分。快取、進行中查詢合併及延遲回應必須依完整範圍隔離；來源切換後不採用舊結果。
+- 同帳號院內操作序列化，保留任務／連線上限、SDK 登入恢復、取消檢查、429／503 退避及 `Retry-After`。跨任務共享取得不增加併發或延長有效期。
+- 只有正確 PRQ 來源、報告附件範圍內的指定影像／PDF GET 使用零額外等待；仍逐一下載，不修改共享帳號政策或 SDK 私有欄位。
+- 附件通過格式／身分核對後原子保存、逐份發布並更新 revision。部分解析、失敗或缺檔不算完整快取；普通重試只補未完成分支，強制更新另行取得。
+- 病歷檢閱按需讀取 40 位摘要及選定病人 SOAP；虛擬列以實測高度保留錨點，畫面／本機鄰近預讀不得自動抓取全員基本資料、歷年數值或醫囑索引。
+- SQLite 保存原始內容、版本、任務引用與可重建摘要；WAL 快照讀取及批次交易維持一致。清除先預覽並重新核對引用，集合、手動 TAG、備註與診斷保留。
+- 本機 HTTP 的 Host／Origin／啟動憑證與資料庫切換租約必須保留；病人文字只當文字顯示，失敗 HTML 不執行。憑證及解密材料僅存本機，不回傳瀏覽器或公開日誌。
+
+## 測試與瀏覽器驗收
+
+```powershell
+# 來源、依賴、Ruff、JavaScript 與固定 GAS 契約。
+.venv/Scripts/python.exe tools/run_checks.py --checks-only --gas-repo .build/gas-contract
+
+# 完整合成測試與來源自測；不建置 EXE。
+.venv/Scripts/python.exe tools/run_checks.py --tests-only
+
+# 指定 Python 測試，或單獨執行來源自測。
+.venv/Scripts/python.exe -m unittest discover -s tests -p test_review_paging_ui.py -v
+.venv/Scripts/python.exe tools/run_checks.py --source-only
+
+# 一次性合成瀏覽器工作區；不連院內。
+.venv/Scripts/python.exe tools/browser_bot_fixture.py --review-patients 1000 --report-gallery --demographics --local-board
+```
+
+fixture 印出本機 URL；結束測試服務後清除其暫存資料庫。`--lookup-failures --lookup-delay 5` 可驗收慢病人查核，`--registrations` 可驗收掛號。工具旗標與個別模式以 `--help` 為準。
+
+回歸重點包括帳號／病人身分拒收、登入恢復與不可重送操作、部分失敗及續跑、缺檔補抓、force 分流、同秒 revision、WAL／交易回復與延遲回應。瀏覽器須實際驗收桌面／窄畫面、鍵盤／觸控、TAG 兩行收合與數量、SOAP 捲動錨點、模態比較及漸進附件；圖片、PDF 節點與勾選不因更新重建。
+
+所有公開測試只使用合成資料、一次性金鑰及暫存資料庫。院內權限／真實回應、Google 分享／保護範圍及實際寫入須另在授權環境及測試副本驗收；合成測試不代表取得這些權限。日曆網路操作與常駐服務由獨立 [vghks-sheet2cal](https://github.com/eyeduck-ai/vghks-sheet2cal) 驗證。
+
+## 建置、CI 與發布
 
 ```powershell
 ./build.ps1
-
-# 已安裝依賴時，直接使用與 CI 相同的流程。
-.venv/Scripts/python.exe tools/run_checks.py --build
+# 已安裝依賴時，可直接執行相同完整流程。
+.venv/Scripts/python.exe tools/run_checks.py --build --gas-repo .build/gas-contract
 ```
 
-流程包括：來源範圍與版本核對 → pip／Ruff／JS 語法 → 共用刀表契約 → Python 測試 → 主程式原始碼自測 → PyInstaller → 主程式 EXE 自測 → 靜態檔及預設值核對 → ZIP 與 SHA-256。
+完整流程：來源／版本／安裝 commit → pip／Ruff／JS → 82 項共用 GAS 契約 → 完整測試 → 來源自測 → PyInstaller → EXE 自測 → 內嵌靜態檔／空白憑證／授權核對 → ZIP／SHA-256。`tools/build_exe.py` 單獨打包不等於完整通過。建置只納入 Git 索引中的靜態檔與文件，新公開檔案須先加入索引。
 
-- `dist/VGHKS-bot.exe`：Windows x64 主程式。
-- `dist/VGHKS-bot-v<版本>-windows-x64.zip`：主程式 EXE、文件、第三方聲明及驗證報告。
-- `dist/SHA256SUMS.txt`：主程式 EXE 與 ZIP 校驗值。
-- `.build/ci/`：測試、建置日誌及主程式原始碼／EXE 自測與封裝核對 JSON。
+| 觸發 | 門檻與產物 |
+| --- | --- |
+| PR 到 `main` | 四組完整 Windows 測試、來源自測、語法與固定 GAS 契約 |
+| `main` push | 同樣驗證通過後建置、EXE 自測、封裝核對與 Artifact |
+| 手動 `windows.yml` | 完整來源及測試驗證 |
+| `v*` 標籤 | 下載同 commit 已成功的 `main` 產物，核對後發布，不重建 |
 
-只打包、不跑完整檢查的開發命令是 `python tools/build_exe.py`；它不是 Release 流程。CI 一律使用公開預設值，帳密留白。
+四組依 `tools/test-timings-baseline.json` 的實測類別耗時均衡分配，同類別保留相同 setup／teardown；彙總器獨立重算計畫，完整探索名單須相同，每項恰好完成一次。缺漏、重複、分組指紋不符或任一失敗都停止建置。大量 fixture 可用 `Library.batch()`，但須在被測操作、背景執行或等待開始前提交，保留真實 SQLite／原子保存驗證。
 
-6.10.1 的 CI 將完整測試拆成四組並行，彙總核對覆蓋名單；PR 不重複打包，main 才建置主程式 EXE，標籤沿用同一成功 main commit 的已驗證產物。本機完整流程不變，來源自測可單獨用 `--source-only` 執行。[CI 與發布細節](RELEASING.md)
+`BUILD_INFO.json` 綁定 repository、workflow、commit／tree、run／attempt、固定 GAS／核心、版本、完整測試名單／分組指紋及檔案 hash。下載只接受指定成功執行的同 commit 產物，先在 staging 核對 EXE、ZIP、ZIP 內 EXE、來源／EXE 自測與封裝報告，再備份舊配套檔更新 `dist/`；最後獨立核對 `dist/BUILD_INFO.json` 及實際 EXE SHA-256，不用其他版本代替。
 
-Windows CI 的合成測試將 `TEMP`、`TMP`、`TMPDIR` 指向該 job 的 `runner.temp` 工作磁碟；各測試仍建立獨立暫存目錄，保留真實 SQLite／WAL／FULL 同步與原子檔案寫入。測試失敗或例外會立即輸出名稱與 traceback，完整日誌、JUnit 與測試名單仍照常保存；工作時間上限及完整驗證門檻不變。
+發布時同步更新 `pyproject.toml`、`vghks_bot/__init__.py`、README 與 CHANGELOG，完成該 commit 的 `main` 驗證後再推送版本標籤。確認 Release workflow 及 EXE／ZIP／校驗檔齊全。Artifact 保留 14 天，Release 為長期入口；產物過期須使用同 commit 的完整重跑結果。版本不覆蓋，修正使用新版本。目前沒有 Windows 程式碼簽章。
 
-## 清理與本機檔案
+更新本機 EXE 前先結束舊程式，保留完整資料目錄。下載後可用 `Get-FileHash .\dist\VGHKS-bot.exe -Algorithm SHA256` 獨立核對；只需驗證下載時不必執行成品。
+
+## DEBUG 與問題定位
+
+由「爬蟲紀錄 → DEBUG → 下載完整 DEBUG ZIP」匯出當前帳號／任務／病人的已存證據，不另發院內請求。正常成功只保存彙總，詳細回應／時序在有上限記憶體暫存，異常、部分解析、重試或 SDK 恢復才保存；重試成功不刪除原失敗證據。
+
+| ZIP 內容 | 判讀重點 |
+| --- | --- |
+| `debug.json` | 階段、範圍、錯誤碼／原因鏈、受影響項目及恢復結果 |
+| `sdk-context.json` | 程式／SDK／Python 版本、平台、操作／請求關聯及編碼 |
+| `operation-*.jsonl` | 依 sequence 對照 HTTP 狀態、耗時、重試等待與重新登入 |
+| `response-*.html`／`.bin` | 失敗來源與 SHA-256；PDF／JPEG 保留二進位，不錯當 HTML 解碼 |
+| 匯出完整性欄位 | `missing_files`、`incomplete_evidence`、截斷、遺漏及保存失敗 |
+
+文字 `.html` 是採用編碼解碼後的 UTF-8；`.bin` 無遮罩時可保留原 bytes，遮罩時會改為 UTF-8 並標示，不能當成完整原始回應。來源可能含醫療資料，與資料庫一樣留在私人環境；時序不保存 URL 查詢值、原始請求或憑證值，原始 HTML 不執行。
+
+`TEXT_DECODE_INCOMPLETE` 另保留 HTTP／meta charset、設定編碼、實際 decoder 及替代字元證據。只記公開固定標記的 hex（例如來源明載 U+FFFD）或非法序列長度遮罩；不保存病人鄰近原始文字／offset。這些證據描述整份回應，不能直接推定是哪個病人欄位的來源損壞。搭配相同 SDK 版本的純解析函式可離線定位，不必重送登入或執行院方 JavaScript。
+
+每份回應上限 4 MiB，操作暫存最近八份／8 MiB、證據 16 MiB；每次 ZIP 最多 1,000 筆診斷／128 MiB 未壓縮證據。達上限、缺檔或舊版未保存時明確標示，不拿其他成功回應冒充證據。
+
+## 效能驗收
+
+- `tools/benchmark_review.py --sizes 40 1000 5000 20000`：合成資料庫的清單、遠處定位、單人 SOAP、備註及精簡狀態；禁止 socket。
+- `tools/benchmark_efficiency.py`：SQL／全文解析量與索引成本；`tools/benchmark_debug.py`：成功紀錄的耗時及寫入量。
+- 報告寫入忽略的 `.build/`。冷次與暖態、請求數與掃描輪數、runner 排隊與執行時間分開比較；不以不穩定的耗時門檻取代行為斷言。
+- 保留的歷史合成結果：2026-10-15 相同 500 筆醫囑純解析中位數 416.37 → 220.53ms；2026-10-05 成功紀錄收集器 581.1 → 14.17ms。它們不含院內網路及完整業務流程，也不是目前版本重新量測的保證。
+
+## 清理與依賴更新
+
+清理前先結束合成服務及建置／下載工作，按實際用途選取可重建目標。需要保留的診斷、驗收截圖、驗證 helper、原始 checkout 及版本備份移至明確的本機封存位置；不能把真實資料目錄當快取。
 
 ```powershell
-./tools/clean.ps1
-
-# 保留驗證日誌，並將發布 ZIP 精簡為最新兩版。
-./tools/clean.ps1 -KeepValidationReports -OldReleases
-
-# 另清除合成瀏覽器測試的快照、日誌及截圖。
-./tools/clean.ps1 -KeepValidationReports -OldReleases -BrowserArtifacts
-
-# 先列出預計清理項目。
+# 只預覽；確認清單後再依需要選擇目標。
 ./tools/clean.ps1 -KeepValidationReports -OldReleases -BrowserArtifacts -WhatIf
 ```
 
-預設清理 `.build/`、`.ruff_cache/`、`build/` 及來源下的 Python 快取；先檢查範圍，遇到連結／junction 會停止。保留 `dist/`、`.venv/`、`.local/`、`VGHKS-bot-data/` 與 `VGHKS-calendar-data/`。`-KeepValidationReports` 保留 `.build/ci/`；`-OldReleases` 只清除正式命名的舊 ZIP，保留最新兩版，EXE、文件、校驗值與 HAR 不受影響。
+腳本會核對絕對路徑並拒絕連結／junction。`-KeepValidationReports` 只保留 `.build/ci/`，不保留其他 `.build` helper 或 checkout；`-OldReleases` 只保留最新兩版正式命名 ZIP；`-BrowserArtifacts` 涵蓋 `.playwright-cli/` 及 `output/playwright/`。`.venv/`、`.local/`、EXE 與資料目錄不是這些選項的清除目標。不要在仍需使用 helper／驗收檔案時直接移除整個 `.build/`。
 
-`-BrowserArtifacts` 只清除 `.playwright-cli/` 與 `output/playwright/`，不清除 `output/` 的其他檔案。使用於合成 UI 驗證後的暫存清理；需留存的個人診斷或截圖放在 `.local/`。清理腳本在刪除第一項前先核對所有目標的絕對路徑與連結，`-WhatIf` 仍執行檢查但不刪除。
-
-`.local/` 供個人備份及診斷封存，不列入 Git。HAR 擷取檔及 SDK 診斷 JSONL 也會被忽略，來源發布檢查會拒絕它們與 ZIP 建置包。版本控制只保存可分享的原始碼、合成測試、公開預設值與文件；`dist/` 的舊版本包經確認後可移除，`VGHKS-bot-data/` 不屬於建置快取。
-
-搬回的院內資料快照及不再使用的個人診斷，應確認用途及需要保留的內容後再清除；清理腳本不處理這些資料。自動測試及 EXE 離線自測使用合成 SDK 與獨立暫存資料庫，不讀取專案根目錄的 `VGHKS-bot-data/`；正常啟動若未指定 `--data-dir`，仍會在原始碼或 EXE 同層使用或建立此資料目錄。
-
-## 大型病歷檢閱效能驗收
-
-`python tools/benchmark_review.py --sizes 40 1000 5000 20000` 在一次性合成資料庫量測分頁、末頁定位、單人全部 SOAP、備註及 compact workbench。工具禁止 socket 連線，報告預設寫入忽略的 `.build/review-paging-benchmark.json`；冷次全文搜尋與三次暖態中位數分開記錄，時間不含 HTTP 傳輸與真實瀏覽器繪製。
-
-連續清單的每批讀取只回 40 位摘要、不解碼 SOAP，SQL 數不隨任務總人數逐人增加；單人詳情只讀該病人快照。量測另涵蓋前進、返回與遠處定位的視窗，以及 ready 預讀與 partial 略過；這些資料庫量測不代表瀏覽器 heap／DOM 已驗證。`tools/browser_bot_fixture.py --review-patients 1000 --local-board` 可啟動兩個合成帳號的完整舊格式檢閱，不呼叫院內服務，供瀏覽器驗收雙向捲動、全域搜尋、跨區勾選、來源收合、備註與閱讀位置。必須另檢查可見列、摘要區塊、detail cache 與預讀中的請求量均有上限，切換 scope 不採用舊回應。關閉測試伺服器後會清除暫存資料庫。
-
-基本資料、歷年數值與醫囑索引維持按需取得；讀取檢閱、捲動及本機預讀不得為整份名單自動發出這些院內請求。單份報告須以合成 barrier 驗證第一份附件保存後、其他附件尚在讀取時已可檢閱，且後續發布不重設主檢視與比較勾選。同報告的指定附件 GET 免除額外間隔，仍逐一下載；其他查詢節奏、身分核對、取消後保存當張、快取重用與限流退避均保留。全程不讀取使用者資料庫或院內資料。
-
-跨任務共用取得的回歸須以 barrier 製造同時 cache miss，核對實體 SDK／HTTP、前景優先權、各訂閱者取消、force 分流、登入／清除 epoch 與病人／完整就診 selector。快取與合併結果不得改寫 PRQ 病人 context，不得增加 SDK 外層重試；必要身分核對與 SDK 內部退避仍照常發生。
-
-病人來源輸入另以 `tools/browser_bot_fixture.py --review-patients 1000 --lookup-failures --lookup-delay 5 --local-board` 驗收慢查核、失敗與批次貼上。等待時須看得見原號碼，所有開始入口均不得略過 pending／draft／失敗；來源或帳號切換後舊結果不得回填。標題列的滑鼠及鍵盤操作、設定按鈕不冒泡、248／232px 清單與依 TAG 換行的虛擬列高須於桌面及窄畫面實測。測試只用合成 SDK 與一次性資料庫。
-
-## 更新 SDK
-
-核對上游版本與變更後，同時修改 `pyproject.toml` 和 `requirements-build.lock.txt` 的完整 commit。`build.ps1` 會核對實際安裝來源；SDK 版本相同但 commit 不符時，只重新安裝 SDK。來源檢查與直接打包也會拒絕不符的 commit，EXE 授權聲明及封裝報告保留完整 commit。
-
-手動更新既有環境時，明確重新安裝 SDK，避免 pip 只按相同版本保留舊程式：
-
-```powershell
-$vghksSdkRequirement = Get-Content requirements-build.lock.txt | Where-Object { $_.StartsWith('vghks-sdk @ ') }
-.venv/Scripts/python.exe -m pip install --no-deps --force-reinstall $vghksSdkRequirement
-```
-
-執行完整檢查、主程式 EXE 自測與封裝核對，並在院內確認真實回應。不要只改其中一處，也不要在 CI 自動追蹤 SDK 的 `main`。PRQ 相容處理使用 `core.operations.operation_spec`，不從已拆分的 Adapter 匯入私有操作常數；光照治療、病人身分及不可重送的恢復規則均需回歸。
-
-緊密檢閱與報告驗收使用 `--review-patients 1000 --report-gallery --demographics --local-board`。核對左欄工具列不隨虛擬清單捲動，搜尋列下不再有全寬選取／位置列；資料資訊保留索引與 SOAP 內容時間的不同語意。報告須驗證雙欄縮圖、收合明細、獨立底部進度／比較列、原生模態視窗的返回與清除確認，以及圖片／多頁 PDF 的百分比重設不重建檢視節點。
+更新 SDK／核心時，核對上游變更，再同步修改專案、鎖定檔與 GAS 契約固定 revision，重新安裝並驗證實際 Git 來源，執行完整測試／EXE 自測／封裝。SDK 同版本但 commit 不符也必須重新安裝；CI 不自動追蹤上游 main。來源只提交程式、合成測試、公開預設及這四份重點文件，實際憑證、病歷、HAR、診斷及建置包保持本機。
