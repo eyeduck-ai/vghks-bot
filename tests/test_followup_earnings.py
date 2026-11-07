@@ -10,13 +10,15 @@ from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
+from async_helpers import HOLD_TIMEOUT, join_threads, wait_event
+from async_helpers import wait_workspace_task as wait_task
 from vghks_sdk import ConfigurationError
 
 from vghks_bot.analysis_fetch import clean
 from vghks_bot.approval_tracker import later
 from vghks_bot.bot import BotApplication
 from vghks_bot.earnings_parser import month_value, normalize_document, numeric_cell
-from vghks_bot.selftest_bot import BotSyntheticSDK, wait_task
+from vghks_bot.selftest_bot import BotSyntheticSDK
 from vghks_bot.settings import Settings, timestamp
 
 
@@ -36,11 +38,7 @@ class FollowUpTests(unittest.TestCase):
         self.temp.cleanup()
 
     def task(self, **values):
-        task = wait_task(self.work, self.work.review.start(values)["task_id"])
-        self.work.idle.wait(3)
-        for thread in list(self.work.review.threads.values()):
-            thread.join(3)
-        return task
+        return wait_task(self.work, self.work.review.start(values)["task_id"])
 
     def query(self):
         return self.task(kind="approval_search")
@@ -147,11 +145,11 @@ class FollowUpTests(unittest.TestCase):
         def block(case):
             if case.mrn == "TEST002":
                 entered.set()
-                release.wait(4)
+                wait_event(release, label=self.id() + ": release SOAP response", timeout=HOLD_TIMEOUT)
         with patch.object(BotSyntheticSDK, "on_soap", block):
             key = self.work.review.start({"set_id": group["id"]})["task_id"]
             try:
-                self.assertTrue(entered.wait(3))
+                wait_event(entered, label=self.id() + ": SOAP response entered")
                 live = self.work.review.task(key)
                 self.assertEqual(live["progress"]["percent"], 50)
                 self.assertEqual(live["done"], 1)
@@ -177,12 +175,12 @@ class FollowUpTests(unittest.TestCase):
         original = self.work.gateway.connection.reviews.get_cases
         def slow(ref):
             entered.set()
-            release.wait(4)
+            wait_event(release, label=self.id() + ": release review response", timeout=HOLD_TIMEOUT)
             return original(ref)
         with patch.object(self.work.gateway.connection.reviews, "get_cases", slow):
             self.app.follow_up_tick()
             try:
-                self.assertTrue(entered.wait(3))
+                wait_event(entered, label=self.id() + ": review response entered")
                 self.app.follow_up_tick()
                 tasks = [t for t in self.db.all("task") if t["kind"] == "approval_sync"]
                 self.assertEqual(len(tasks), 1)
@@ -198,17 +196,17 @@ class FollowUpTests(unittest.TestCase):
         def snapshot():
             with self.app.lock:
                 entered.set()
-                release.wait(4)
+                wait_event(release, label=self.id() + ": release database lock", timeout=HOLD_TIMEOUT)
         thread = threading.Thread(target=snapshot)
         thread.start()
         try:
-            self.assertTrue(entered.wait(2))
+            wait_event(entered, label=self.id() + ": database lock acquired", threads=(thread,))
             with patch.object(self.tracker, "schedule") as schedule:
                 self.app.follow_up_tick()
                 schedule.assert_not_called()
         finally:
             release.set()
-            thread.join(3)
+            join_threads((thread,), label="database lock holder cleanup", preserve_error=True)
 
 
 class EarningsArchiveTests(unittest.TestCase):
@@ -223,6 +221,61 @@ class EarningsArchiveTests(unittest.TestCase):
     def capture(self, **values):
         values.setdefault("force", False)
         return self.task(kind="earnings_capture", all_available=True, **values)
+
+    def test_identity_switch_separates_month_cache_and_rejects_old_task_and_report_ids(self):
+        self.configure()
+        first = self.capture()
+        earnings = self.work.earnings
+        original = earnings.overview()["reports"][0]
+        earnings.save_credentials({"national_id": "B123456789", "password": "synthetic-other", "remember": False})
+        self.assertEqual(earnings.overview()["reports"], [])
+        self.assertEqual(earnings.overview()["catalogs"], [])
+        self.assertEqual(earnings.overview()["tasks"], [])
+        before = len(BotSyntheticSDK.calls)
+        with self.assertRaisesRegex(ValueError, "身分"):
+            self.work.review.start({"resume": first["id"]})
+        self.assertEqual(len(BotSyntheticSDK.calls), before)
+        with self.assertRaisesRegex(ValueError, "身分"):
+            self.work.review.task(first["id"])
+        for action, values in ((earnings.detail, {"id": original["id"]}),
+                               (earnings.export, {"ids": [original["id"]]}),
+                               (earnings.delete, {"ids": [original["id"]]})):
+            with self.assertRaisesRegex(ValueError, "身分"):
+                action(values)
+        self.assertEqual(self.capture()["status"], "completed")
+        self.assertEqual(len(earnings.overview()["reports"]), 4)
+        self.assertNotIn(original["id"], [row["id"] for row in earnings.overview()["reports"]])
+        self.configure(password="new-password-same-identity")
+        self.assertIn(original["id"], [row["id"] for row in earnings.overview()["reports"]])
+        earnings.forget()
+        self.assertEqual(earnings.detail({"id": original["id"]})["report"]["id"], original["id"])
+
+    def test_legacy_reports_are_retained_as_unattributed_archive(self):
+        from vghks_sdk.models.documents import HtmlDocument, HtmlTable
+
+        earnings = self.work.earnings
+        document = HtmlDocument((HtmlTable("Synthetic legacy", (("A", "1"),)),), "raw", "")
+        legacy = earnings.store_report("performance", "202610", "2026/10", document, scope="")
+        self.assertEqual(earnings.overview()["view"], "archive")
+        self.configure()
+        self.assertEqual(earnings.overview()["view"], "active")
+        self.assertTrue(earnings.overview()["has_archive"])
+        self.assertEqual(earnings.overview()["reports"], [])
+        with self.assertRaisesRegex(ValueError, "檢視範圍"):
+            earnings.detail({"id": legacy["id"]})
+        archive = earnings.overview({"view": "archive"})
+        self.assertEqual([r["id"] for r in archive["reports"]], [legacy["id"]])
+        self.assertEqual(archive["catalogs"], [])
+        self.assertEqual(earnings.detail({"id": legacy["id"], "view": "archive"})["report"]["id"], legacy["id"])
+        self.assertIn("Synthetic legacy", earnings.export({"ids": [legacy["id"]], "view": "archive"})["content"])
+
+    def test_queued_query_prevents_replacing_credentials(self):
+        self.configure()
+        self.db.save("task", {"id": "queued-synthetic", "kind": "earnings_options", "status": "queued",
+                              "earnings_scope": self.work.earnings.scope()})
+        with self.assertRaisesRegex(ValueError, "處理中"):
+            self.work.earnings.save_credentials({"national_id": "B123456789", "password": "synthetic-other"})
+        self.assertEqual(self.work.earnings.credentials().national_id, "A123456789")
 
     def test_month_parser_and_literal_numbers(self):
         for raw, expected in [("11509", "2026-09"), ("202609", "2026-09"), ("115/09", "2026-09"), ("2026-09", "2026-09"), ("11513", ""), ("foo", "")]:
@@ -379,12 +432,12 @@ class EarningsArchiveTests(unittest.TestCase):
         def slow(sdk, credentials, kind):
             if kind == "payroll":
                 entered.set()
-                release.wait(4)
+                wait_event(release, label=self.id() + ": release month catalog", timeout=HOLD_TIMEOUT)
             return original(sdk, credentials, kind)
         with patch.object(BotSyntheticSDK, "earnings_open", slow):
             key = self.work.review.start({"kind": "earnings_capture", "all_available": True})["task_id"]
             try:
-                self.assertTrue(entered.wait(3))
+                wait_event(entered, label=self.id() + ": month catalog entered")
                 task = self.work.review.task(key)
                 self.assertEqual(task["progress"]["done"], 2)
                 self.assertIsNone(task["progress"]["percent"])
@@ -414,12 +467,12 @@ class EarningsArchiveTests(unittest.TestCase):
         def slow(context, period):
             if period == "11509":
                 entered.set()
-                release.wait(4)
+                wait_event(release, label=self.id() + ": release salary report", timeout=HOLD_TIMEOUT)
             return original(context, period)
         with patch.object(self.work.gateway.connection.earnings, "get_report", slow):
             key = self.work.review.start({"kind": "earnings_capture", "all_available": True})["task_id"]
             try:
-                self.assertTrue(entered.wait(3))
+                wait_event(entered, label=self.id() + ": salary report entered")
                 self.work.review.stop(key)
             finally:
                 release.set()
@@ -442,7 +495,7 @@ class EarningsArchiveTests(unittest.TestCase):
         self.assertEqual((datetime.fromisoformat(monitor["next_check"])-datetime.fromisoformat(monitor["last_attempt"])).total_seconds(), 86400)
         self.app.follow_up_tick()
         self.assertEqual(len(self.db.all("task")), 1)
-        self.db.save("preferences", {**monitor, "next_check": "2000-01-01T00:00:00+08:00"})
+        self.db.save("preferences", {**self.work.earnings.monitor._preferences(), "next_check": "2000-01-01T00:00:00+08:00"})
         with patch.object(BotSyntheticSDK, "revision", "monthly-revision"):
             self.app.follow_up_tick()
             task = self.db.all("task")[0]
@@ -468,7 +521,8 @@ class EarningsArchiveTests(unittest.TestCase):
             monitor.schedule()
             start.assert_not_called()
             self.app.read_only = False
-            self.db.save("task", {"id": "paused", "kind": "earnings_capture", "status": "paused"})
+            self.db.save("task", {"id": "paused", "kind": "earnings_capture", "status": "paused",
+                                  "earnings_scope": self.work.earnings.scope()})
             monitor.schedule()
             start.assert_not_called()
             self.db.delete("task", "paused")

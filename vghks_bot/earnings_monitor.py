@@ -9,9 +9,16 @@ class EarningsMonitor:
         self.earnings, self.app, self.db = earnings, earnings.app, earnings.db
 
     def preferences(self, values=None):
+        return {**self._preferences(values), "id": "earnings_monitor"}
+
+    def _preferences(self, values=None, *, scope=None):
         with self.app.root.lock:
-            current = self.db.get("preferences", "earnings_monitor", required=False) or {
-                "id": "earnings_monitor", "enabled": True, "hours": 24, "next_check": ""}
+            scope = self.earnings.scope() if scope is None else scope
+            key = "earnings_monitor:" + scope if scope else "earnings_monitor"
+            legacy = self.db.get("preferences", "earnings_monitor", required=False) or {}
+            current = self.db.get("preferences", key, required=False) or {
+                "id": key, "enabled": legacy.get("enabled", True), "hours": legacy.get("hours", 24),
+                "next_check": legacy.get("next_check", "")}
             if values is None:
                 return current
             if type(values.get("enabled")) is not bool:
@@ -27,16 +34,17 @@ class EarningsMonitor:
     def started(self, task):
         if task["kind"] != "earnings_capture" or not task["all_available"] or not task["force"]:
             return
-        value, now = self.preferences(), timestamp()
+        value, now = self._preferences(scope=task["earnings_scope"]), timestamp()
         self.db.save("preferences", {**value, "last_task": task["id"], "last_attempt": now,
                                      "next_check": later(now, value["hours"])})
 
     def overview(self):
-        value = self.preferences()
+        scope = self.earnings.scope()
+        value = self._preferences(scope=scope)
         tasks = self.db.task_summaries(key=value.get("last_task", ""))
         task = tasks[0] if tasks else None
-        configured = self.earnings.public_credentials()["configured"]
-        return {**value, "configured": configured, "due": value["enabled"] and configured and value["next_check"] <= timestamp(),
+        configured = bool(scope and self.earnings.public_credentials()["configured"])
+        return {**value, "id": "earnings_monitor", "configured": configured, "due": value["enabled"] and configured and value["next_check"] <= timestamp(),
                 "last_status": task["status"] if task else "", "last_message": task.get("message", "") if task else ""}
 
     def schedule(self):
@@ -45,8 +53,8 @@ class EarningsMonitor:
         value = self.overview()
         if not value["due"]:
             return
-        if any(t["kind"].startswith("earnings_") and t["status"] in {"queued", "running", "cancelling", "paused"}
-               for t in self.db.task_summaries(kinds=('earnings_options','earnings_capture'))):
+        if any(t["status"] in {"queued", "running", "cancelling", "paused"}
+               for t in self.earnings.scoped_tasks(self.earnings.scope())):
             return
         # Open both current month menus and re-read every still-published report.
         # The archive deduplicates unchanged content and retains changed versions.

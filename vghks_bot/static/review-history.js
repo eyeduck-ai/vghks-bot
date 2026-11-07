@@ -13,7 +13,7 @@ window.ReviewHistoryUI=(()=>{
  function clearView(){reportView?.gallery.dispose();frame?.navigation.remove();frame=orderView=reportView=null;}
  function reset(){clearView();modal().classList.remove("report-view-dialog");context=null;stack=[];taskId="";signature=renderSignature="";loadingStarted=0;sequence++;}
  function active(){return modal().open&&modal().dataset.view==="history"&&context;}
- function assetUrl(asset){return "/api/accounts/"+encodeURIComponent(account)+"/analysis/asset?id="+encodeURIComponent(asset.digest);}
+ function assetUrl(asset){return window.LocalSession.resourceURL("/api/accounts/"+encodeURIComponent(account)+"/analysis/asset?id="+encodeURIComponent(asset.digest));}
  function action(label,callback){const button=btn(label,callback,"quiet");button.classList.add("history-action");return button;}
  function showError(error){
   const content=panel();content.querySelector(".clinical-loading")?.remove();
@@ -72,13 +72,15 @@ window.ReviewHistoryUI=(()=>{
  function jump(resource,reference=""){const next={...context,resource,reference};return scans.has(resource)?openScans(next):load(next,{push:true});}
  function goBack(){const previous=stack.pop();if(previous)return load(previous);}
  function navigation(content,result){
-  const controls=node("div",undefined,"history-controls");
+  const controls=node("div",undefined,"history-controls dialog-toolbar"),isReport=context.resource==="order_report";
   if(stack.length)controls.append(action("← 返回清單",goBack));
-  if(context.resource==="order_report"){
+  if(isReport){
    const order=result.data?.order||{},summary=[order.date,order.name,order.case_no].filter(Boolean).join(" · "),meta=node("span",summary,"history-report-meta");meta.title=summary;controls.append(meta);
   }
-  controls.append(node("span",result.updated_at?"已存資料 · "+time(result.updated_at):"尚無已存資料","caption"));
-  if(work?.online&&!root.read_only){const update=action("更新資料",()=>load(context,{force:true}));if(context.resource==="order_report"){setIcon(update,"refresh","更新資料");update.classList.add("history-report-refresh");}controls.append(update);}
+  const status=node("span",result.updated_at?"已存資料 · "+time(result.updated_at):"尚無已存資料","caption");
+  if(isReport){status.classList.add("history-report-state");status.title=status.textContent;}
+  controls.append(status);
+  if(work?.online&&!root.read_only){const update=action("更新資料",()=>load(context,{force:true}));if(isReport){setIcon(update,"refresh","更新資料");update.classList.add("history-report-refresh","dialog-header-control");}controls.append(update);}
   if(!result.complete&&work?.online&&!root.read_only)controls.append(action("重試未完成",()=>load(context)));
   content.append(controls);
  }

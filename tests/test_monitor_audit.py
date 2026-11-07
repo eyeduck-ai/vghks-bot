@@ -5,12 +5,16 @@ from dataclasses import replace
 from unittest.mock import patch
 
 import test_followup_earnings as baseline
+from async_helpers import HOLD_TIMEOUT, wait_event
+from async_helpers import wait_workspace_task as wait_task
 
 from vghks_bot.analysis_fetch import clean
-from vghks_bot.selftest_bot import wait_task
+from vghks_bot.settings import timestamp
 
 
 class MonitorAuditTests(unittest.TestCase):
+    # Freeze the response clock in overlapping-read cases: Windows may give
+    # successive reads the same wall timestamp even when formatted with micros.
     setUp = baseline.FollowUpTests.setUp
     tearDown = baseline.FollowUpTests.tearDown
     task = baseline.FollowUpTests.task
@@ -24,7 +28,7 @@ class MonitorAuditTests(unittest.TestCase):
         def delayed(value):
             if isinstance(value, list):
                 entered.set()
-                release.wait(5)
+                wait_event(release, label=self.id() + ": release older list", timeout=HOLD_TIMEOUT)
             return clean(value)
 
         original = self.work.gateway.connection.reviews.get_case
@@ -33,13 +37,14 @@ class MonitorAuditTests(unittest.TestCase):
             case = original(ref)
             return replace(case, verify_code="1", fields={**case.fields, "VerifyCode": "1"})
 
-        with patch("vghks_bot.approvals.clean", side_effect=delayed), patch.object(
+        with patch("vghks_bot.bot_gateway.timestamp", return_value=timestamp()), patch(
+                "vghks_bot.approvals.clean", side_effect=delayed), patch.object(
                 self.work.gateway.connection.reviews, "get_case", approved):
             key = self.work.review.start({"kind": "approval_search", "force": True})["task_id"]
             try:
-                self.assertTrue(entered.wait(3))
+                wait_event(entered, label=self.id() + ": older list entered")
                 refreshed = wait_task(self.work, self.work.review.start({
-                    "kind": "approval_refresh", "ids": ["1001"]})["task_id"])
+                    "kind": "approval_refresh", "ids": ["1001"]})["task_id"], drain=False)
                 self.assertEqual(refreshed["status"], "completed")
             finally:
                 release.set()
@@ -71,18 +76,20 @@ class MonitorAuditTests(unittest.TestCase):
         def delayed(value):
             if getattr(value, "verify_code", None) == "4":
                 entered.set()
-                release.wait(5)
+                wait_event(release, label=self.id() + ": release older detail", timeout=HOLD_TIMEOUT)
             return clean(value)
 
         values = {"kind": "approval_case", "apply_seq": "1001", "force": True}
-        with patch("vghks_bot.approvals.clean", side_effect=delayed), patch.object(
+        with patch("vghks_bot.bot_gateway.timestamp", return_value=timestamp()), patch(
+                "vghks_bot.approvals.clean", side_effect=delayed), patch.object(
                 self.work.gateway.connection.reviews, "get_case", changing):
             key = self.work.review.start(values)["task_id"]
             try:
-                self.assertTrue(entered.wait(3))
+                wait_event(entered, label=self.id() + ": older detail entered")
                 # Distinct parts allow an independent fetch; identical requests
                 # now correctly reuse the foreground task already in flight.
-                newer = wait_task(self.work, self.work.review.start({**values, "parts": ["detail", "orders"]})["task_id"])
+                newer = wait_task(self.work, self.work.review.start({**values, "parts": ["detail", "orders"]})["task_id"],
+                                  drain=False)
                 self.assertEqual(newer["status"], "completed")
             finally:
                 release.set()
@@ -109,16 +116,17 @@ class MonitorAuditTests(unittest.TestCase):
         def delayed(value):
             if isinstance(value, list) and value[0].verify_code == "4":
                 entered.set()
-                release.wait(5)
+                wait_event(release, label=self.id() + ": release older query", timeout=HOLD_TIMEOUT)
             return clean(value)
 
-        with patch("vghks_bot.approvals.clean", side_effect=delayed), patch.object(
+        with patch("vghks_bot.bot_gateway.timestamp", return_value=timestamp()), patch(
+                "vghks_bot.approvals.clean", side_effect=delayed), patch.object(
                 self.work.gateway.connection.reviews, "get_cases", changing):
             key = self.work.review.start({"kind": "approval_search", "force": True})["task_id"]
             try:
-                self.assertTrue(entered.wait(3))
+                wait_event(entered, label=self.id() + ": older query entered")
                 newer = wait_task(self.work, self.work.review.start({
-                    "kind": "approval_search"})["task_id"])
+                    "kind": "approval_search"})["task_id"], drain=False)
                 self.assertEqual(newer["status"], "completed")
             finally:
                 release.set()
@@ -137,13 +145,13 @@ class MonitorAuditTests(unittest.TestCase):
 
         def slow(context, period):
             entered.set()
-            release.wait(5)
+            wait_event(release, label=self.id() + ": release earnings response", timeout=HOLD_TIMEOUT)
             return original(context, period)
 
         with patch.object(self.work.gateway.connection.earnings, "get_report", slow):
             key = self.work.review.start({"kind": "earnings_capture", "all_available": True})["task_id"]
             try:
-                self.assertTrue(entered.wait(3))
+                wait_event(entered, label=self.id() + ": earnings response entered")
                 with self.assertRaisesRegex(ValueError, "處理中"):
                     self.work.review.start({"resume": previous["id"]})
             finally:
@@ -158,13 +166,13 @@ class MonitorAuditTests(unittest.TestCase):
 
         def slow(ref):
             entered.set()
-            release.wait(5)
+            wait_event(release, label=self.id() + ": release approval response", timeout=HOLD_TIMEOUT)
             return original(ref)
 
         with patch.object(self.work.gateway.connection.reviews, "get_case", slow):
             key = self.work.review.start({"kind": "approval_refresh", "ids": ["1003"]})["task_id"]
             try:
-                self.assertTrue(entered.wait(3))
+                wait_event(entered, label=self.id() + ": approval response entered")
                 with self.assertRaisesRegex(ValueError, "執行或排隊"):
                     self.work.review.start({"resume": previous["id"]})
             finally:

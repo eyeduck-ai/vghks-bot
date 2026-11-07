@@ -6,12 +6,14 @@ import sqlite3
 import tempfile
 import threading
 import unittest
+from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import date
 from pathlib import Path
 from unittest.mock import patch
 
 from vghks_bot.bot import BotApplication
 from vghks_bot.bot_server import BotServer
+from vghks_bot.bounded_search import search as bounded_regex_search
 from vghks_bot.review_pages import literal_span
 from vghks_bot.selftest_bot import BotSyntheticSDK
 from vghks_bot.settings import Settings
@@ -399,6 +401,61 @@ class ReviewPageTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "逾時"):
                 self.pages.page({"id": "pages", "q": "slow", "search_mode": "regex"})
 
+    def test_concurrent_searches_share_only_the_same_snapshot(self):
+        self.seed(3)
+        started, waiting, release = threading.Event(), threading.Event(), threading.Event()
+        request = {"id": "pages", "q": "Straße", "search_mode": "regex"}
+
+        class TrackedFlight(Future):
+            def result(self, timeout=None):
+                waiting.set()
+                return super().result(timeout)
+
+        def search(_, texts):
+            if texts[1].startswith("replaced"):
+                return {}
+            started.set()
+            if not release.wait(5):
+                raise AssertionError("synthetic search was not released")
+            return {1: [[0, 6]]}
+
+        with patch("vghks_bot.review_pages.Future", TrackedFlight), \
+                patch("vghks_bot.review_pages.regex_search", side_effect=search) as scan, \
+                ThreadPoolExecutor(max_workers=2) as readers:
+            first = readers.submit(self.pages.page, request)
+            try:
+                self.assertTrue(started.wait(5))
+                second = readers.submit(self.pages.patient, {**request, "mrn": "PAGE0001"})
+                self.assertTrue(waiting.wait(5), "same-generation patient read did not share the page search")
+                patient = self.store.item("pages", "PAGE0001")
+                patient["records"][0]["soap"] = "replaced while the old reader owns its snapshot"
+                self.store.item("pages", "PAGE0001", patient)
+                self.assertEqual(self.pages.page(request)["total"], 0)
+            finally:
+                release.set()
+            self.assertEqual(first.result(timeout=5)["total"], 1)
+            self.assertEqual(second.result(timeout=5)["patient"]["records"][0]["highlights"], [[0, 6]])
+            self.assertEqual(scan.call_count, 2)
+        self.assertFalse(self.pages.search_inflight)
+
+    def test_regex_bounds_corpus_bytes_and_process_concurrency(self):
+        self.seed(2)
+        with patch("vghks_bot.bounded_search.MAX_REGEX_CORPUS_BYTES", 128), \
+                patch("vghks_bot.bounded_search.multiprocessing.get_context") as context, \
+                patch("vghks_bot.review_pages.regex_search") as page_search:
+            with self.assertRaisesRegex(ValueError, "資料過大"):
+                self.pages.page({"id": "pages", "q": "needle", "search_mode": "regex"})
+            with self.assertRaisesRegex(ValueError, "資料過大"):
+                bounded_regex_search("needle", ["測" * 25])
+            page_search.assert_not_called()
+            context.assert_not_called()
+        slots = threading.BoundedSemaphore(1)
+        with slots, patch("vghks_bot.bounded_search._regex_slots", slots), \
+                patch("vghks_bot.bounded_search.multiprocessing.get_context") as context:
+            with self.assertRaisesRegex(ValueError, "其他 regex 搜尋正在執行"):
+                bounded_regex_search("needle", ["synthetic needle"])
+            context.assert_not_called()
+
     def test_literal_scans_once_then_pages_and_detail_use_versioned_id_cache(self):
         self.seed(85)
         sql, connect = [], sqlite3.connect
@@ -485,7 +542,7 @@ class ReviewPageTests(unittest.TestCase):
             connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
             headers = {"Content-Type": "application/json", "Origin": server.origin}
             if cookie:
-                headers["Cookie"] = "opd_session=" + self.app.session_token
+                headers["X-VGHKS-Session"] = self.app.session_token
             if csrf:
                 headers["X-CSRF-Token"] = self.app.csrf_token
             connection.request("POST", "/api/accounts/" + (account or self.account) + path, json.dumps(values), headers)

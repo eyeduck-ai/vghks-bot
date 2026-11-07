@@ -33,9 +33,19 @@ def status(work, watched=(), run_id=""):
               "account_id", "account", "account_label", "start", "end", "cohort_id", "modules", "name"}
     value["runs"] = [{k: v for k, v in state.snapshot(detail=False).items() if k in fields}
                      for state in states if state.data.get("kind") != "bot"]
+    live_ids = {row["id"] for row in value["runs"]}
+    missing = []
     for key in list(dict.fromkeys(run_id.split(",")))[:20]:
-        if key and not any(row["id"] == key for row in value["runs"]):
-            value["runs"].append({k: v for k, v in work.store.metadata(key).items() if k in fields})
+        if not key or key in live_ids:
+            continue
+        try:
+            run = work.store.metadata(key)
+        except ValueError:
+            missing.append(key)
+        else:
+            value["runs"].append({k: v for k, v in run.items() if k in fields})
+    if missing:
+        value["missing_run_ids"] = missing
     value["active_count"] = sum(t.get("status") in {"queued", "running", "cancelling"}
                                 for t in [*value["tasks"], *value["runs"]])
     return value

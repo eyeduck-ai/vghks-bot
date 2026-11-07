@@ -206,7 +206,7 @@ class Store:
     def metadata(self, run_id):
         try:
             value = read_json(self.path(run_id) / "run.json")
-            if value["id"] != run_id:
+            if not isinstance(value, dict) or value.get("id") != run_id:
                 raise ValueError()
             return value
         except (OSError, ValueError, KeyError) as exc:

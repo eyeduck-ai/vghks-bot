@@ -5,6 +5,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from vghks_sdk import __version__ as sdk_version
+
 from vghks_bot.bot import BotApplication
 from vghks_bot.review import REGISTRATION_SCHEMA
 from vghks_bot.selftest_bot import wait_task
@@ -43,7 +45,7 @@ class RegistrationHistoryTests(unittest.TestCase):
         self.assertEqual(result["status"], "completed")
         saved, = result["items"]
         self.assertEqual(saved["registration_schema"], REGISTRATION_SCHEMA)
-        self.assertEqual(saved["sdk_version"], "0.23.5")
+        self.assertEqual(saved["sdk_version"], sdk_version)
         self.assertEqual([r["no_show"] for r in saved["payload"]], [None, True, None, None, None])
         self.assertEqual(saved["payload"][0]["registered_by"], "MWEB")
         self.assertEqual(saved["payload"][0]["columns"]["院方新增欄位"], "新欄內容 <保留>")

@@ -11,13 +11,15 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import requests
-from vghks_sdk import LoginRejectedError, ParseError, SoapRecord
+from vghks_sdk import LoginRejectedError, ParseError, RequestPolicy, SoapRecord
 from vghks_sdk.models import OrderHistoryFilter
 from vghks_sdk.parsing.clinical import parse_clinical_orders
+from vghks_sdk.parsing.prq import parse_opd_patients
 
 from vghks_bot.bot import BotApplication
 from vghks_bot.bot_server import BotServer
 from vghks_bot.databases import copy_database
+from vghks_bot.encoding import ClinicalTransport
 from vghks_bot.scanner import create_sdk
 from vghks_bot.selftest_bot import BotSyntheticSDK, wait_task
 from vghks_bot.settings import Settings, today
@@ -58,6 +60,59 @@ class DiagnosticTests(unittest.TestCase):
 
     def unsupported_orders(self, mrn, _filters, *, verified_cases=()):
         return parse_clinical_orders(UNSUPPORTED_ORDERS_HTML, mrn=mrn)
+
+    def test_opd_encoding_warning_export_includes_only_safe_evidence_and_cache_does_not_reuse_it(self):
+        base = "https://synthetic.invalid/PRQWeb"
+        transport = ClinicalTransport(policy=RequestPolicy(), attachment_base_url=base)
+        self.addCleanup(transport.close)
+        response = SimpleNamespace(
+            content=(b"<meta charset=big5><script>aryOpdSec[0]='70';aryOpdRoom[0]='02';aryOpdDoc[0]='TEST';"
+                     b"if(aryOpdSec[0]=='70'){new KSCase('','1','SECRET-MRN','SECRET-NAME\xff&#65533;','F','68');}</script>"),
+            headers={"Content-Type": "text/html; charset=SECRET-HEADER", "Set-Cookie": "SECRET-COOKIE"},
+            request=SimpleNamespace(method="POST"),
+            url=base + "/QueryOPDPatList.do?hid=SECRET-TOKEN",
+        )
+
+        def list_patients(card, day):
+            return parse_opd_patients(transport.text(response), visit_date=day, doctor_card=card)
+
+        day = today().isoformat()
+        params = {"account_ids": [self.key], "ranges": {self.key: {"start": day, "end": day}}}
+        with patch.object(self.work.gateway.connection.opd, "get_doctor_patients", side_effect=list_patients) as listing:
+            run_id = self.work.browse(params)["run_ids"][0]
+            self.assertTrue(self.work.idle.wait(8))
+            task = self.work.snapshot(run_id)
+            self.assertEqual(task["status"], "partial")
+            self.assertEqual(task["counts"]["registrations"], 1)
+            cached_id = self.work.browse(params)["run_ids"][0]
+            self.assertTrue(self.work.idle.wait(8))
+            self.assertEqual(listing.call_count, 1)
+
+        local = self.work.diagnostics.query({"task_id": run_id, "mrn": "SECRET-MRN"})
+        self.assertEqual(local["saved_attempts"][0]["mrn"], "SECRET-MRN")
+        with zipfile.ZipFile(io.BytesIO(self.work.diagnostics.export({"task_id": run_id}))) as archive:
+            self.assertEqual(set(archive.namelist()), {"debug.json", "sdk-context.json", "README.txt"})
+            for member in archive.namelist():
+                contents = archive.read(member)
+                self.assertNotIn(b"SECRET-", contents)
+                self.assertNotIn(b"SECRET-NAME".hex().encode(), contents)
+                self.assertNotIn(response.content.hex().encode(), contents)
+            exported = json.loads(archive.read("debug.json"))
+
+        expected = {
+            "source": "remote", "http_charset": "other", "meta_charset": "big5",
+            "configured_encoding": "auto", "decoded_with": "cp950", "decoder_replacement": True,
+            "source_markers": ["html_numeric_entity"],
+            "source_byte_samples": [{"marker": "html_numeric_entity", "hex": b"&#65533;".hex()}],
+            "masked_byte_samples": ["XX"], "byte_sample_policy": "fixed_markers_only", "scope": "response",
+        }
+        for warning in (exported["saved_attempts"][0], exported["failures"][0]):
+            self.assertEqual(warning["code"], "TEXT_DECODE_INCOMPLETE")
+            self.assertNotIn("mrn", warning)
+            self.assertEqual(warning["query"]["affected_fields"], ["name"])
+            self.assertEqual(warning["query"]["encoding_evidence"], expected)
+        cached = self.work.diagnostics.query({"task_id": cached_id})
+        self.assertEqual(cached["saved_attempts"][0]["query"]["encoding_evidence"], {"source": "cache"})
 
     def test_cataract_index_failure_identifies_single_query_and_preserves_completed_data_on_resume(self):
         with (patch.object(self.work.gateway.connection.orders, "get_order_history", side_effect=self.unsupported_orders),
@@ -203,6 +258,7 @@ class DiagnosticTests(unittest.TestCase):
 
     def test_debug_zip_http_download_is_authenticated_account_scoped_and_readonly_compatible(self):
         from vghks_bot.selftest_diagnostics import check_order_index_evidence
+        from vghks_bot.server import resource_token
 
         check_order_index_evidence(self.work)
         second = self.app.login({"username": "SECOND", "password": "synthetic"})["account"]["id"]
@@ -211,11 +267,12 @@ class DiagnosticTests(unittest.TestCase):
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
             try:
-                def read(account, authenticated=True):
+                def read(account, authenticated=True, direct=False):
                     connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
-                    headers = {"Cookie": "opd_session=" + self.app.session_token} if authenticated else {}
+                    headers = {"X-VGHKS-Session": self.app.session_token} if authenticated else {}
                     connection.request("GET", "/api/accounts/" + account +
-                                       "/reviews/diagnostics/export?task_id=selftest-order-index", headers=headers)
+                                       "/reviews/diagnostics/export?task_id=selftest-order-index" +
+                                       ("&access=" + resource_token(self.app.session_token) if direct else ""), headers=headers)
                     response = connection.getresponse()
                     result = response.status, dict(response.getheaders()), response.read()
                     connection.close()
@@ -227,6 +284,12 @@ class DiagnosticTests(unittest.TestCase):
                 self.assertIn("attachment;", headers["Content-Disposition"])
                 with zipfile.ZipFile(io.BytesIO(content)) as archive:
                     self.assertTrue(any(name.endswith(".bin") for name in archive.namelist()))
+                status, headers, content = read(self.key, authenticated=False, direct=True)
+                self.assertEqual(status, 200)
+                self.assertEqual(headers["Referrer-Policy"], "no-referrer")
+                with zipfile.ZipFile(io.BytesIO(content)) as archive:
+                    for name in archive.namelist():
+                        self.assertNotIn(resource_token(self.app.session_token).encode(), archive.read(name))
                 with zipfile.ZipFile(io.BytesIO(read(second)[2])) as archive:
                     self.assertFalse(json.loads(archive.read("debug.json"))["items"])
                     self.assertEqual(set(archive.namelist()), {"debug.json", "sdk-context.json", "README.txt"})

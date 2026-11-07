@@ -236,9 +236,9 @@ class WorkbenchStore:
             clauses.append("d.id IN (SELECT value FROM json_each(?))")
             args.append(json.dumps(list(keys)))
         for field, value in (filters or {}).items():
-            if field not in {"kind", "report_id", "apply_seq", "cohort_id", "mrn"}:
+            if field not in {"kind", "report_id", "apply_seq", "cohort_id", "mrn", "scope"}:
                 raise ValueError("資料篩選欄位不正確。")
-            clauses.append("json_extract(d.payload,'$." + field + "')=?")
+            clauses.append("json_extract(d.payload,'$." + field + "') IS ?")
             args.append(value)
         suffix = ""
         if limit is not None:

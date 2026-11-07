@@ -1,3 +1,4 @@
+import json
 import threading
 import unittest
 from datetime import date
@@ -8,8 +9,13 @@ import requests
 from vghks_sdk import RequestPolicy
 from vghks_sdk.parsing.prq import parse_opd_patients
 
-from vghks_bot.encoding import ClinicalTransport, decode_response, report_attachment_downloads
-from vghks_bot.scanner import create_sdk
+from vghks_bot.encoding import (
+    ClinicalTransport,
+    decode_response,
+    observe_prq_decoding,
+    report_attachment_downloads,
+)
+from vghks_bot.scanner import ScanState, _collect, create_sdk
 from vghks_bot.settings import Settings
 
 
@@ -25,6 +31,19 @@ class EncodingTests(unittest.TestCase):
         self.assertEqual(len(patients),1)
         self.assertEqual((patients[0].name,patients[0].sex,patients[0].age),("測試姓名","女","68歲"))
         self.assertEqual(patients[0].sequence_no, "1")
+        # The same warning can occur when the source already carries a replacement character.
+        day = date(2026, 9, 19)
+        source = decode_response(html.replace("測試姓名", "合成\ufffd").encode())
+        rows = parse_opd_patients(source, visit_date=day, doctor_card="DOC1")
+        state = ScanState(day, day)
+        sdk = SimpleNamespace(opd=SimpleNamespace(get_doctor_patients=lambda *_: rows))
+        _collect(sdk, state, Settings(username="DOC1"), day, day)
+        self.assertEqual(state.data["counts"]["registrations"], 1)
+        warning, = state.data["issues"]
+        self.assertEqual(warning["code"], "TEXT_DECODE_INCOMPLETE")
+        self.assertIn("姓名", warning["message"])
+        self.assertIn("更新門診清單", warning["message"])
+        self.assertNotIn("合成", warning["message"])
 
     def test_utf8_big5_headers_meta_and_overrides(self):
         for header in ("","text/html; charset=iso-8859-1","text/html; charset=utf-8","text/html; charset=big5"):
@@ -43,6 +62,82 @@ class EncodingTests(unittest.TestCase):
             self.assertIsInstance(sdk._runtime.transport,ClinicalTransport)
             response = SimpleNamespace(content="女".encode("cp950"),headers={"Content-Type":"text/html"})
             self.assertEqual(sdk._runtime.transport.text(response),"女")
+
+
+class DecodeEvidenceTests(unittest.TestCase):
+    base = "https://synthetic.invalid/PRQWeb"
+
+    def setUp(self):
+        self.transport = ClinicalTransport(policy=RequestPolicy(), attachment_base_url=self.base)
+        self.addCleanup(self.transport.close)
+
+    def observe(self, content, header="text/html", *, operation="opd"):
+        method, endpoint = ("POST", "QueryOPDPatList.do") if operation == "opd" else ("GET", "QueryBillingSOAP.do")
+        with observe_prq_decoding(operation) as evidence:
+            text = self.response(content, header, method, self.base + "/" + endpoint)
+        return text, evidence
+
+    def response(self, content, header, method, url):
+        return self.transport.text(SimpleNamespace(
+            content=content, headers={"Content-Type": header}, url=url, request=SimpleNamespace(method=method),
+        ))
+
+    def test_source_markers_emit_only_the_exact_fixed_original_bytes(self):
+        cases = {
+            "utf8_literal": b"\xef\xbf\xbd",
+            "html_numeric_entity": b"&#xFfFd;",
+            "html_null_entity": b"&#0;",
+            "javascript_escape": br"\uFFFD",
+        }
+        for marker, sample in cases.items():
+            with self.subTest(marker=marker):
+                content = b'<meta charset="utf-8">SYNTHETIC-NAME' + sample + b"TOKEN-MRN"
+                _, evidence = self.observe(content, "text/html; charset=BIG5")
+                self.assertEqual(evidence["http_charset"], "big5")
+                self.assertEqual(evidence["meta_charset"], "utf-8")
+                self.assertEqual(evidence["configured_encoding"], "auto")
+                self.assertEqual(evidence["decoded_with"], "utf-8")
+                self.assertFalse(evidence["decoder_replacement"])
+                self.assertEqual(evidence["source_markers"], [marker])
+                self.assertEqual(evidence["source_byte_samples"], [{"marker": marker, "hex": sample.hex()}])
+                self.assertEqual(evidence["masked_byte_samples"], [])
+                self.assertNotIn(b"SYNTHETIC-NAME".hex(), json.dumps(evidence))
+
+    def test_malformed_bytes_are_masked_and_unknown_labels_are_suppressed(self):
+        self.transport.response_encoding = "utf-8"
+        invalid = b"\xe2\x80"
+        content = b'<meta charset="SECRET-META">SYNTHETIC-NAME' + (invalid + b"/TOKEN-MRN") * 5
+        _, evidence = self.observe(content, "text/html; charset=SECRET-HEADER")
+        self.assertEqual((evidence["http_charset"], evidence["meta_charset"]), ("other", "other"))
+        self.assertEqual(evidence["decoded_with"], "utf-8")
+        self.assertEqual(evidence["configured_encoding"], "utf-8")
+        self.assertTrue(evidence["decoder_replacement"])
+        self.assertEqual(evidence["masked_byte_samples"], ["XXXX"] * 3)
+        self.assertEqual(evidence["source_byte_samples"], [])
+        serialized = json.dumps(evidence)
+        for sensitive in ("SECRET", "SYNTHETIC", "TOKEN", "MRN", invalid.hex(), content.hex()):
+            self.assertNotIn(sensitive, serialized)
+
+    def test_bom_and_decoder_replacement_can_coexist_with_original_marker(self):
+        self.transport.response_encoding = "big5"
+        text, evidence = self.observe(b"\xef\xbb\xbf\xef\xbf\xbd\xff", "text/html", operation="soap")
+        self.assertEqual(text, "\ufffd\ufffd")
+        self.assertEqual(evidence["configured_encoding"], "big5")
+        self.assertEqual(evidence["decoded_with"], "utf-8-sig")
+        self.assertTrue(evidence["decoder_replacement"])
+        self.assertEqual(evidence["masked_byte_samples"], ["XX"])
+        self.assertEqual(evidence["source_byte_samples"], [{"marker": "utf8_literal", "hex": "efbfbd"}])
+
+    def test_scope_excludes_the_opd_landing_other_endpoints_and_other_origins(self):
+        content = b"&#65533;"
+        header = "text/html"
+        with observe_prq_decoding("opd") as evidence:
+            self.response(content, header, "GET", self.base + "/QueryOPDPatList.do")
+            self.response(content, header, "POST", self.base + "/OtherQuery.do")
+            self.response(content, header, "POST", "https://other.invalid/PRQWeb/QueryOPDPatList.do")
+            self.assertEqual(evidence, {})
+        self.response(content, header, "POST", self.base + "/QueryOPDPatList.do")
+        self.assertEqual(evidence, {})
 
 
 class AttachmentTransportTests(unittest.TestCase):

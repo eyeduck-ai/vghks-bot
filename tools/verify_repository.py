@@ -100,6 +100,16 @@ def source_paths(root=ROOT):
     return sorted(set(p for p in result.stdout.decode("utf-8").split("\0") if p))
 
 
+def tracked_directory(relative, *, root=ROOT, suffixes=None):
+    """Public packaging may only include files from the repository index."""
+    result = subprocess.run(["git", "ls-files", "-z", "--cached", "--", relative],
+                            cwd=root, check=True, capture_output=True)
+    paths = sorted({name for name in result.stdout.decode("utf-8").split("\0") if name})
+    paths = [name for name in paths if suffixes is None or PurePosixPath(name).suffix in suffixes]
+    check_contents(root, paths)
+    return [root / name for name in paths]
+
+
 def check_contents(root, paths):
     if not paths:
         raise ValueError("No source files found in the repository")

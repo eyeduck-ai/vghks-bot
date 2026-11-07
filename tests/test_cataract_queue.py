@@ -257,7 +257,7 @@ class CataractQueueTests(unittest.TestCase):
             thread.start()
             def request(account, csrf=True):
                 connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=4)
-                headers = {"Content-Type": "application/json", "Cookie": "opd_session=" + self.app.session_token}
+                headers = {"Content-Type": "application/json", "X-VGHKS-Session": self.app.session_token}
                 if csrf:
                     headers["X-CSRF-Token"] = self.app.csrf_token
                 connection.request("POST", f"/api/accounts/{account}/analysis/cataract/queue",

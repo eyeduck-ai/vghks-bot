@@ -7,6 +7,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from async_helpers import join_threads, wait_event
+
 from vghks_bot import storage
 from vghks_bot.jobs import Application, BusyError
 from vghks_bot.scanner import ScanState
@@ -39,8 +41,13 @@ class JobTests(unittest.TestCase):
 
     def start(self, keys):
         ids = self.app.start({"account_ids":keys})["run_ids"]
-        self.assertTrue(self.app.idle.wait(8))
+        self.wait_idle()
         return [self.app.snapshot(key) for key in ids]
+
+    def wait_idle(self):
+        wait_event(self.app.idle, label="legacy account queue finished", timeout=30,
+                   state=lambda: {"idle": self.app.idle.is_set(), "runs": len(self.app.states),
+                                  "sdk_instances": len(self.instances)}, threads=(self.app.worker,))
 
     def test_accounts_have_independent_date_ranges_and_sessions(self):
         a = self.account("DOC1","2026-09-17","2026-09-18")
@@ -55,10 +62,10 @@ class JobTests(unittest.TestCase):
 
         self.app.sdk_factory = factory
         ids = self.app.start({"account_ids": [a, b]})["run_ids"]
-        # Keep one real batch while giving each account its own eight-second
-        # bound. DOC2 enters its factory only after DOC1's queued job finishes.
-        self.assertTrue(second_started.wait(8))
-        self.assertTrue(self.app.idle.wait(8))
+        # DOC2 enters its factory only after DOC1's queued job finishes. The
+        # timeout is a failure watchdog, never the expected execution order.
+        wait_event(second_started, label="second account SDK entered", threads=(self.app.worker,))
+        self.wait_idle()
         first, second = [self.app.snapshot(key) for key in ids]
         self.assertEqual([first["status"],second["status"]],["completed","completed"])
         self.assertEqual(first["counts"]["soap_read"],6)
@@ -91,7 +98,7 @@ class JobTests(unittest.TestCase):
         original = self.start([key])[0]
         self.app.save_settings({"categories":[{"id":"follow","name":"追蹤","keywords":["追蹤視力"]}]})
         new_id = self.app.reclassify(original["id"])["run_ids"][0]
-        self.assertTrue(self.app.idle.wait(8))
+        self.wait_idle()
         result = self.app.snapshot(new_id)
         self.assertEqual(len(self.instances),1)
         self.assertEqual(result["counts"]["matched_visits"],1)
@@ -110,15 +117,14 @@ class JobTests(unittest.TestCase):
             entered.set()
             # Only the test's finally block releases the SDK. This watchdog
             # covers real queued-state journal I/O, not a product time limit.
-            if not gate.wait(60):
-                raise AssertionError("synthetic SDK factory was not released")
+            wait_event(gate, label="synthetic SDK factory explicitly released", timeout=60)
             return original_factory(settings)
 
         self.app.sdk_factory = factory
         a, b = self.account("DOC1"), self.account("DOC2")
         ids = self.app.start({"account_ids":[a,b]})["run_ids"]
         try:
-            self.assertTrue(entered.wait(2))
+            wait_event(entered, label="first account SDK factory entered", threads=(self.app.worker,))
             self.assertEqual(factory_entries, ["DOC1"])
             self.assertEqual(self.app.snapshot(ids[1])["status"],"queued")
             with self.assertRaises(BusyError):
@@ -127,7 +133,7 @@ class JobTests(unittest.TestCase):
             self.assertEqual(self.instances, [], "the held SDK factory advanced before cancellation")
         finally:
             gate.set()
-        self.assertTrue(self.app.idle.wait(6))
+        self.wait_idle()
         self.assertEqual(self.app.snapshot(ids[1])["status"],"cancelled")
         self.assertEqual([s.card for s in self.instances],["DOC1"])
         self.assertEqual(factory_entries, ["DOC1"])
@@ -202,8 +208,7 @@ class JobTests(unittest.TestCase):
             try:
                 with path.open("r", encoding="utf-8") as handle:
                     reader_open.set()
-                    if not release_read.wait(10):
-                        raise AssertionError("metadata reader was not released")
+                    wait_event(release_read, label="metadata reader explicitly released", timeout=60)
                     return handle.read()
             finally:
                 reader_closed.set()
@@ -229,17 +234,17 @@ class JobTests(unittest.TestCase):
                 patch.object(storage.os, "replace", windows_replace):
             reader.start()
             try:
-                self.assertTrue(reader_open.wait(10), "history did not open the metadata file")
+                wait_event(reader_open, label="history opened metadata", threads=(reader,))
                 writer.start()
-                self.assertTrue(writer_attempted.wait(10), "checkpoint did not acquire the metadata lock")
+                wait_event(writer_attempted, label="checkpoint attempted metadata lock", threads=(reader, writer))
                 # The read handle must force actual contention, without sleeps
                 # or a long scan whose many fsync calls depend on runner speed.
                 self.assertTrue(writer_blocked.is_set(), "checkpoint overlapped an open metadata reader")
             finally:
                 release_read.set()
-                reader.join(10)
-                if writer.ident is not None:
-                    writer.join(10)
+                join_threads((reader, writer), label="metadata reader and writer drained",
+                             state=lambda: {"reader_closed": reader_closed.is_set(), "errors": len(errors)},
+                             preserve_error=True)
         self.assertFalse(reader.is_alive())
         self.assertFalse(writer.is_alive())
         self.assertEqual(errors, [])
@@ -247,6 +252,58 @@ class JobTests(unittest.TestCase):
         self.assertEqual(replacements, [metadata_path])
         saved = self.app.store.metadata(state.data["id"])
         self.assertEqual((saved["status"], saved["revision"]), ("completed", 1))
+
+    def test_slow_fsync_keeps_previous_checkpoint_until_durable_atomic_replace(self):
+        start, end = parse_range({"start": "2026-09-18"})
+        state = ScanState(start, end, id=uuid.uuid4().hex)
+        before = state.snapshot(detail=False)
+        journal = self.app.store.create(before)
+        metadata_path = journal.directory / "run.json"
+        updated = {**before, "status": "completed", "revision": 1}
+        syncing, release, replaced = (threading.Event() for _ in range(3))
+        operations, errors = [], []
+        real_fsync, real_replace = storage.os.fsync, storage.os.replace
+
+        def slow_fsync(fd):
+            # Hold the real flush boundary instead of assuming how long a
+            # Windows runner takes. The actual fsync still executes afterward.
+            syncing.set()
+            wait_event(release, label="slow checkpoint fsync explicitly released", timeout=60)
+            real_fsync(fd)
+            operations.append("fsync")
+
+        def publish(source, destination):
+            self.assertEqual(destination, metadata_path)
+            self.assertEqual(operations, ["fsync"], "checkpoint published before durable flush")
+            real_replace(source, destination)
+            operations.append("replace")
+            replaced.set()
+
+        def checkpoint():
+            try:
+                journal.checkpoint(updated)
+            except Exception as exc:
+                errors.append(exc)
+
+        writer = threading.Thread(target=checkpoint, name="synthetic-slow-fsync", daemon=True)
+        with patch.object(storage.os, "fsync", side_effect=slow_fsync), \
+                patch.object(storage.os, "replace", side_effect=publish):
+            writer.start()
+            try:
+                wait_event(syncing, label="checkpoint reached slow fsync", threads=(writer,),
+                           state=lambda: {"published": replaced.is_set(), "errors": len(errors)})
+                self.assertFalse(replaced.is_set())
+                self.assertEqual(json.loads(metadata_path.read_text(encoding="utf-8")), before,
+                                 "incomplete checkpoint replaced the previous readable JSON")
+                self.assertEqual(len(list(journal.directory.glob(".run.json.*.tmp"))), 1)
+            finally:
+                release.set()
+                join_threads((writer,), label="slow checkpoint drained", preserve_error=True)
+        self.assertEqual(errors, [])
+        self.assertEqual(operations, ["fsync", "replace"])
+        self.assertTrue(replaced.is_set())
+        self.assertEqual(self.app.store.metadata(state.data["id"])["status"], "completed")
+        self.assertEqual(list(journal.directory.glob(".run.json.*.tmp")), [])
 
     def test_deleting_profile_keeps_history(self):
         key = self.account("DOC1")

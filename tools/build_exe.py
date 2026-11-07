@@ -12,7 +12,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from tools.verify_repository import check_core_installation, check_sdk_installation  # noqa: E402
+from tools.verify_repository import (  # noqa: E402
+    check_core_installation,
+    check_sdk_installation,
+    tracked_directory,
+)
 from vghks_bot.settings import Settings  # noqa: E402
 
 
@@ -58,12 +62,16 @@ def main():
         environment = os.environ.copy()
         environment["PYINSTALLER_CONFIG_DIR"] = str(ROOT / ".build" / "pyinstaller-cache")
         license_directory = notices()
+        static = tracked_directory("vghks_bot/static")
+        static_flags = [flag for path in static for flag in (
+            "--add-data", f"{path};{path.parent.relative_to(ROOT).as_posix()}")]
         name, entry = "VGHKS-bot", "run.py"
         command = [sys.executable, "-m", "PyInstaller", "--noconfirm", "--noupx", "--onefile", "--windowed",
             "--name", name, "--distpath", str(ROOT / "dist"),
             "--workpath", str(ROOT / ".build" / "pyinstaller"), "--specpath", str(ROOT / ".build"),
-            "--paths", str(ROOT), "--add-data", f"{ROOT / 'vghks_bot' / 'static'};vghks_bot/static",
-            "--add-data", f"{defaults};vghks_bot", "--add-data", f"{license_directory};vghks_bot/licenses",
+            "--paths", str(ROOT), *static_flags,
+            "--add-data", f"{defaults};vghks_bot",
+            "--add-data", f"{license_directory / 'THIRD_PARTY_NOTICES.txt'};vghks_bot/licenses",
             "--collect-data", "vghks_sheet_core", "--hidden-import", "truststore", "--exclude-module", "tkinter", "--exclude-module", "pytest",
             str(ROOT / entry)]
         subprocess.run(command, cwd=ROOT, env=environment, check=True)

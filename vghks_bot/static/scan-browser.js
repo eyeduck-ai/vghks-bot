@@ -1,7 +1,8 @@
 "use strict";
 
 window.ScanBrowser = (() => {
-  let context = null, task = "", starting = false, serial = 0, rows = null, selected = null, selectedId = "";
+  let context = null, task = "", starting = false, serial = 0, previewSerial = 0, selectedId = "";
+  let catalog = null, previewHost = null, rendered = "";
   let categoryFilter = "eye", searchText = "";
   const make = (tag, label, cls) => {
     const el = document.createElement(tag);
@@ -14,12 +15,12 @@ window.ScanBrowser = (() => {
     el.type = "button";
     el.addEventListener("click", async () => {
       if (el.dataset.busy) return;
-      const wasDisabled = el.disabled;
+      const revision = serial, wasDisabled = el.disabled;
       el.dataset.busy = "true";
       el.setAttribute("aria-busy", "true");
       el.disabled = true;
       try {await fn();}
-      catch (error) {message(error.message, true);}
+      catch (error) {if (isOpen(revision)) message(error.message, true);}
       finally {
         delete el.dataset.busy;
         el.removeAttribute("aria-busy");
@@ -30,6 +31,8 @@ window.ScanBrowser = (() => {
   };
   const dialog = () => document.getElementById("scanBrowserDialog");
   const content = () => document.getElementById("scanBrowserContent");
+  const isOpen = revision => revision === serial && dialog()?.open;
+  const emptyPreview = () => make("p", "從左側選擇掃描病歷，在這裡查看 PDF。", "scan-empty-preview");
   function mount() {
     if (dialog()) return;
     const shell = make("dialog", undefined, "scan-browser-dialog");
@@ -48,8 +51,7 @@ window.ScanBrowser = (() => {
     const body = make("div", undefined, "scan-browser-content");
     body.id = "scanBrowserContent";
     shell.append(head, body);
-    shell.addEventListener("click", event => {if (event.target === shell) shell.close();});
-    shell.addEventListener("close", () => {serial++; task = ""; selected = null; selectedId = "";});
+    shell.addEventListener("close", () => {if (!shell.open) clearView();});
     document.body.append(shell);
     window.addEventListener("filecomparechange", syncCompare);
     window.addEventListener("filecomparemessage", event => {if (shell.open) message(event.detail, true);});
@@ -87,14 +89,10 @@ window.ScanBrowser = (() => {
   }
   async function open(options) {
     mount();
-    serial++;
+    clearView();
     context = options;
-    selected = null;
-    selectedId = "";
     categoryFilter = "eye";
     searchText = "";
-    task = "";
-    starting = false;
     window.FileCompare?.context(options.account, options.mrn, options.patient_name);
     syncCompare();
     document.getElementById("scanBrowserTitle").textContent = options.resource === "case_scans" ? "該次掃描病歷" : "歷年掃描病歷";
@@ -107,11 +105,14 @@ window.ScanBrowser = (() => {
   async function refresh({fetchMissing = false} = {}) {
     if (!context || !dialog()?.open) return;
     const revision = serial;
-    const result = await request("/reviews/history/read", base());
-    if (revision !== serial) return;
-    rows = result.data;
-    render(result);
-    if (fetchMissing && !result.complete && canFetch()) await start({kind:"history", ...base()});
+    try {
+      const result = await request("/reviews/history/read", base());
+      if (!isOpen(revision)) return;
+      render(result);
+      if (fetchMissing && !result.complete && canFetch()) await start({kind:"history", ...base()});
+    } catch (error) {
+      if (isOpen(revision)) throw error;
+    }
   }
   async function start(values) {
     if (task || starting) return;
@@ -123,23 +124,29 @@ window.ScanBrowser = (() => {
     window.JobProgress?.pending(status, "掃描病歷", "正在送出掃描病歷查詢…");
     let started;
     try {started = await request("/tasks/start", values);}
-    finally {status.remove(); starting = false;}
-    if (revision !== serial) return;
-    task = started.task_id;
-    await poll(revision);
+    finally {status.remove(); if (revision === serial) starting = false;}
+    if (!isOpen(revision)) return;
+    const id = task = started.task_id;
+    try {await poll(revision, id);}
+    finally {if (revision === serial && task === id) task = "";}
   }
-  async function poll(revision) {
-    while (revision === serial && dialog()?.open && task) {
+  async function poll(revision, id) {
+    const current = () => isOpen(revision) && task === id;
+    let lastStatus = "";
+    while (current()) {
       await window.JobProgress.ready();
-      if (revision !== serial || !dialog()?.open || !task) return;
-      const detail = await request("/tasks/detail?summary=1&id=" + encodeURIComponent(task));
-      if (revision !== serial) return;
-      const result = await request("/reviews/history/read", base());
-      if (revision !== serial) return;
-      rows = result.data;
-      render(result, detail);
+      if (!current()) return;
+      const detail = await request("/tasks/detail?summary=1&id=" + encodeURIComponent(id));
+      if (!current()) return;
+      const status = JSON.stringify([detail.status, detail.revision ?? detail.updated_at]);
+      if (status !== lastStatus) {
+        const result = await request("/reviews/history/read", base());
+        if (!current()) return;
+        lastStatus = status;
+        render(result);
+      }
+      window.JobProgress.publish(detail);
       if (!["queued", "running", "cancelling"].includes(detail.status)) {
-        task = "";
         if (["failed", "partial", "paused"].includes(detail.status)) message(detail.message || "部分掃描資料未取得，可續跑。", true);
         return;
       }
@@ -177,28 +184,33 @@ window.ScanBrowser = (() => {
     if (visible.length) visible.forEach((row, index) => target.append(scanRow(row, index)));
     else target.append(make("p", "此篩選條件沒有掃描病歷。", "scan-caption"));
   }
-  function render(result, job = null) {
-    const data = result.data, body = content();
-    body.replaceChildren();
-    if (job) window.JobProgress?.publish(job);
+  function render(result) {
+    const data = result.data, online = canFetch();
+    const signature = JSON.stringify([data, online]);
+    if (signature === rendered) return;
+    rendered = signature;
+    if (!catalog) {
+      const workspace = make("div", undefined, "scan-browser-workspace");
+      catalog = make("div", undefined, "scan-browser-catalog");
+      previewHost = make("div", undefined, "scan-browser-preview-host");
+      previewHost.id = "scanPreviewHost";
+      previewHost.append(emptyPreview());
+      workspace.append(catalog, previewHost);
+      content().replaceChildren(workspace);
+    }
+    catalog.replaceChildren();
     if (!data) {
-      body.append(make("p", "沒有已存掃描病歷；連線後可取得。", "scan-caption"));
-      if (canFetch()) body.append(button("重試取得", () => start({kind:"history", ...base()})));
+      catalog.append(make("p", "沒有已存掃描病歷；連線後可取得。", "scan-caption"));
+      if (online) catalog.append(button("重試取得", () => start({kind:"history", ...base()})));
       return;
     }
-    const workspace = make("div", undefined, "scan-browser-workspace");
-    const catalog = make("div", undefined, "scan-browser-catalog");
-    const previewHost = make("div", undefined, "scan-browser-preview-host");
-    previewHost.id = "scanPreviewHost";
-    workspace.append(catalog, previewHost);
-    body.append(workspace);
     if (context.resource === "scans") {
       catalog.append(make("p", data.history_loaded ?
         `完整歷年索引已保存 · ${data.records?.length || 0} 筆 · ${data.categories?.length || 0} 種院方類別` :
         data.cache_error ? "已存索引無法核對；連線後可重新取得完整類別清單。" :
         data.index_loaded ? "目前顯示舊版索引；連線後會更新類別與日期。" : "尚未取得歷年掃描索引。", "scan-caption"));
       if (data.link_error) catalog.append(make("p", "已存就診連結無法核對；歷年類別清單仍可查看。", "scan-error"));
-      if (canFetch()) catalog.append(button("更新索引", () => start({kind:"history", ...base(), force:true})));
+      if (online) catalog.append(button("更新索引", () => start({kind:"history", ...base(), force:true})));
       const filters = make("div", undefined, "scan-filters");
       const categoryLabel = make("label", "病歷類別");
       const categorySelect = make("select");
@@ -228,70 +240,81 @@ window.ScanBrowser = (() => {
       search.addEventListener("input", () => {searchText = search.value; renderScanRows(list, data);});
       renderScanRows(list, data);
       if (data.visits_loaded) catalog.append(make("p", `眼科就診參照已核對 ${data.checked_case_count || 0} / ${data.eye_case_count || 0} 次；此數量不影響歷年類別清單。`, "scan-caption"));
-      if (!data.links_complete && canFetch()) catalog.append(button("補查眼科就診連結", () => start({kind:"history", ...base(), backfill:true})));
+      if (!data.links_complete && online) catalog.append(button("補查眼科就診連結", () => start({kind:"history", ...base(), backfill:true})));
     } else {
       catalog.append(make("p", [data.case?.date, data.case?.section, data.case?.case_no].filter(Boolean).join(" · ") || "該次就診", "scan-caption"));
-      if (canFetch()) catalog.append(button("更新該次掃描", () => start({kind:"history", ...base(), force:true})));
+      if (online) catalog.append(button("更新該次掃描", () => start({kind:"history", ...base(), force:true})));
       if (data.scans?.length) data.scans.forEach((row, i) => catalog.append(scanRow(row, i)));
       else catalog.append(make("p", "該次 SOAP 未提供掃描病歷。", "scan-caption"));
     }
-    previewHost.append(selected || make("p", "從左側選擇掃描病歷，在這裡查看 PDF。", "scan-empty-preview"));
   }
-  async function asset(row) {
+  async function asset(row, current) {
     const values = {...base(), resource:"scan_asset", reference:row.id};
-    let result = await request("/reviews/history/read", values);
-    if (!result.data && canFetch()) {
-      const started = await request("/tasks/start", {kind:"history", ...values});
-      for (;;) {
-        await window.JobProgress.ready();
-        const job = await request("/tasks/detail?summary=1&id=" + encodeURIComponent(started.task_id));
-        if (!["queued", "running", "cancelling"].includes(job.status)) {
-          if (job.status !== "completed") throw new Error(job.message || "掃描 PDF 尚未取得。");
-          break;
+    try {
+      let result = await request("/reviews/history/read", values);
+      if (!current()) return null;
+      if (!result.data && canFetch()) {
+        const started = await request("/tasks/start", {kind:"history", ...values});
+        for (;;) {
+          if (!current()) return null;
+          await window.JobProgress.ready();
+          if (!current()) return null;
+          const job = await request("/tasks/detail?summary=1&id=" + encodeURIComponent(started.task_id));
+          if (!current()) return null;
+          if (!["queued", "running", "cancelling"].includes(job.status)) {
+            if (job.status !== "completed") throw new Error(job.message || "掃描 PDF 尚未取得。");
+            break;
+          }
+          await window.JobProgress.wait();
         }
-        await window.JobProgress.wait();
+        result = await request("/reviews/history/read", values);
+        if (!current()) return null;
       }
-      result = await request("/reviews/history/read", values);
+      if (!result.data) throw new Error("此掃描 PDF 尚未保存；離線時無法下載。");
+      return result.data;
+    } catch (error) {
+      if (current()) throw error;
+      return null;
     }
-    if (!result.data) throw new Error("此掃描 PDF 尚未保存；離線時無法下載。");
-    return result.data;
   }
   async function addCompare(row, index) {
     const revision = serial;
-    const file = await asset(row);
-    if (revision !== serial || !dialog()?.open) return;
+    const current = () => isOpen(revision);
+    const file = await asset(row, current);
+    if (!file || !current()) return;
     window.FileCompare.add({account:context.account, mrn:context.mrn, digest:file.digest, mime:file.mime,
       name:`${row.category_label || "掃描病歷"} ${index + 1}`, source:"掃描病歷", date:row.date || ""});
   }
   async function showAsset(row, index) {
-    const revision = serial;
-    const file = await asset(row);
-    if (revision !== serial || !dialog()?.open) return;
+    const revision = serial, choice = ++previewSerial;
+    const current = () => isOpen(revision) && choice === previewSerial;
+    const file = await asset(row, current);
+    if (!file || !current()) return;
     const preview = make("section", undefined, "scan-preview");
     const head = make("div", undefined, "scan-preview-head");
     head.append(make("h3", `${row.category_label || "掃描病歷"} · ${row.date || "日期未提供"}`),
       button("加入比較", () => addCompare(row, index)), button("收起", () => {
-        selected = null; selectedId = "";
-        document.getElementById("scanPreviewHost")?.replaceChildren(make("p", "從左側選擇掃描病歷，在這裡查看 PDF。", "scan-empty-preview"));
-        content().querySelectorAll(".scan-row.active").forEach(line => line.classList.remove("active"));
+        previewSerial++; selectedId = "";
+        previewHost.replaceChildren(emptyPreview());
+        catalog.querySelectorAll(".scan-row").forEach(line => line.classList.remove("active"));
       }));
     const frame = make(file.mime === "application/pdf" ? "iframe" : "img");
-    const url = `/api/accounts/${context.account}/analysis/asset?id=${file.digest}`;
+    const url = window.LocalSession.resourceURL(`/api/accounts/${context.account}/analysis/asset?id=${file.digest}`);
     frame.src = file.mime === "application/pdf" ? ClinicalUI.pdfURL(url) : url;
     frame.title = "掃描病歷 PDF";
     if (frame.tagName === "IMG") frame.alt = frame.title;
     head.append(ClinicalUI.assetTools({url,asset:file,name:[row.category_label || "掃描病歷",row.date,index+1].filter(Boolean).join(" "),image:frame,compact:true}));
     preview.append(head, frame);
-    selected?.remove();
-    selected = preview;
     selectedId = row.id;
-    document.getElementById("scanPreviewHost").replaceChildren(preview);
-    content().querySelectorAll(".scan-row").forEach(line => line.classList.remove("active"));
-    const chosen = [...content().querySelectorAll(".scan-row")].find(line => line.dataset.scanId === row.id);
-    chosen?.classList.add("active");
+    previewHost.replaceChildren(preview);
+    for (const line of catalog.querySelectorAll(".scan-row")) line.classList.toggle("active", line.dataset.scanId === row.id);
     if (matchMedia("(max-width: 760px)").matches) preview.scrollIntoView({block:"start"});
   }
-  function reset() {if (dialog()?.open) dialog().close();context = null; task = ""; starting = false; serial++;}
+  function clearView() {
+    serial++; context = null; task = selectedId = rendered = ""; starting = false;
+    catalog = previewHost = null; content()?.replaceChildren();
+  }
+  function reset() {clearView(); if (dialog()?.open) dialog().close();}
   document.addEventListener("DOMContentLoaded", mount);
   return {open, image, reset};
 })();

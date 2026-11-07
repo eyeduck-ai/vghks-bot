@@ -5,13 +5,16 @@ import hashlib
 import json
 import threading
 from collections import OrderedDict
+from concurrent.futures import Future
 
 from vghks_sdk.identifiers import normalize_mrn
 
+from .bounded_search import REGEX_RECORD_OVERHEAD, validate_corpus_size
 from .bounded_search import search as regex_search
-from .demographics import merge_demographics
+from .demographics import merge_demographics, without_profile_contacts
 from .migrations import migrate, statements
 from .settings import today
+from .soap_data import display_chronic_prescriptions
 
 META_FIELDS = ("id", "kind", "name", "account_id", "set_id", "created_at", "mode", "cutoff",
                "department_keyword", "department_keywords", "department_filter", "department",
@@ -130,6 +133,7 @@ class ReviewPages:
         self.review, self.library = review, review.app.store.library
         self.lock = threading.RLock()
         self.search_cache = OrderedDict()
+        self.search_inflight = {}
 
     def ensure(self, key):
         if not isinstance(key, str) or not key or len(key) > 128:
@@ -229,26 +233,17 @@ class ReviewPages:
         cache_key = (key, generation, query, mode)
         with self.lock:
             cached = self.search_cache.get(cache_key)
-            hit = cached[0] if cached is not None else None
             if cached is not None:
                 self.search_cache.move_to_end(cache_key)
-        if hit is None:
-            hit = {}
-            cursor = db.execute("SELECT mrn,ordinal,soap FROM review_page_search WHERE task_id=? ORDER BY mrn,ordinal", (key,))
-            if mode == "regex":
-                rows = cursor.fetchall()
-                # One bounded search covers the entire task, never one deadline per page/patient.
-                found = regex_search(query, [row["soap"] for row in rows])
-                for index, spans in found.items():
-                    row = rows[index]
-                    hit.setdefault(row["mrn"], {})[row["ordinal"]] = spans
-            else:
-                folded = query.casefold()
-                # Stream each SOAP once; count/page/navigation reuse only IDs and spans.
-                for row in cursor:
-                    span = literal_span(row["soap"], folded)
-                    if span is not None:
-                        hit.setdefault(row["mrn"], {})[row["ordinal"]] = [span]
+                return cached[0]
+            flight = self.search_inflight.get(cache_key)
+            leader = flight is None
+            if leader:
+                self.search_inflight[cache_key] = flight = Future()
+        if not leader:
+            return flight.result()
+        try:
+            hit = self.scan_search(db, key, query, mode)
             with self.lock:
                 size = sum(128 + len(mrn) * 2 + sum(64 + len(spans) * 96 for spans in records.values())
                            for mrn, records in hit.items())
@@ -256,6 +251,36 @@ class ReviewPages:
                     self.search_cache[cache_key] = (hit, size)
                 while len(self.search_cache) > 8 or sum(item[1] for item in self.search_cache.values()) > SEARCH_CACHE_BYTES:
                     self.search_cache.popitem(last=False)
+            flight.set_result(hit)
+            return hit
+        except BaseException as error:
+            flight.set_exception(error)
+            raise
+        finally:
+            with self.lock:
+                del self.search_inflight[cache_key]
+
+    @staticmethod
+    def scan_search(db, key, query, mode):
+        if mode == "regex":
+            size = db.execute("SELECT coalesce(sum(length(CAST(soap AS BLOB)) + ?),0) "
+                              "FROM review_page_search WHERE task_id=?", (REGEX_RECORD_OVERHEAD, key)).fetchone()[0]
+            validate_corpus_size(size)
+        hit = {}
+        cursor = db.execute("SELECT mrn,ordinal,soap FROM review_page_search WHERE task_id=? ORDER BY mrn,ordinal", (key,))
+        if mode == "regex":
+            rows = cursor.fetchall()
+            # One bounded search covers the entire snapshot, including all pages.
+            found = regex_search(query, [row["soap"] for row in rows])
+            for index, spans in found.items():
+                row = rows[index]
+                hit.setdefault(row["mrn"], {})[row["ordinal"]] = spans
+        else:
+            folded = query.casefold()
+            for row in cursor:
+                span = literal_span(row["soap"], folded)
+                if span is not None:
+                    hit.setdefault(row["mrn"], {})[row["ordinal"]] = [span]
         return hit
 
     def overlays(self, db, mrns):
@@ -330,8 +355,8 @@ class ReviewPages:
             for row in rows:
                 patient = {**{k: v for k, v in json.loads(row["member"]).items() if v is not None}, **({k: v for k, v in json.loads(row["payload"]).items() if v is not None} if row["payload"] else
                            {"status": "pending", "record_count": 0, "dates": [], "auto_tags": [], "message": "待處理"})}
-                patient = merge_demographics(patient, profiles.get(row["mrn"], {}))
-                patients.append({**{k: v for k, v in patient.items() if k not in {"registrations", "national_id", "mobile_phone", "home_phone", "phone", "contact", "basic_info_at"}},
+                patient = without_profile_contacts(merge_demographics(patient, profiles.get(row["mrn"], {})))
+                patients.append({**{k: v for k, v in patient.items() if k != "registrations"},
                                  "sequence_no": self.review._registration_sequence(patient, registrations=registrations),
                                  "manual_tags": manual.get(row["mrn"], []), "data_revision": revisions[row["mrn"]]})
             definitions = [category.id for category in self.review.app.settings.categories]
@@ -376,12 +401,13 @@ class ReviewPages:
                 raise ValueError("檢閱病人身分不符。")
             if prefetch and (patient.get("status") != "ready" or patient.get("processing") or not patient.get("records")):
                 return {"task_id": key, "mrn": mrn, "patient": None, "revision": revision, "prefetchable": False}
-            patient = merge_demographics(patient, profiles.get(mrn, {}))
+            patient = merge_demographics(without_profile_contacts(patient), profiles.get(mrn, {}))
             patient["manual_tags"] = manual.get(mrn, [])
             records = patient.get("records", [])
             task_matches = self.search_matches(db, key, query, mode) if query else {}
             matches = task_matches.get(mrn, {})
             for index, record in enumerate(records):
+                display_chronic_prescriptions(record)
                 record.update(highlights=[list(span) for span in matches.get(index, [])], search_hit=not query or index in matches)
             where, args = self.matching(db, key, query, mode, tag, matches=task_matches)
             return {"task_id": key, "patient": patient, "revision": revision, **self.navigation(db, key, mrn, where, args),
@@ -432,7 +458,7 @@ class ReviewPages:
                 patient = saved.get(mrn) or {**members[mrn], "status": "pending", "records": [], "message": "待處理"}
                 if patient.get("mrn") != mrn:
                     raise ValueError("檢閱病人身分不符。")
-                patient = merge_demographics(patient, profiles.get(mrn, {}))
+                patient = merge_demographics(without_profile_contacts(patient), profiles.get(mrn, {}))
                 patient["manual_tags"] = manual.get(mrn, [])
                 patients.append(patient)
             return {"task": task, "patients": patients}

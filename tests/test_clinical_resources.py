@@ -215,6 +215,31 @@ class ClinicalResourceTests(unittest.TestCase):
         self.work.resources.case_numeric("TEST001", second)
         self.assertEqual(sum(call[1] == "numeric" for call in BotSyntheticSDK.calls), before + 2)
 
+    def test_safe_prq_detail_parameters_survive_index_and_record_replay(self):
+        mrn = "TEST001"
+        records = self.work.gateway.connection.records
+        safe = {"dbSource": "SYNTHETIC_ARCHIVE", "hdisDt": "2024-01-01"}
+        source = replace(records.get_visit_cases(mrn)[1], detail_params={**safe,
+            "hid": "SYNTHETIC_SESSION", "ssid": "SYNTHETIC_SESSION", "unknown": "SYNTHETIC_SESSION"})
+        with patch.object(records, "get_visit_cases", return_value=[source]):
+            case = self.work.review.cases(mrn, force=True)[0][0]
+        self.assertEqual(case.detail_params, safe)
+        self.assertEqual(self.work.review.cases(mrn)[0][0], case)
+        saved_index = self.work.review.db.get("visits", mrn)
+        self.assertEqual(saved_index["cases"][0]["detail_params"], safe)
+        with patch.object(records, "get_soap", wraps=records.get_soap) as soap:
+            result = self.work.resources.soap(mrn, case)
+            self.assertEqual(soap.call_args.args[0].detail_params, safe)
+        record = result.value["record"]
+        self.assertEqual(record["detail_params"], safe)
+        with patch.object(records, "get_numeric_report", wraps=records.get_numeric_report) as numeric:
+            self.work.review.extension({"kind": "numeric", "mrn": mrn, "record_id": record["id"],
+                                        "force": True, "created_at": ""})
+            self.assertEqual(numeric.call_args.args[0].detail_params, safe)
+            self.assertIsNotNone(self.work.review.read_numeric({"mrn": mrn, "record_id": record["id"]}))
+            self.work.resources.case_numeric(mrn, replace(case, detail_params={**safe, "dbSource": "OTHER_ARCHIVE"}))
+            self.assertEqual(numeric.call_count, 2, "different source reused the first numerical result")
+
     def test_local_numeric_read_checks_full_case_patient_and_partial_without_network(self):
         case = replace(self.work.review.cases("TEST001")[0][1], index=1)
         self.work.resources.soap("TEST001", case)

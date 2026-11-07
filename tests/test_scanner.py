@@ -4,8 +4,17 @@ from datetime import date, timedelta
 from types import SimpleNamespace
 from unittest.mock import Mock
 
-from vghks_sdk import AuthenticationError, OutpatientPatient, ParseError, SoapRecord, VisitCase
+from vghks_sdk import (
+    AuthenticationError,
+    OutpatientPatient,
+    ParseError,
+    RequestPolicy,
+    SoapRecord,
+    VisitCase,
+)
+from vghks_sdk.parsing.prq import parse_soap
 
+from vghks_bot.encoding import ClinicalTransport
 from vghks_bot.scanner import ScanState, run_scan
 from vghks_bot.settings import Settings
 
@@ -67,6 +76,36 @@ class ScanTests(unittest.TestCase):
         self.assertEqual(result["counts"]["without_visit"], 1)
         self.assertEqual(result["records"], [])
         self.sdk.records.get_soap.assert_not_called()
+
+    def test_soap_encoding_warning_keeps_the_saved_soap_and_uses_its_response_evidence(self):
+        base = "https://synthetic.invalid/PRQWeb"
+        transport = ClinicalTransport(policy=RequestPolicy(), attachment_base_url=base)
+        self.addCleanup(transport.close)
+
+        def get_soap(case):
+            response = SimpleNamespace(
+                content=b'<div id="data"><div class="soap"><pre>S: SYNTHETIC&#65533;</pre></div></div>',
+                headers={"Content-Type": "text/html; charset=utf-8"}, request=SimpleNamespace(method="GET"),
+                url=base + "/QueryBillingSOAP.do?hid=PRIVATE-TOKEN",
+            )
+            return parse_soap(transport.text(response), case)
+
+        self.sdk.records.get_soap.side_effect = get_soap
+        result = self.run_scan()
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["counts"]["soap_read"], 1)
+        self.assertEqual(result["counts"]["errors"], 1)
+        self.assertEqual(result["issues"][0]["code"], "TEXT_DECODE_INCOMPLETE")
+        query = result["issues"][0]["query"]
+        self.assertEqual(query["phase"], "records.get_soap")
+        self.assertEqual(query["affected_fields"], ["soap"])
+        evidence = query["encoding_evidence"]
+        self.assertEqual(evidence["decoded_with"], "utf-8")
+        self.assertFalse(evidence["decoder_replacement"])
+        self.assertEqual(evidence["source_byte_samples"],
+                         [{"marker": "html_numeric_entity", "hex": b"&#65533;".hex()}])
+        self.assertNotIn("PRIVATE-TOKEN", str(evidence))
+        self.assertNotIn("SYNTHETIC", str(evidence))
 
     def test_inclusive_range_and_repeated_patient_context(self):
         start = DAY - timedelta(days=1)

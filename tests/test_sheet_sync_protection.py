@@ -31,6 +31,7 @@ def protected_book(title):
 class MainProtectionSurfaceTests(unittest.TestCase):
     def setUp(self):
         self.store = Mock()
+        self.store.unresolved_automatic_sources.return_value = set()
         self.core = SheetSyncCore(SimpleNamespace(store=self.store, app=SimpleNamespace(settings=Settings())))
 
     def test_manual_preview_error_identifies_protected_sheet_and_technical_header_without_writes(self):

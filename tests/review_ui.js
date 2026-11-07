@@ -7,7 +7,7 @@ function surface(){
  const nodes=new Map();let context;
  class Element{
   constructor(tag="div"){this.tagName=tag;this.children=[];this.dataset={};this.value="";this.textContent="";this.disabled=false;this.hidden=false;this.scrollTop=0;this.scrollLeft=0;this.style={};this.events=new Map();this.className="";this.parentElement=null;
-   this.classList={add:name=>{if(!this.className.split(/\s+/).includes(name))this.className+=" "+name;},remove:name=>{this.className=this.className.split(/\s+/).filter(value=>value!==name).join(" ");},contains:name=>this.className.split(/\s+/).includes(name),toggle:(name,force)=>{const present=this.className.split(/\s+/).includes(name),next=force===undefined?!present:force;this.className=this.className.split(/\s+/).filter(value=>value&&value!==name).concat(next?[name]:[]).join(" ");return next;}};}
+   this.classList={add:(...names)=>{for(const name of names){if(!this.className.split(/\s+/).includes(name))this.className+=" "+name;}},remove:name=>{this.className=this.className.split(/\s+/).filter(value=>value!==name).join(" ");},contains:name=>this.className.split(/\s+/).includes(name),toggle:(name,force)=>{const present=this.className.split(/\s+/).includes(name),next=force===undefined?!present:force;this.className=this.className.split(/\s+/).filter(value=>value&&value!==name).concat(next?[name]:[]).join(" ");return next;}};}
   set id(value){this._id=value;nodes.set("#"+value,this);}get id(){return this._id;}
   get firstElementChild(){return this.children[0]||null;}
   get isConnected(){return this.parentElement?this.parentElement.isConnected:[...nodes.values()].includes(this);}
@@ -133,6 +133,34 @@ async function activityTests(){
  assert.ok(profileView,"profile subtask did not expose its saved data action");await profileView.run();
  assert.deepEqual(openedProfiles,[["PROFILE1","profile"]]);
 }
+async function editLoginNoteTests(){
+ const s=surface(),c=s.context,$=s.$,notesSaved=[];
+ let saved="",fail=true;
+ Object.assign(c,{epoch:0,draftTimer:null,draftValue:()=>({}),manualLookup:{reset(){}},manualErrors:{clear(){}},loginFields(){},
+  api:async(path,values)=>{
+   if(path==="/reviews/notes/summary")return {task_id:"R1",note_count:Number(!!saved)};
+   if(path==="/reviews/notes/page")return {task_id:"R1",patients:[{mrn:"P1",text:saved}]};
+   if(path==="/reviews/notes/save"){if(fail)throw new Error("synthetic save failure");saved=values.text;notesSaved.push(saved);return {};}
+   if(path==="/draft/save")return {};
+   throw new Error(path);
+  }
+ });
+ const source=fs.readFileSync("vghks_bot/static/bot.js","utf8");
+ vm.runInContext(source.slice(source.indexOf("function showEntry("),source.indexOf("async function login("))+
+  source.slice(source.indexOf('$("#editLogin").addEventListener'),source.indexOf('$("#saveConcurrency").addEventListener')),c);
+ s.run("vghks_bot/static/review-notes.js");
+ const notes=c.window.ReviewNotesUI;
+ await notes.load("R1",{mrns:["P1"]});
+ $("#reviewDetail").append(notes.control({mrn:"P1"}).panel);
+ const input=$("#reviewNoteInput");input.value="SYNTHETIC UNSAVED NOTE";await input.emit("input");
+ await assert.rejects(()=>$("#editLogin").emit("click"),/有備註尚未儲存/);
+ assert.equal(c.account,"ACCOUNT");assert.equal(input.value,"SYNTHETIC UNSAVED NOTE");
+ assert.equal(saved,"","a failed save was treated as durable");
+ fail=false;await $("#editLogin").emit("click");
+ assert.deepEqual(notesSaved,["SYNTHETIC UNSAVED NOTE"]);
+ assert.equal(c.account,"");assert.equal($("#entry").hidden,false);
+}
+
 async function externalNoteTests(){
  const s=surface(),c=s.context,$=s.$,calls=[];let serverText="first",saveFailure=false;
  c.work.revisions={review_note:0};c.setIcon=(button,name,label)=>{button.iconLabel=label;};
@@ -161,7 +189,7 @@ async function externalNoteTests(){
 async function profileTests(){
  const s=surface(),c=s.context,$=s.$,calls=[],noteLoads=[],reviewLoads=[],copied=[],historyActions=[];
  const source=fs.readFileSync("vghks_bot/static/bot.js","utf8");
- c.Node=s.node("div").constructor;c.epoch=0;c.page="review";c.extensionContext=null;c.extensionTask="";c.work.online=true;
+ c.Node=s.node("div").constructor;Object.defineProperty(c.Node.prototype,"childElementCount",{get(){return this.children.length;}});c.epoch=0;c.page="review";c.extensionContext=null;c.extensionTask="";c.work.online=true;
  c.document.createElement=tag=>s.node(tag);c.window.addEventListener=()=>{};
  c.navigator={clipboard:{writeText:async value=>copied.push(value)}};
  s.run("vghks_bot/static/clinical-ui.js");c.ClinicalUI=c.window.ClinicalUI;
@@ -173,6 +201,7 @@ async function profileTests(){
  vm.runInContext(source.match(/function dialog\(id\)\{[^\n]+/)[0],c);
  vm.runInContext(source.split("\n").find(line=>line.startsWith('$("#dataDialog").addEventListener("close",')),c);
  vm.runInContext(source.match(/function table\(headers,rows\)\{[^\n]+/)[0],c);
+ vm.runInContext(source.split("\n").find(line=>line.startsWith("function badges(")),c);
  vm.runInContext(source.slice(source.indexOf("function patientContactRows("),source.indexOf("async function showDiagnostics(")),c);
  vm.runInContext(source.slice(source.indexOf("async function extension("),source.indexOf("const eyeNumericPatterns=")),c);
  vm.runInContext(source.slice(source.indexOf("function renderExtension("),source.indexOf("const libraryFilters=")),c);
@@ -226,6 +255,20 @@ async function profileTests(){
  }
  c.reviewData.patients[0]={...saved,...metadataPatient,records:[{...metadataPatient.records[0],doctor:"合成醫師",updated_at:undefined}]};c.renderReviewDetail();
  assert.equal($("#reviewDetail").querySelector(".soap-record").querySelector(".caption").textContent,"合成醫師 · ONE · 沿用本機版本","missing SOAP acquisition time gained a fallback timestamp");
+ const revealed=[];c.SOAPView={create:()=>{const soap=s.node("div","合成 SOAP"),mark=s.node("mark","合成依據");mark.dataset.tagCategories=JSON.stringify(["AUTO1"]);soap.append(mark);return soap;},reveal:target=>revealed.push(target)};
+ c.reviewData.patients[0]={...saved,records:[{id:"TAG-SOAP",date:"2026-11-07",section:"眼科",matches:[{category:"AUTO1",category_name:"影像分類",keyword:"完整的合成比對依據"},{category:"AUTO2",category_name:"待確認分類",keyword:"尚未定位"}]}],manual_tags:[{name:"手動長分類"},{name:"追蹤右眼"}]};c.renderReviewDetail();
+ const tagGroups=$("#reviewDetail").querySelectorAll(".review-tag-section");
+ assert.deepEqual(tagGroups.map(group=>group.querySelector("strong").textContent),["自動 TAG","手動 TAG"],"automatic/manual classification labels were lost");
+ const tagItems=tagGroups.map(group=>group.querySelector(".review-tag-items"));
+ assert.ok(tagItems.every((items,index)=>items&&items.parentElement===tagGroups[index]),"automatic/manual TAGs do not share the same wrap container");
+ assert.deepEqual(tagItems.map(items=>items.children.length),[2,2]);
+ assert.deepEqual(tagItems[1].children.map(tag=>tag.textContent),["手動長分類","追蹤右眼"]);
+ assert.ok(tagItems.every(items=>items.children.every(tag=>tag.classList.contains("badge"))),"automatic/manual TAGs lost their shared badge style");
+ const evidence=tagItems[0].children[0];assert.equal(evidence.querySelector(".tag-keyword").textContent,"完整的合成比對依據");
+ assert.equal(evidence.disabled,false);await evidence.run();assert.equal(revealed.length,1);assert.equal(revealed[0].textContent,"合成依據","automatic TAG no longer reveals its SOAP evidence");
+ assert.equal(tagItems[0].children[1].disabled,true,"unlocatable evidence gained an invalid jump action");
+ assert.ok(tagItems[1].children.every(tag=>tag.tagName==="span"),"manual TAGs gained misleading SOAP evidence buttons");
+ assert.equal(calls.length,0,"rendering or revealing local TAGs started a data request");
  c.reviewData.patients[0]={...saved,records:[]};c.renderReviewDetail();contacts=$("#reviewDetail").querySelector(".review-contact-info");
  assert.deepEqual(contacts.children.map(child=>child.textContent),["身分證 A123456789","手機 0912000000","住家電話 07-0000000","電話 07-1111111"]);
  assert.equal(calls.length,0,"rendering saved patient identity contacted the server");
@@ -416,6 +459,73 @@ function layoutTests(){
  c.page="tasks";c.updateReviewLayout();assert.equal(classes.has("review-result-compact"),false);
  c.page="review";c.updateReviewLayout();assert.ok(classes.has("review-result-compact"),"returning to active review lost viewport layout");
  c.reviewData=null;c.updateReviewLayout();assert.equal(classes.has("review-result-compact"),false);
+}
+async function sidebarTests(){
+ const source=fs.readFileSync("vghks_bot/static/bot.js","utf8"),start=source.indexOf("function initializeSidebar()"),end=source.indexOf('$("#loginAccount")',start);
+ const stored=new Map(),preference="vghks.sidebar-collapsed";
+ function create(storage,{narrow=false}={}){
+  const s=surface(),c=s.context,$=s.$;
+  c.page="review";c.epoch=1;
+  c.window.localStorage=storage;
+  c.window.matchMedia=()=>({matches:narrow});
+  c.window.scrollX=0;c.window.scrollY=0;
+  c.window.scrollTo=value=>{c.window.scrollX=value.left;c.window.scrollY=value.top;};
+  $("#shell").className="shell";
+  $("#shell").append($("#featureSidebar"),$("#sidebarCollapse"),$("#sidebarRestore"),$("#mainShell"));
+  $("#featureSidebar").append($("#sidebarAccount"));
+  $("#sidebarRestore").append($("#sidebarExpand"));
+  vm.runInContext(source.slice(start,end),c);
+  return s;
+ }
+ const storage={getItem:key=>stored.get(key),setItem:(key,value)=>stored.set(key,value)};
+ const s=create(storage),c=s.context,$=s.$;
+ assert.equal($("#featureSidebar").hidden,false);assert.equal($("#sidebarRestore").hidden,true);
+ assert.equal($("#sidebarCollapse").getAttribute("aria-expanded"),"true");
+ $("#sidebarAccount").open=true;await $("#sidebarCollapse").emit("click");
+ assert.equal($("#featureSidebar").hidden,true);assert.equal($("#sidebarRestore").hidden,false);
+ assert.equal($("#sidebarCollapse").hidden,true,"the boundary control stayed visible after collapse");
+ assert.equal($("#sidebarAccount").open,false);assert.ok($("#shell").classList.contains("sidebar-collapsed"));
+ assert.equal(c.document.activeElement,$("#sidebarExpand"),"collapse left focus inside the hidden sidebar");
+ assert.equal($("#sidebarExpand").getAttribute("aria-expanded"),"false");assert.equal(stored.get(preference),"1");
+ const restored=create(storage);
+ assert.equal(restored.$("#featureSidebar").hidden,true,"reload forgot the collapsed preference");
+ assert.equal(restored.context.document.activeElement,null,"applying a preference stole focus");
+ await $("#sidebarExpand").emit("click");
+ assert.equal($("#featureSidebar").hidden,false);assert.equal($("#sidebarRestore").hidden,true);
+ assert.equal($("#sidebarCollapse").hidden,false);
+ assert.equal(c.document.activeElement,$("#sidebarCollapse"));assert.equal(stored.get(preference),"0");
+ assert.equal($("#sidebarCollapse").getAttribute("aria-expanded"),"true");
+ const denied=create({getItem(){throw new Error("storage unavailable");},setItem(){throw new Error("storage unavailable");}});
+ assert.equal(denied.$("#featureSidebar").hidden,false);
+ await denied.$("#sidebarCollapse").emit("click");assert.equal(denied.$("#featureSidebar").hidden,true);
+ await denied.$("#sidebarExpand").emit("click");assert.equal(denied.$("#featureSidebar").hidden,false);
+
+ const mobile=create(storage,{narrow:true}),m=mobile.context,m$=mobile.$,scrolls=[];
+ m.window.scrollTo=value=>{scrolls.push(value);m.window.scrollX=value.left;m.window.scrollY=value.top;};
+ for(const id of ["sidebarExpand","sidebarCollapse"]){
+  m$("#"+id).focus=options=>{m.document.activeElement=m$("#"+id);if(!options?.preventScroll)m.window.scrollY=0;};
+ }
+ await m$("#sidebarCollapse").emit("click");m.window.scrollX=12;m.window.scrollY=2050;
+ await m$("#sidebarExpand").emit("click");assert.equal(m.window.scrollY,0,"opening the mobile menu did not reveal its controls");
+ await m$("#sidebarCollapse").emit("click");
+ assert.equal(m.window.scrollY,2050,"closing the mobile menu lost the SOAP reading position");assert.equal(m.window.scrollX,12);
+ assert.equal(m.document.activeElement,m$("#sidebarExpand"));
+ for(const field of ["account","epoch","page","currentReview","reviewPatient"]){
+  m.window.scrollY=1900;await m$("#sidebarExpand").emit("click");
+  const original=m[field];m[field]=field+"-changed";const count=scrolls.length;
+  await m$("#sidebarCollapse").emit("click");assert.equal(scrolls.length,count,"a stale "+field+" restored an old reading position");
+  m[field]=original;
+ }
+ m.window.scrollY=1800;await m$("#sidebarExpand").emit("click");
+ await m$("#featureSidebar").emit("click",{target:{closest:()=>m$("#someNavigation")}});
+ const count=scrolls.length;await m$("#sidebarCollapse").emit("click");
+ assert.equal(scrolls.length,count,"menu navigation restored a previous page's position");
+ m.window.scrollY=1700;await m$("#sidebarExpand").emit("click");await m$("#sidebarCollapse").emit("click");
+ assert.equal(m.window.scrollY,1700,"a new menu opening retained an invalidated reading position");
+ const desktop=create(storage),d=desktop.context,d$=desktop.$;let desktopRestores=0;
+ d.window.scrollTo=()=>{desktopRestores++;};d.window.scrollY=900;
+ await d$("#sidebarCollapse").emit("click");await d$("#sidebarExpand").emit("click");await d$("#sidebarCollapse").emit("click");
+ assert.equal(desktopRestores,0,"desktop navigation overrode native reading anchors");
 }
 async function identifierTests(){
  const s=surface(),c=s.context,$=s.$,starts=[],resolved=[],states=[],details=new Map();c.epoch=0;
@@ -762,5 +872,61 @@ function syncDetailsTests(){
  assert.ok(batch);assert.equal(batch.open,false);assert.deepEqual(batch.querySelectorAll("pre").map(node=>node.textContent),[
   "SOAP1 · SOAP_VERSION_A","SOAP2 · SOAP_VERSION_B"]);
 }
+async function earningsViewTests(){
+ const s=surface(),c=s.context,$=s.$,calls=[],detail=deferred(),exported=deferred();
+ let scoped=false,hasArchive=true,confirm=true;
+ c.epoch=0;c.work.online=true;
+ c.Option=function(label,value){const option=s.node("option",label);option.value=value;return option;};
+ c.JobProgress.visible=()=>true;c.check=()=>s.node("input");
+ c.table=(_headers,rows)=>{const element=s.node("table");for(const row of rows)for(const cell of row)if(typeof cell==="object")element.append(cell);return element;};
+ c.confirmDelete=()=>typeof confirm==="boolean"?Promise.resolve(confirm):confirm.promise;
+ c.dialog=id=>{$("#"+id).open=true;};$("#dataDialog").close=()=>{$("#dataDialog").open=false;};
+ c.api=async(path,body)=>{
+  calls.push({path,body});
+  if(path.endsWith("/overview")){
+   const view=body.view||(scoped?"active":"archive");
+   const reports=view==="archive"&&!hasArchive?[]:[{id:view,kind:"performance",month:view==="archive"?"2026-10":"2026-11",period:"PERIOD",version_count:1}];
+   return {view,has_archive:hasArchive,reports,total:reports.length,months:reports.map(report=>report.month),tasks:[],catalogs:[],
+    credentials:{configured:scoped},monitor:view==="active"?{configured:scoped}:null};
+  }
+  if(path.endsWith("/credentials")){scoped=true;return {};}
+  if(path.endsWith("/detail"))return detail.promise;
+  if(path.endsWith("/export"))return exported.promise;
+  if(path.endsWith("/delete")){hasArchive=false;return {};}
+  throw new Error(path);
+ };
+ s.run("vghks_bot/static/earnings.js");
+ const ui=c.window.Earnings, choose=async view=>{$("#earningsView").value=view;await $("#earningsView").emit("change");},
+  selection=()=>$("#earningsSelectAll").emit("change",{target:{checked:true}});
+ ui.reset();await ui.open();
+ assert.equal("view" in calls[0].body,false,"an initial account hard-coded its report view");
+ assert.equal($("#earningsView").value,"archive");assert.equal($("#earningsViewField").hidden,false);
+ for(const id of ["earningsCaptureAll","earningsOptions","earningsMonitorSettings"])assert.equal($("#"+id).disabled,true);
+ assert.equal($("#earningsCredentials").disabled,false);
+ await $("#earningsCaptureAll").emit("click");
+ assert.equal(calls.length,1,"archive started a portal query");
+ await selection();$("#earningsKind").value="payroll";$("#earningsMonth").value="2026-10";
+ const staleDetail=$("#earningsReports").querySelector("button").run(),staleExport=$("#earningsExportJson").emit("click");
+ assert.ok(calls.filter(call=>/\/(detail|export)$/.test(call.path)).every(call=>call.body.view==="archive"));
+ await choose("active");detail.resolve({});exported.resolve({});await Promise.all([staleDetail,staleExport]);
+ assert.equal($("#earningsKind").value,"");assert.equal($("#earningsMonth").value,"");assert.equal($("#earningsExportJson").disabled,true);
+ assert.equal($("#earningsDetail").firstElementChild.textContent,"選擇已保存報表檢閱內容。");
+
+ await choose("archive");await selection();
+ confirm=deferred();const staleDelete=$("#earningsDelete").emit("click");await tick();
+ await choose("active");confirm.resolve(true);await staleDelete;
+ assert.equal(calls.some(call=>call.path.endsWith("/delete")),false,"a stale confirmation deleted the previously selected archive");
+
+ await choose("archive");await selection();await $("#earningsCredentials").emit("click");
+ const form=$("#dataContent").querySelector("form"),[identity,password]=form.querySelectorAll("input");
+ identity.value="SYNTHETIC";password.value="SYNTHETIC";await form.emit("submit");await tick();
+ assert.equal($("#earningsView").value,"active");assert.equal("view" in calls.at(-1).body,false,"changing credentials retained the old report view");
+ assert.equal($("#earningsDelete").disabled,true);
+
+ await choose("archive");await selection();confirm=true;await $("#earningsDelete").emit("click");
+ const deleted=calls.find(call=>call.path.endsWith("/delete"));
+ assert.equal(deleted.body.view,"archive");assert.deepEqual(Array.from(deleted.body.ids),["archive"]);
+ assert.equal($("#earningsView").value,"active");assert.equal($("#earningsViewField").hidden,true,"an empty archive stranded the user in a hidden view");
+}
 module.exports={surface,deferred,tick};
-if(require.main===module)(async()=>{await noteTests();await externalNoteTests();await activityTests();await profileTests();await historyLoadingTests();layoutTests();await identifierTests();await manualSelectionTests();await toolSelectionTests();await handoffTests();await sheetSyncTests();await destinationTests();await fuTests();syncDetailsTests();process.stdout.write("Review UI race, identifiers, hierarchy, patient profile, loading, viewport, handoff, FU and sheet sync checks passed\n");})().catch(error=>{console.error(error);process.exitCode=1;});
+if(require.main===module)(async()=>{await noteTests();await editLoginNoteTests();await externalNoteTests();await activityTests();await profileTests();await historyLoadingTests();layoutTests();await sidebarTests();await identifierTests();await manualSelectionTests();await toolSelectionTests();await handoffTests();await sheetSyncTests();await destinationTests();await fuTests();syncDetailsTests();await earningsViewTests();process.stdout.write("Review UI race, identifiers, hierarchy, patient profile, loading, viewport, handoff, FU and sheet sync checks passed\n");})().catch(error=>{console.error(error);process.exitCode=1;});

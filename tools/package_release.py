@@ -10,6 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from tools.verify_repository import tracked_directory  # noqa: E402
 from vghks_bot import __version__  # noqa: E402
 
 
@@ -21,7 +22,7 @@ def main():
     if not check["ok"] or not check["credentials_blank"] or check["sha256"] != digest:
         raise ValueError("Verify this exact executable before packaging: " + exe.name)
     archive = output / f"VGHKS-bot-v{__version__}-windows-x64.zip"
-    files = [exe, ROOT / "README.md", ROOT / "CHANGELOG.md", *sorted((ROOT / "docs").glob("*.md"))]
+    files = [exe, ROOT / "README.md", ROOT / "CHANGELOG.md", *tracked_directory("docs", suffixes={".md"})]
     notices = ROOT / ".build/licenses/THIRD_PARTY_NOTICES.txt"
     with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
         for path in files:

@@ -96,7 +96,7 @@ class ExportTests(unittest.TestCase):
             thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": .02}, daemon=True)
             thread.start()
             try:
-                headers = {"Cookie": f"opd_session={self.app.session_token}", "X-CSRF-Token": self.app.csrf_token,
+                headers = {"X-VGHKS-Session": self.app.session_token, "X-CSRF-Token": self.app.csrf_token,
                            "Content-Type": "application/json"}
                 def request(method, path, body=None, extra=None):
                     connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=10)
@@ -129,7 +129,8 @@ class ExportTests(unittest.TestCase):
                     self.assertEqual(len(json.loads(saved.read("manifest.json"))["patients"]), 1)
                 status, _, _ = request("POST", prefix + "/analysis/export", self.values, {"X-CSRF-Token": "wrong"})
                 self.assertEqual(status, 403)
-                status, _, _ = request("GET", prefix + "/analysis/asset?id=" + asset["digest"], extra={"Cookie": ""})
+                status, _, _ = request("GET", prefix + "/analysis/asset?id=" + asset["digest"],
+                                       extra={"X-VGHKS-Session": ""})
                 self.assertEqual(status, 401)
             finally:
                 server.shutdown()

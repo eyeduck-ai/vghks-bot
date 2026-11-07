@@ -12,6 +12,7 @@ from datetime import date, datetime
 from pathlib import Path
 from unittest.mock import patch
 
+from vghks_sdk import ParseError
 from vghks_sdk.models import PatientBasicInfo
 
 from vghks_bot.activity import search as activity_search
@@ -307,6 +308,87 @@ class DemographicFlowTests(unittest.TestCase):
         for field in ("national_id", "phone", "contact", "birthday", "sex", "mobile_phone"):
             self.assertEqual(empty[field], acquired[field])
 
+    def test_basic_info_cannot_replace_prq_verified_national_id(self):
+        review = self.work.review
+        known = review.profile(self.mrn, verified_national_id="A123456789")
+        task = {"mrn": self.mrn, "force": True}
+        connection = self.work.gateway.connection.patients
+        with patch.object(connection, "get_basic_info", return_value=PatientBasicInfo(
+                self.mrn, known["name"], national_id="B123456780", phone="07-7654321")):
+            with self.assertRaises(ParseError) as error:
+                review.basic_info(task)
+        self.assertEqual(error.exception.info.code, "DEMOGRAPHICS_ID_MISMATCH")
+        self.assertEqual(review.db.get("profile", self.mrn), known)
+        with patch.object(connection, "get_basic_info", return_value=PatientBasicInfo(
+                self.mrn, known["name"], national_id="a123456789", phone="07-7654321")):
+            refreshed = review.basic_info(task)
+        self.assertEqual(refreshed["national_id"], known["national_id"])
+        self.assertEqual(refreshed["phone"], "07-7654321")
+
+    def test_clear_profile_scrubs_legacy_workbench_copies_and_ignores_old_tasks(self):
+        review, mrn = self.work.review, self.mrn
+        group = self.group()
+        review_id = review.start({"set_id": group["id"]})["task_id"]
+        wait_task(self.work, review_id)
+        profile_id = review.start({"kind": "profile", "mrn": mrn, "review_task_id": review_id})["task_id"]
+        value = wait_task(self.work, profile_id)["items"][0]
+        contacts = {key: value[key] for key in ("national_id", "mobile_phone", "phone", "contact", "basic_info_at")}
+        identifier = contacts["national_id"]
+        with patch.object(self.work.gateway, "resolve_identity", return_value=mrn):
+            resolve_id = review.start({"kind": "resolve", "identifier_kind": "national_id",
+                                       "identifiers": identifier})["task_id"]
+            self.assertEqual(wait_task(self.work, resolve_id)["status"], "completed")
+        other = {"mrn": "OTHER002", "national_id": "B123456780", "phone": "07-7654321"}
+        saved = review.db.get("set", group["id"])
+        task = review.db.get("task", review_id)
+        for kind, record in (("set", saved), ("task", task)):
+            self.assertNotIn("phone", record["members"][0], "new snapshot copied the private profile")
+            review.db.save(kind, {**record, "members": [{**record["members"][0], **contacts}, other]})
+        patient = review.db.item(review_id, mrn)
+        self.assertNotIn("national_id", patient)
+        review.db.item(review_id, mrn, {**patient, **contacts})
+        handoff = review.handoff({"module": "retina", "review_task_id": review_id, "mrns": [mrn]})
+        self.assertTrue(contacts.keys().isdisjoint(handoff["worklist"]["members"][0]))
+        analysis = self.work.analysis
+        cohort = analysis.save_cohort({"source": "manual", "account_id": self.key, "mrns": mrn,
+                                       "name": "合成聯絡資料清除"})
+        self.assertTrue(contacts.keys().isdisjoint(cohort["members"][0]))
+        analysis.store.save_document("analysis_cohorts", {**cohort, "members": [{**cohort["members"][0], **contacts}]})
+        run_id = analysis.start({"cohort_id": cohort["id"], "modules": ["retina"]})["run_ids"][0]
+        self.assertTrue(self.work.idle.wait(10))
+        analysis_run = analysis.store.document("analysis_runs", run_id)
+        self.assertTrue(contacts.keys().isdisjoint(analysis_run["members"][0]))
+        analysis.store.save_document("analysis_runs", {**analysis_run,
+            "members": [{**analysis_run["members"][0], **contacts}, other]})
+        before = review.pages.patient({"id": review_id, "mrn": mrn})
+        self.assertEqual(before["patient"]["national_id"], identifier)
+        self.assertTrue(self.work.idle.wait(10))
+        request = {"mrns": [mrn], "categories": ["profile"]}
+        preview = self.work.library_data.preview(request)
+        self.work.library_data.delete({**request, "fingerprint": preview["fingerprint"]})
+        self.assertIsNone(review.read_profile({"mrn": mrn}))
+        for kind, key in (("set", group["id"]), ("task", review_id)):
+            members = review.db.get(kind, key)["members"]
+            self.assertTrue(contacts.keys().isdisjoint(members[0]))
+            self.assertEqual(members[1], other)
+        self.assertTrue(contacts.keys().isdisjoint(review.db.item(review_id, mrn)))
+        self.assertIsNone(review.db.item(resolve_id, identifier))
+        self.assertNotIn(identifier, review.db.get("task", resolve_id)["identifiers"])
+        for table, key in (("analysis_cohorts", cohort["id"]), ("analysis_runs", run_id)):
+            members = analysis.store.document(table, key)["members"]
+            self.assertTrue(contacts.keys().isdisjoint(members[0]))
+        self.assertEqual(analysis.store.document("analysis_runs", run_id)["members"][1], other)
+        self.assertEqual(analysis.member({"cohort_id": cohort["id"], "mrn": mrn})["national_id"], "")
+        after = review.pages.patient({"id": review_id, "mrn": mrn})
+        self.assertEqual(after["patient"]["national_id"], "")
+        self.assertEqual(after["patient"]["phone"], "")
+        self.assertEqual(after["patient"]["records"], before["patient"]["records"])
+        self.assertNotEqual(after["revision"], before["revision"])
+        count = len(BotSyntheticSDK.calls)
+        resumed = wait_task(self.work, review.start({"resume": profile_id})["task_id"])
+        self.assertEqual(resumed["items"][0]["status"], "deleted")
+        self.assertEqual(len(BotSyntheticSDK.calls), count)
+
     def test_basic_info_sdk_recovery_diagnostic_keeps_patient_context(self):
         self.group()
         incident = {"code": "NETWORK_TIMEOUT", "category": "NETWORK", "operation": "get_basic_info",
@@ -354,7 +436,7 @@ class DemographicFlowTests(unittest.TestCase):
             thread.start()
             connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=4)
             try:
-                headers = {"Content-Type": "application/json", "Cookie": "opd_session=" + self.app.session_token,
+                headers = {"Content-Type": "application/json", "X-VGHKS-Session": self.app.session_token,
                            "X-CSRF-Token": self.app.csrf_token}
                 connection.request("POST", "/api/accounts/" + self.key + "/extensions/read", json.dumps(request), headers)
                 response = connection.getresponse()

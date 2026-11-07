@@ -37,7 +37,7 @@ const labels={queued:"排隊中",running:"執行中",completed:"完成",partial:
 const inProgress=new Set(["queued","running","cancelling"]);
 labels.forbidden="權限不足";
 let root, account="", epoch=0, work, listing, selected=new Set(), manual=[], listTab="own", page="patients";
-let activeListRun="", selectedSet=null, currentReview="", reviewData=null, reviewPatient="", reviewSignature="";
+let activeListRun="", listIntent=null, selectedSet=null, currentReview="", reviewData=null, reviewPatient="", reviewSignature="";
 let libraryData, libraryPage=0, librarySelected=new Set(), tagPage=0, extensionTask="", extensionContext=null;
 let libraryRecordSequence=0, libraryReturnFocus=null;
 let toastTimer, draftTimer, pollBusy=false, searchSequence=0, stopped=false;
@@ -73,7 +73,7 @@ async function request(path, body, scoped=true){
   const key=account, revision=epoch;
   if(scoped&&!key)throw new Error("請先選擇帳號。");
   const url=scoped?"/api/accounts/"+key+path:"/api"+path;
-  const response=await fetch(url,{method:body===undefined?"GET":"POST",credentials:"same-origin",cache:"no-store",headers:body===undefined?{}:{"Content-Type":"application/json","X-CSRF-Token":root?.csrf||"","X-Database-Context":root?.context||""},body:body===undefined?undefined:JSON.stringify(body)});
+  const response=await fetch(url,{method:body===undefined?"GET":"POST",credentials:"omit",cache:"no-store",redirect:"error",headers:{...window.LocalSession.headers(),...(body===undefined?{}:{"Content-Type":"application/json","X-CSRF-Token":root?.csrf||"","X-Database-Context":root?.context||""})},body:body===undefined?undefined:JSON.stringify(body)});
   const data=await response.json();
   if(scoped&&(key!==account||revision!==epoch))throw new DOMException("帳號已切換","AbortError");
   if(!response.ok)throw new Error(data.error||"操作未完成。");
@@ -101,9 +101,9 @@ function reviewPatientIdentity(mrn,taskId=currentReview){
 window.reviewPatientIdentity=reviewPatientIdentity;
 function setPatientDialogContext(id,mrn,name="",taskId=currentReview){
  const dialogElement=$("#"+id),context=$(id==="dataDialog"?"#dataPatient":"#tagPatient");
- if(!mrn){context.textContent="";context.hidden=true;dialogElement.removeAttribute("aria-describedby");return;}
+ if(!mrn){context.textContent="";context.removeAttribute("title");context.hidden=true;dialogElement.removeAttribute("aria-describedby");return;}
  const patient=reviewPatientIdentity(mrn,taskId);
- context.textContent=(name||patient.name)+" · 病歷號 "+mrn;
+ context.textContent=(name||patient.name)+" · 病歷號 "+mrn;context.title=context.textContent;
  context.hidden=false;dialogElement.setAttribute("aria-describedby",context.id);
 }
 function dialog(id){Choices.sync();if(id==="dataDialog"){extensionTask="";extensionContext=null;$("#dataDialogActions")?.replaceChildren();$("#dataDialog").dataset.view="general";setPatientDialogContext(id,"");}if(!$("#"+id).open)$("#"+id).showModal();}
@@ -151,20 +151,23 @@ async function enter(key){
  cataractScroll=null;
  collapsedDays.clear();manualLookup.reset();manualErrors.clear();
  window.ReviewHistoryUI?.reset();window.ReviewNotesUI?.reset();window.ReviewHandoff?.reset();window.TaskActivityUI?.reset();reconnectTask="";reconnectTarget="";
- window.ReviewPaging?.reset();epoch++;account=key;window.FileCompare?.context(key, "");window.Approvals?.reset();window.ToolWorkspace?.reset();window.Earnings?.reset();window.SurgerySystem?.reset();window.SheetManagement?.reset();work=null;listing=null;selected=new Set();manual=[];libraryPage=tagPage=0;listTab="own";selectedSet=null;currentReview="";reviewData=null;reviewPatient="";reviewSignature="";extensionTask=activeListRun="";librarySelected.clear();
+ window.ReviewPaging?.reset();epoch++;account=key;window.FileCompare?.context(key, "");window.Approvals?.reset();window.ToolWorkspace?.reset();window.Earnings?.reset();window.SurgerySystem?.reset();window.SheetManagement?.reset();work=null;listing=null;listIntent=null;selected=new Set();manual=[];libraryPage=tagPage=0;listTab="own";selectedSet=null;currentReview="";reviewData=null;reviewPatient="";reviewSignature="";extensionTask=activeListRun="";librarySelected.clear();
  $("#moduleFrame").removeAttribute("src");$("#cataractFrame").removeAttribute("src");for(const d of $$("dialog[open]"))d.close();
  for(const id of ["reviewQuery","listQuery","libraryQuery","libraryStart","libraryEnd","tagQuery"])$("#"+id).value="";
  for(const id of ["libraryTag","tagFilter","reviewTag","libraryTask"])$("#"+id).value="";
  $("#entry").hidden=true;$("#shell").hidden=false;$("#accountSwitch").value=key;updateAccountHeader();$("#startDate").value=$("#endDate").value=root.today;$("#dateMode").value="single";dateMode();
  for(const id of ["taskList","libraryRecords","tagPatients","reviewPatients","reviewDetail","dataContent","librarySoapContent","savedSets"])$("#"+id)?.replaceChildren();
  $("#listJob").textContent="";$("#connectionStatus").textContent="載入中";showPage("patients");renderList();renderSets();
- await refresh();const draft=work.draft;
+ const revision=epoch;
+ await refresh();if(revision!==epoch||key!==account||listIntent)return;
+ const draft=work.draft;
  if(draft){$("#startDate").value=draft.start||root.today;$("#endDate").value=draft.end||root.today;$("#dateMode").value=draft.mode||"single";dateMode();selected=new Set(draft.selected||[]);manual=draft.manual||[];listTab=draft.tab||"own";}
- await readList();showPage("patients");renderSets();applyReadonly();
+ const intent=startListIntent();
+ if(await readList(intent)&&currentListIntent(intent)){renderSets();applyReadonly();}
 }
 function updateReviewLayout(){document.body.classList.toggle("review-result-compact",page==="review"&&!!reviewData&&!reviewSetupExpanded);}
 function showPage(name){if(page==="module"&&name!=="module")captureCataractScroll();page=name;document.body.classList.toggle("module-workspace",name==="module");$("#sidebarAccount").open=false;Choices.sync();window.ToolWorkspace?.visibility(name);window.SurgerySystem?.visibility(name);window.SheetManagement?.visibility(name);for(const section of $$("main>.page"))section.hidden=section.id!==name+"Page";for(const b of $$("[data-page]"))b.classList.toggle("active",b.dataset.page===name);updateReviewLayout();window.WorkspacePoll?.visibility();window.ReviewPaging?.visibility();}
-function toggleReviewPatients(){const hidden=!$("#reviewPatientPanel").hidden;$("#reviewPatientPanel").hidden=hidden;$("#reviewPatients").hidden=hidden;$("#reviewPager").hidden=hidden;$("#reviewLayout").classList.toggle("patients-collapsed",hidden);const toggle=$("#reviewPatientsToggle");toggle.setAttribute("aria-expanded",String(!hidden));toggle.textContent=hidden?"›":"‹";toggle.title=hidden?"展開病人清單":"收合病人清單";toggle.setAttribute("aria-label",toggle.title);}
+function toggleReviewPatients(){const hidden=!$("#reviewPatientPanel").hidden;$("#reviewPatientPanel").hidden=hidden;$("#reviewPatients").hidden=hidden;$("#reviewPager").hidden=hidden;$("#reviewLayout").classList.toggle("patients-collapsed",hidden);const toggle=$("#reviewPatientsToggle");toggle.setAttribute("aria-expanded",String(!hidden));toggle.title=hidden?"展開病人清單":"收合病人清單";toggle.setAttribute("aria-label",toggle.title);}
 async function navigate(name){if(page==="review"&&name!=="review"&&!await window.ReviewNotesUI?.flushAll())throw new Error("有備註尚未儲存，請重試後再切換頁面。");showPage(name);if(name==="library")await loadLibrary();if(name==="tags")await loadTags();if(name==="tasks")await refresh();if(name==="approvals"){await window.Approvals.enter();}if(name==="earnings")await window.Earnings.open();if(name==="surgery")await window.SurgerySystem.open();if(name==="sheetManagement")await window.SheetManagement.open();}
 const draftValue=()=>({start:$("#startDate").value,end:$("#endDate").value,mode:$("#dateMode").value,selected:[...selected],manual,tab:listTab});
 function draftSave(){if(root.read_only)return;clearTimeout(draftTimer);const key=account;draftTimer=setTimeout(()=>{if(key!==account)return;act(()=>api("/draft/save",draftValue()));},250);}
@@ -172,6 +175,11 @@ function dateMode(){Choices.sync();const single=$("#dateMode").value==="single";
 function moveDay(day){const d=new Date(day+"T12:00:00Z");return d.toISOString().slice(0,10);}
 function relativeDay(base,offset){const d=new Date(base+"T12:00:00Z");d.setUTCDate(d.getUTCDate()+offset);return moveDay(d.toISOString().slice(0,10));}
 const ranges=()=>({start:$("#startDate").value,end:$("#dateMode").value==="single"?$("#startDate").value:$("#endDate").value});
+function startListIntent(){activeListRun="";return listIntent={account,epoch,...ranges()};}
+function currentListIntent(intent){
+ if(!intent||intent!==listIntent||intent.account!==account||intent.epoch!==epoch)return false;
+ const {start,end}=ranges();return start===intent.start&&end===intent.end;
+}
 function own(r){return r.ownership==="DEDICATED";}
 const allRows=()=>listing?.days.flatMap(d=>d.rows)||[];
 function visibleRows(){const q=$("#listQuery").value.trim().toLocaleLowerCase();return allRows().filter(r=>(listTab==="own"?own(r):!own(r))&&(!q||(r.mrn+" "+r.name+" "+(r.sequence_no||"")).toLocaleLowerCase().includes(q)));}
@@ -179,16 +187,31 @@ function selectedPatients(){const patients=new Map();for(const row of allRows())
 function selectedMRNs(){return selectedPatients().map(patient=>patient.mrn);}
 async function browse(force=false){
  dateMode();if(!$("#dateForm").reportValidity())return;
- selected.clear();manual=[];activeListRun="";
- let pending=JobProgress.pending("#listJob","門診清單","正在準備門診清單查詢…");
+ const intent=startListIntent(),range={start:intent.start,end:intent.end};
+ selected.clear();manual=[];listing=null;collapsedDays.clear();renderList();
+ const pending=JobProgress.pending("#listJob","門診清單","正在準備門診清單查詢…");
  try{
-  await readList();collapsedDays.clear();
-  if(work.online){const value=await api("/lists/browse",{account_ids:[account],ranges:{[account]:ranges()},force});activeListRun=value.run_ids[0];pending?.remove();pending=null;}
-  else{pending?.remove();say("離線顯示已保存的門診清單。");}
-  for(const r of allRows())if(own(r)&&r.mrn)selected.add(r.id);renderList();draftSave();
- }catch(error){pending?.remove();throw error;}
+  if(!await readList(intent,{selectNew:true})||!currentListIntent(intent))return;
+  draftSave();
+  if(work?.online){
+   const value=await api("/lists/browse",{account_ids:[intent.account],ranges:{[intent.account]:range},force});
+   if(currentListIntent(intent))activeListRun=value.run_ids[0]||"";
+  }else say("離線顯示已保存的門診清單。");
+ }catch(error){if(currentListIntent(intent))throw error;}
+ finally{pending?.remove();}
 }
-async function readList(){listing=await api("/lists",{account_id:account,...ranges()});renderList();}
+async function readList(intent,{selectNew=false}={}){
+ if(!currentListIntent(intent))return false;
+ let value;
+ try{value=await api("/lists",{account_id:intent.account,start:intent.start,end:intent.end});}
+ catch(error){if(currentListIntent(intent))throw error;return false;}
+ if(!currentListIntent(intent))return false;
+ if(selectNew){
+  const known=new Set(allRows().filter(own).map(row=>row.id));
+  for(const row of value.days.flatMap(day=>day.rows))if(own(row)&&row.mrn&&!known.has(row.id))selected.add(row.id);
+ }
+ listing=value;renderList();return true;
+}
 function renderList(){
  const rows=visibleRows(),mine=allRows().filter(own).length;$("#ownTab").textContent=`我的門診（${mine}）`;$("#sharedTab").textContent=`其他／共用門診（${allRows().length-mine}）`;
  $("#ownTab").setAttribute("aria-selected",listTab==="own");$("#sharedTab").setAttribute("aria-selected",listTab!=="own");
@@ -303,8 +326,11 @@ async function openLookupDiagnostics(taskId=""){
 async function showTaskSummary(id){const task=await api("/tasks/detail?id="+encodeURIComponent(id));$("#dataTitle").textContent=task.name||"抓取任務";const content=$("#dataContent");content.replaceChildren(table(["欄位","內容"],[["狀態",labels[task.status]||task.status],["開始",time(task.created_at)],["完成",time(task.finished_at)||"—"],["進度",`${task.done??0} / ${task.total??"—"}`],["說明",task.message||"—"]]));const all=task.items||[],items=all.slice(0,200);if(items.length){content.append(node("h3","處理項目"),table(["項目","狀態","說明／錯誤代碼"],items.map(item=>[item.mrn||item.apply_seq||[item.kind,item.period].filter(Boolean).join(" · ")||item.part||"—",labels[item.status]||item.status||"—",[item.message,item.code].filter(Boolean).join(" · ")||"—"])));if(all.length>items.length)content.append(node("p",`只顯示前 ${items.length} / ${all.length} 項。`,"caption"));}dialog("dataDialog");}
 async function refresh({light=false}={}){
  if(!account)return;
+ const watchedListRun=activeListRun,watchedListIntent=listIntent;
  const watch=[currentReview,extensionTask,...(window.ToolWorkspace?.watched()||[])].filter(Boolean);
- const value=await api("/status?"+new URLSearchParams({watch:watch.join(","),run:[activeListRun,...(window.WorkspacePoll?.watched()||[])].filter(Boolean).join(",")}));
+ const trackedRuns=[watchedListRun,...(window.JobProgress?.watchedRuns(account)||[]),...(window.WorkspacePoll?.watched()||[])];
+ const runs=[...new Set(trackedRuns.filter(Boolean))].slice(0,20);
+ const value=await api("/status?"+new URLSearchParams({watch:watch.join(","),run:runs.join(",")}));
  window.WorkspacePoll?.publish(value,account);
  if(!work||!light||catalogRevision!==value.catalog_revision){
   work=await api("/workbench?compact=1");catalogRevision=value.catalog_revision;categoryOptions();renderSets();
@@ -323,7 +349,14 @@ async function refresh({light=false}={}){
  const password=work.password_status,connectionLabels={network:"網路問題",credentials:"登入被拒絕",password_change:"需變更密碼",login:"尚未登入"};
  $("#connectionStatus").textContent=work.online?"已登入"+(password?.status==="EXPIRING"?(Number.isInteger(password.remaining_days)?` · 密碼剩 ${password.remaining_days} 日`:" · 密碼即將到期"):""):work.offline_mode?"離線檢閱":connectionLabels[work.connection_issue?.action]||"連線中斷";$("#connectionStatus").classList.toggle("offline",!work.online);
  const previous=recoverySeen.get(account);recoverySeen.set(account,work.recovery_count||0);if(previous!==undefined&&work.recovery_count>previous)say("院內連線已自動恢復，查詢已繼續。");
- if(activeListRun){const run=history.runs.find(r=>r.id===activeListRun);if(run){JobProgress.show("#listJob",run);if(!inProgress.has(run.status)){activeListRun="";await readList();for(const r of allRows())if(own(r)&&r.mrn)selected.add(r.id);renderList();draftSave();}}}
+ if(watchedListRun&&activeListRun===watchedListRun&&listIntent===watchedListIntent){
+  const run=history.runs.find(r=>r.id===watchedListRun);
+  if(run&&currentListIntent(watchedListIntent))JobProgress.show("#listJob",run);
+  if((run&&!inProgress.has(run.status))||value.missing_run_ids?.includes(watchedListRun)){
+   activeListRun="";
+   if(await readList(watchedListIntent,{selectNew:true})&&currentListIntent(watchedListIntent))draftSave();
+  }
+ }
  await window.ToolWorkspace?.poll();
  await window.SheetSyncUI?.poll();
  if(extensionTask&&$("#dataDialog").open)await showExtensionTask(extensionTask,extensionContext?.kind,false);
@@ -374,8 +407,8 @@ function renderReviewHeader(value){
 }
 async function loadReview(options){return window.ReviewPaging.load(options);}
 function renderReviewPatients(values,viewport=null){
- const patients=$("#reviewPatients"),scroll=patients.scrollTop,focused=document.activeElement;
- const focusMrn=focused?.dataset?.mrn||focused?.closest?.(".review-patient-row")?.dataset.mrn,focusCheck=focused?.className?.includes("review-handoff-check");
+ const patients=$("#reviewPatients"),scroll=viewport?.scrollTop??patients.scrollTop,focused=document.activeElement;
+ const focusMrn=focused?.dataset?.mrn||focused?.closest?.(".review-patient-row")?.dataset.mrn,focusSelector=focused?.classList?.contains("review-handoff-check")?".review-handoff-check":focused?.classList?.contains("review-patient-tags-more")?".review-patient-tags-more":".patient-select";
  const existing=new Map([...patients.children].filter(row=>row.dataset.mrn).map(row=>[row.dataset.mrn,row])),rows=[];
  patients.classList.toggle("is-virtual",!!viewport);
  window.ReviewHandoff?.updatePatients(values);
@@ -394,31 +427,68 @@ function renderReviewPatients(values,viewport=null){
    button.dataset.mrn=p.mrn;button.title=[p.name||p.mrn,p.mrn,"掛號序號："+(sequenceNo||"未提供"),attention,...dates,...tags.map(tag=>tag.category_name||tag.category),...(p.manual_tags||[]).map(tag=>tag.name||tag.category_name||tag.category||tag)].filter(Boolean).join(" · ");button.setAttribute("aria-label",button.title);badge.title="掛號序號："+(sequenceNo||"未提供");const name=node("strong",p.name||p.mrn);name.title=p.name||p.mrn;heading.append(name,badge);
    button.append(heading,node("span",[p.mrn,attention].filter(Boolean).join(" · "),"caption review-patient-id"+(["error","failed","partial"].includes(p.status)?" is-error":"")));
    if(dates.length){const datesLabel=node("span",dates.join("、"),"caption review-patient-dates");datesLabel.title=dates.join("、");button.append(datesLabel);}
-   if(viewport){const tagLine=node("span",undefined,"review-patient-tags"),all=[...tags,...(p.manual_tags||[])];tagLine.append(badges(tags.slice(0,2)),badges((p.manual_tags||[]).slice(0,Math.max(0,2-tags.length)),true));if(all.length>2)tagLine.append(node("span","+"+(all.length-2),"caption"));tagLine.title=button.title;button.append(tagLine);}
-   else button.append(badges(tags),badges(p.manual_tags,true));row.append(control,button);
+   if(!viewport)button.append(badges(tags),badges(p.manual_tags,true));
+   row.append(control,button);
+   if(viewport){
+    const tagLine=node("div",undefined,"review-patient-tags"),allTags=[...badges(tags).children,...badges(p.manual_tags,true).children];
+    if(allTags.length){
+     const title="全部 TAG（"+allTags.length+"）\n"+allTags.map(tag=>tag.textContent).join("\n");
+     const more=btn("",()=>{
+      $("#dataTitle").textContent="病人 TAG";
+      const content=node("div",undefined,"review-patient-all-tags");content.append(badges(tags),badges(p.manual_tags,true));
+      $("#dataContent").replaceChildren(content);dialog("dataDialog");$("#dataDialog").dataset.view="review-tags";setPatientDialogContext("dataDialog",p.mrn);
+     },"review-patient-tags-more");
+     more.title=title;more.setAttribute("aria-haspopup","dialog");more.hidden=true;
+     tagLine.title=title;tagLine.append(...allTags,more);row.append(tagLine);
+    }
+   }
   }
   row.querySelector(".patient-select").classList.toggle("active",p.mrn===reviewPatient);
+  row.classList.toggle("is-selected",p.mrn===reviewPatient);
   const checkbox=row.querySelector(".review-handoff-check");checkbox.checked=!!window.ReviewHandoff?.has(p.mrn);checkbox.disabled=!!root.read_only;
-  if(viewport){const index=viewport.positions[p.mrn];row.dataset.reviewIndex=String(index);row.style.position="";row.style.top="";row.style.height=viewport.rowHeight+"px";row.setAttribute("role","listitem");row.setAttribute("aria-posinset",String(index+1));row.setAttribute("aria-setsize",String(viewport.total));}
+  if(viewport){const index=viewport.positions[p.mrn];row.dataset.reviewIndex=String(index);row.style.position="";row.style.top="";row.setAttribute("role","listitem");row.setAttribute("aria-posinset",String(index+1));row.setAttribute("aria-setsize",String(viewport.total));}
   rows.push(row);
  }
  if(viewport){
   const positionRows=new Map(rows.map(row=>[Number(row.dataset.reviewIndex),row])),slots=[];
   const spacer=(kind,height)=>{let value=patients.querySelector(".review-spacer-"+kind);if(!value){value=node("div",undefined,"review-list-spacer review-spacer-"+kind);value.setAttribute("aria-hidden","true");}value.style.height=Math.max(0,height)+"px";return value;};
-  slots.push(spacer("before",viewport.start*viewport.rowHeight));
+  slots.push(spacer("before",viewport.before));
   for(let index=viewport.start;index<viewport.end;index++){
    let row=positionRows.get(index);
-   if(!row){row=node("div","載入本機病人資料…","review-patient-placeholder caption");row.style.height=viewport.rowHeight+"px";row.setAttribute("aria-hidden","true");}
+   if(!row){row=node("div","載入本機病人資料…","review-patient-placeholder caption");row.style.height=viewport.heightAt(index)+"px";row.setAttribute("aria-hidden","true");}
    slots.push(row);
   }
-  slots.push(spacer("after",(viewport.total-viewport.end)*viewport.rowHeight));
-  if(viewport.pin&&Number.isInteger(viewport.pin.index)&&existing.has(viewport.pin.mrn)){const pinned=existing.get(viewport.pin.mrn);pinned.style.position="absolute";pinned.style.top=viewport.pin.index*viewport.rowHeight+"px";slots.push(pinned);}
+  slots.push(spacer("after",viewport.after));
+  if(viewport.pin&&existing.has(viewport.pin.mrn)){const pinned=existing.get(viewport.pin.mrn);pinned.style.position="absolute";pinned.style.top=viewport.pin.top+"px";slots.push(pinned);}
   rows.splice(0,rows.length,...slots);
  }
  for(const child of [...patients.children])if(!rows.includes(child))child.remove();
  for(const [index,row] of rows.entries())if(patients.children[index]!==row){const anchor=patients.children[index]||null;if(patients.moveBefore&&row.isConnected)patients.moveBefore(row,anchor);else patients.insertBefore(row,anchor);}
  if(!values.length&&(!viewport||!viewport.total))patients.append(empty("沒有符合的病人。"));patients.scrollTop=scroll;
- if(focusMrn&&!patients.contains(focused))rows.find(row=>row.dataset.mrn===focusMrn)?.querySelector(focusCheck?".review-handoff-check":".patient-select")?.focus({preventScroll:true});
+ if(viewport)fitReviewPatientTags(patients);
+ if(focusMrn&&!patients.contains(focused)){const row=rows.find(row=>row.dataset.mrn===focusMrn),target=row?.querySelector(focusSelector);(target&&!target.hidden?target:row?.querySelector(".patient-select"))?.focus({preventScroll:true});}
+}
+function fitReviewPatientTags(rail){
+ for(const line of rail.querySelectorAll(".review-patient-tags")){
+  const width=line.clientWidth;if(!width||line.dataset.fittedWidth===String(width))continue;
+  const tags=[...line.querySelectorAll(".badge")],more=line.querySelector(".review-patient-tags-more");
+  // Measure real wrapped rows, including the space needed by the overflow button.
+  const wasFocused=document.activeElement===more;
+  for(const tag of tags)tag.hidden=false;more.hidden=true;
+  const first=tags[0].offsetTop,second=tags.find(tag=>tag.offsetTop>first+1)?.offsetTop;
+  let count=second===undefined?tags.length:tags.findIndex(tag=>tag.offsetTop>second+1);
+  if(count<0)count=tags.length;
+  if(count<tags.length){
+   for(const tag of tags.slice(count))tag.hidden=true;more.hidden=false;
+   do{
+    more.textContent="+"+(tags.length-count);more.setAttribute("aria-label","另有 "+(tags.length-count)+" 個 TAG，查看全部 "+tags.length+" 個 TAG");
+    if(more.offsetTop<=second+1||!count)break;
+    tags[--count].hidden=true;
+   }while(true);
+  }
+  line.dataset.fittedWidth=String(width);
+  if(wasFocused)(more.hidden?line.closest(".review-patient-row").querySelector(".patient-select"):more).focus({preventScroll:true});
+ }
 }
 function soapNode(record){return SOAPView.create(record);}
 async function selectReviewPatient(mrn){return window.ReviewPaging.select(mrn);}
@@ -523,16 +593,16 @@ function renderReviewDetail(){
  const autoTags=new Map(),summary=node("div",undefined,"review-tag-summary");
  for(const record of p.records||[])for(const tag of record.matches||[])if(!autoTags.has(tag.category))autoTags.set(tag.category,tag);
  if(autoTags.size){
-  const group=node("div",undefined,"review-tag-group");group.append(node("strong","自動 TAG"));
+  const group=node("div",undefined,"review-tag-group review-tag-section"),items=node("span",undefined,"review-tag-items");group.append(node("strong","自動 TAG"),items);
   for(const tag of autoTags.values()){
    const target=tagTargets.get(tag.category),badge=btn("",()=>SOAPView.reveal(target),"badge tag-evidence");
    badge.append(node("span",tag.category_name||tag.category),node("small",tag.keyword,"tag-keyword"));
    badge.setAttribute("aria-label",`${tag.category_name||tag.category}：定位到 ${tag.keyword} 的 SOAP 依據`);
-   badge.title=target?"跳到 SOAP 依據":"此 TAG 的依據尚無法定位";badge.disabled=!target;group.append(badge);
+   badge.title=target?"跳到 SOAP 依據":"此 TAG 的依據尚無法定位";badge.disabled=!target;items.append(badge);
   }
   summary.append(group);
  }
- if(p.manual_tags?.length){const group=node("div",undefined,"review-tag-group");group.append(node("strong","手動 TAG"),badges(p.manual_tags));summary.append(group);}
+ if(p.manual_tags?.length){const group=node("div",undefined,"review-tag-group review-tag-section"),items=badges(p.manual_tags);items.className="review-tag-items";group.append(node("strong","手動 TAG"),items);summary.append(group);}
  if(searchTargets.length){
   const group=node("div",undefined,"review-tag-group review-search-group");group.append(node("strong","搜尋命中"));
   const choices=node("span",undefined,"review-search-choices"),moreChoices=node("span",undefined,"review-search-choices");
@@ -553,10 +623,12 @@ function renderReviewDetail(){
  if(!recordSections.length)panel.append(empty(labels[p.status]||"尚未取得 SOAP"));
 }
 async function showDiagnostics(values){
- const result=await api("/reviews/diagnostics",values);$("#dataTitle").textContent="DEBUG 資訊"+(result.task?.analysis_name?" · "+result.task.analysis_name:"");
+ const result=await api("/reviews/diagnostics",values);
+ if(result.task&&!inProgress.has(result.task.status)&&Number.isFinite(Date.parse(result.task.finished_at)))JobProgress.publish(result.task,account);
+ $("#dataTitle").textContent="DEBUG 資訊"+(result.task?.analysis_name?" · "+result.task.analysis_name:"");
  const content=$("#dataContent"),text=JSON.stringify(result,null,2);content.replaceChildren(node("p","SDK 互動與解析失敗證據保存在目前資料庫。新版保留失敗頁面的原始回應及醫療資料值，可用於重現 SDK 問題。","caption"));
  content.append(btn("匯出 DEBUG JSON",()=>{const url=URL.createObjectURL(new Blob([text],{type:"application/json;charset=utf-8"})),a=node("a");a.href=url;a.download="VGHKS-debug-"+(values.mrn||values.task_id||values.session_id)+".json";document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);}));
- const bundle=node("a","下載完整 DEBUG ZIP","diagnostic-download");bundle.href="/api/accounts/"+account+"/reviews/diagnostics/export?"+new URLSearchParams(values);bundle.download="VGHKS-debug.zip";content.append(bundle);
+ const bundle=node("a","下載完整 DEBUG ZIP","diagnostic-download");bundle.href=window.LocalSession.resourceURL("/api/accounts/"+account+"/reviews/diagnostics/export?"+new URLSearchParams(values));bundle.download="VGHKS-debug.zip";content.append(bundle);
  if(result.task)content.append(node("p",[result.task.analysis_name||result.task.name,labels[result.task.status]||result.task.status,result.task.message].filter(Boolean).join(" · "),"diagnostic-task"));
  if(result.failures?.length){
   content.append(node("h3",`失敗原因（${result.failures.length} 次讀取）`));
@@ -570,6 +642,7 @@ async function showDiagnostics(values){
  if(result.items?.length){const details=node("details",undefined,"diagnostic-technical"),summary=node("summary",`完整錯誤紀錄（顯示 ${result.items.length} / ${result.total}）`);details.append(summary,node("pre",JSON.stringify(result.items,null,2)));content.append(details);}
  else if(!result.saved_attempts?.length&&!result.sdk_events?.some(event=>event.status==="error"))content.append(node("p","此紀錄沒有保存的 ERROR。","caption"));
  dialog("dataDialog");
+ $("#dataDialog").dataset.view="diagnostics";
 }
 function diagnosticFailure(failure){
  const card=node("section",undefined,"diagnostic-failure"),heading=node("div",undefined,"diagnostic-heading");
@@ -664,7 +737,7 @@ function registrationRefresh(context,busy=false){
   if(revision!==epoch||extensionContext!==context||!context?.mrn||!$("#dataDialog").open||root.read_only||!work?.online||busy)return;
   return extension("registrations",context.mrn,context.record_id||"",true);
  });
- setIcon(button,"refresh","更新掛號紀錄");button.classList.add("data-dialog-refresh");
+ setIcon(button,"refresh","更新掛號紀錄");button.classList.add("data-dialog-refresh","dialog-header-control");
  button.disabled=busy||!!root.read_only||!work?.online||!context?.mrn;
  button.setAttribute("aria-busy",String(busy));area.replaceChildren(button);
 }
@@ -772,6 +845,34 @@ function tagRuleRow(tag={id:crypto.randomUUID().replaceAll("-",""),name:"",keywo
 function openRules(){window.ToolWorkspace?.beginSettings();$("#ruleTags").replaceChildren(...work.categories.map(tagRuleRow));$("#tagSettingsSummary").textContent=work.categories.map(t=>t.name).join("、");dialog("rulesDialog");}
 
 
+function initializeSidebar(){
+ const shell=$("#shell"),panel=$("#featureSidebar"),restore=$("#sidebarRestore"),collapse=$("#sidebarCollapse"),expand=$("#sidebarExpand");
+ const preference="vghks.sidebar-collapsed",narrow=window.matchMedia("(max-width:780px)");
+ const readingScope=()=>JSON.stringify([account,epoch,page,currentReview,reviewPatient]);
+ let returnScroll=null;
+ function apply(collapsed,focus=false){
+  panel.hidden=collapsed;collapse.hidden=collapsed;restore.hidden=!collapsed;shell.classList.toggle("sidebar-collapsed",collapsed);
+  collapse.setAttribute("aria-expanded",String(!collapsed));expand.setAttribute("aria-expanded",String(!collapsed));
+  if(collapsed)$("#sidebarAccount").open=false;
+  if(focus)(collapsed?expand:collapse).focus({preventScroll:collapsed&&narrow.matches});
+ }
+ function change(collapsed){
+  if(!collapsed&&narrow.matches)returnScroll={left:window.scrollX,top:window.scrollY,scope:readingScope()};
+  apply(collapsed,true);
+  if(collapsed){
+   if(returnScroll&&narrow.matches&&returnScroll.scope===readingScope())window.scrollTo({left:returnScroll.left,top:returnScroll.top,behavior:"instant"});
+   returnScroll=null;
+  }
+  try{window.localStorage.setItem(preference,collapsed?"1":"0");}catch(_){/* This tab still supports the control when storage is unavailable. */}
+ }
+ let collapsed=false;
+ try{collapsed=window.localStorage.getItem(preference)==="1";}catch(_){/* Start expanded when browser storage is unavailable. */}
+ apply(collapsed);
+ collapse.addEventListener("click",()=>change(true));expand.addEventListener("click",()=>change(false));
+ panel.addEventListener("click",event=>{if(event.target.closest("[data-page],[data-tool]"))returnScroll=null;});
+}
+initializeSidebar();
+
 $("#loginAccount").addEventListener("change",()=>loginFields($("#loginAccount").value));
 $("#loginForm").addEventListener("submit",e=>{e.preventDefault();login($("#loginAccount").value);});
 $("#offlineButton").addEventListener("click",()=>act(async()=>{const key=$("#loginAccount").value;await ra("/accounts/offline",{id:key});await enter(key);}));
@@ -849,7 +950,11 @@ $("#rulesForm").addEventListener("invalid",e=>{for(let p=e.target.parentElement;
 for(const button of $$("button[data-icon]"))setIcon(button,button.dataset.icon,button.dataset.iconLabel||button.textContent,button.dataset.iconText!=="true");
 for(const [id,name,label] of [["refreshTasks","refresh","更新爬蟲紀錄"],["refreshList","refresh","更新門診清單"],["previousDay","left","前一天"],["nextDay","right","後一天"]])setIcon($("#"+id),name,label);
 $("#accountSettings").addEventListener("click",()=>{$("#settingsAccount").textContent=(info()?.label||info()?.username)+" · "+info()?.campus;$("#concurrency").value=String(root.concurrency);dialog("settingsDialog");});
-$("#editLogin").addEventListener("click",()=>showEntry(account));
+$("#editLogin").addEventListener("click",()=>act(async()=>{
+ const revision=epoch;
+ if(!await window.ReviewNotesUI.flushAll())throw new Error("有備註尚未儲存，請重試後再更新登入資訊。");
+ if(revision===epoch)showEntry(account);
+}));
 $("#saveConcurrency").addEventListener("click",()=>act(async()=>{const r=await ra("/concurrency",{value:Number($("#concurrency").value)});root.concurrency=r.concurrency;$("#settingsDialog").close();say("連線設定已保存。");}));
 window.addEventListener("message",e=>{if(e.origin!==location.origin||!["moduleFrame","cataractFrame"].some(id=>e.source===$("#"+id).contentWindow))return;window.JobProgress.receive(e,[$("#moduleFrame"),$("#cataractFrame")],account,root.read_only);if(e.data?.type==="bot:task-started")act(refresh);else if(page==="module"&&e.source===activeModuleFrame().contentWindow){if(e.data?.type==="bot:compare-open")window.FileCompare?.open();else window.FileCompare?.receive(e,activeModuleFrame(),account);}});
 window.addEventListener("jobprogressaction",event=>act(async()=>{
@@ -866,5 +971,5 @@ async function poll(){
  if(!stopped)pollTimer=setTimeout(poll,window.WorkspacePoll?.active()?2000:10000);
 }
 document.addEventListener("visibilitychange",()=>{window.WorkspacePoll?.visibility();clearTimeout(pollTimer);if(!document.hidden&&!pollBusy&&!stopped)void poll();});
-async function initialize(){const token=location.hash.slice(1);if(/^[A-Za-z0-9_-]{43}$/.test(token)){await ra("/session",{token});history.replaceState(null,"",location.pathname);}root=await ra("/bootstrap");for(const name of Object.keys(reviewIconFiles))reviewIconImage(name);$("#version").textContent=$("#sidebarVersion").textContent="v"+root.version;renderAccounts();loginFields(root.last_account||"");if(root.read_only&&root.accounts.length){const key=root.last_account||root.accounts[0].id;await ra("/accounts/offline",{id:key});await enter(key);}else if(root.accounts.find(a=>a.id===root.last_account)?.remembered)await login(root.last_account,true);applyReadonly();if(root.database_notice){say(root.database_notice);await window.DatabaseUI.open();}poll();}
+async function initialize(){const token=location.hash.slice(1);if(/^[A-Za-z0-9_-]{43}$/.test(token)){window.LocalSession.accept(await ra("/session",{token}));history.replaceState(null,"",location.pathname);}root=await ra("/bootstrap");for(const name of Object.keys(reviewIconFiles))reviewIconImage(name);$("#version").textContent=$("#sidebarVersion").textContent="v"+root.version;renderAccounts();loginFields(root.last_account||"");if(root.read_only&&root.accounts.length){const key=root.last_account||root.accounts[0].id;await ra("/accounts/offline",{id:key});await enter(key);}else if(root.accounts.find(a=>a.id===root.last_account)?.remembered)await login(root.last_account,true);applyReadonly();if(root.database_notice){say(root.database_notice);await window.DatabaseUI.open();}poll();}
 initialize().catch(e=>say(e.message,true));

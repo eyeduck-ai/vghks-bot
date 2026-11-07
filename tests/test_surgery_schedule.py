@@ -192,7 +192,7 @@ class SurgeryScheduleTests(unittest.TestCase):
                 connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=3)
                 headers = {"Content-Type": "application/json"}
                 if cookie:
-                    headers["Cookie"] = "opd_session="+self.app.session_token
+                    headers["X-VGHKS-Session"] = self.app.session_token
                 if csrf:
                     headers["X-CSRF-Token"] = self.app.csrf_token
                 connection.request("GET" if body is None else "POST", path, None if body is None else json.dumps(body), headers)

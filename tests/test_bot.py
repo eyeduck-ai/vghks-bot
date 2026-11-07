@@ -4,10 +4,13 @@ import tempfile
 import threading
 import time
 import unittest
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
+from async_helpers import HOLD_TIMEOUT, drain_workspace, join_threads, wait_event, wait_until
+from async_helpers import wait_workspace_task as wait_task
 from vghks_sdk import LoginRejectedError, RequestError
 
 from vghks_bot import __version__
@@ -15,7 +18,7 @@ from vghks_bot.bot import BotApplication
 from vghks_bot.bot_gateway import AccountGateway, NetworkGate
 from vghks_bot.bot_server import BotServer
 from vghks_bot.bounded_search import search
-from vghks_bot.selftest_bot import BotSyntheticSDK, wait_task
+from vghks_bot.selftest_bot import BotSyntheticSDK
 from vghks_bot.settings import Settings, today
 
 
@@ -158,7 +161,7 @@ class BotTests(unittest.TestCase):
     def test_future_lists_shared_selection_and_registration_mode_without_source(self):
         day = (today()+timedelta(days=2)).isoformat()
         self.work.browse({"account_ids": [self.key], "ranges": {self.key: {"start": day}}})
-        self.assertTrue(self.work.idle.wait(10))
+        drain_workspace(self.work, label="future outpatient list ready")
         rows = self.work.patient_list({"account_id": self.key, "start": day})["days"][0]["rows"]
         self.assertEqual(len(rows), 4)
         self.assertEqual([row["sequence_no"] for row in rows], ["001", "002", "003", "004"])
@@ -218,7 +221,7 @@ class BotTests(unittest.TestCase):
         run = self.work.review.start({"resume": task["id"]})["task_id"]
         completed = wait_task(self.work, run)
         self.assertEqual(completed["items"][0]["records"][0]["soap"], record["soap"])
-        self.assertTrue(self.work.idle.wait(10))
+        drain_workspace(self.work, label="review worker completed")
         self.work.delete_records({"ids": [r["id"] for r in completed["items"][0]["records"]]})
         self.work.review.start({"resume": task["id"]})
         completed = wait_task(self.work, run)
@@ -323,7 +326,7 @@ class BotTests(unittest.TestCase):
         second = self.review()
         self.assertIn("TEST original", first["items"][0]["records"][0]["soap"])
         self.assertIn("SECOND original", second["items"][0]["records"][0]["soap"])
-        self.assertTrue(first_workspace.idle.wait(10))
+        drain_workspace(first_workspace, label="first account review completed")
         first_workspace.delete_records({"ids": [r["id"] for r in first["items"][0]["records"]]})
         self.assertEqual(self.work.library_search({})["total"], 2)
 
@@ -338,7 +341,7 @@ class BotTests(unittest.TestCase):
 
             def request(path):
                 connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=4)
-                connection.request("GET", path, headers={"Cookie": "opd_session=" + self.app.session_token})
+                connection.request("GET", path, headers={"X-VGHKS-Session": self.app.session_token})
                 response = connection.getresponse()
                 result = response.status, dict(response.getheaders()), response.read()
                 connection.close()
@@ -374,7 +377,7 @@ class BotTests(unittest.TestCase):
                 self.assertEqual(BotSyntheticSDK.calls, calls)
             finally:
                 server.shutdown()
-                thread.join(2)
+                join_threads((thread,), label="local HTTP server exit", preserve_error=True)
 
     def test_sheet_management_is_account_scoped_and_independent_of_hospital_connection(self):
         from vghks_bot.google_sheets import SheetUnavailable
@@ -385,7 +388,7 @@ class BotTests(unittest.TestCase):
             thread.start()
             def request(path, values=None, csrf=True):
                 connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=4)
-                headers = {"Content-Type": "application/json", "Cookie": "opd_session=" + self.app.session_token}
+                headers = {"Content-Type": "application/json", "X-VGHKS-Session": self.app.session_token}
                 if csrf:
                     headers["X-CSRF-Token"] = self.app.csrf_token
                 connection.request("GET" if values is None else "POST", path, None if values is None else json.dumps(values), headers)
@@ -411,18 +414,18 @@ class BotTests(unittest.TestCase):
             finally:
                 self.app.read_only = False
                 server.shutdown()
-                thread.join(2)
+                join_threads((thread,), label="local HTTP server exit", preserve_error=True)
 
     def test_http_scope_csrf_and_cross_account_assets(self):
         other = self.app.login({"username": "OTHER", "password": "synthetic"})["account"]["id"]
         with BotServer(0, self.app) as server:
             thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": .01}, daemon=True)
             thread.start()
-            def request(path, values=None, csrf=True, cookie=True):
+            def request(path, values=None, csrf=True, auth=True):
                 connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=4)
                 headers = {"Content-Type": "application/json"}
-                if cookie:
-                    headers["Cookie"] = "opd_session="+self.app.session_token
+                if auth:
+                    headers["X-VGHKS-Session"] = self.app.session_token
                 if csrf:
                     headers["X-CSRF-Token"] = self.app.csrf_token
                 connection.request("GET" if values is None else "POST", path, None if values is None else json.dumps(values), headers)
@@ -432,9 +435,9 @@ class BotTests(unittest.TestCase):
                 return value
             try:
                 self.assertEqual(request("/api/history")[0], 404)
-                self.assertEqual(request(f"/api/accounts/{self.key}/workbench", cookie=False)[0], 401)
+                self.assertEqual(request(f"/api/accounts/{self.key}/workbench", auth=False)[0], 401)
                 self.assertEqual(request(f"/api/accounts/{self.key}/draft/save", {}, csrf=False)[0], 403)
-                self.assertEqual(request("/api/accounts/activate", {"id": other}, cookie=False)[0], 401)
+                self.assertEqual(request("/api/accounts/activate", {"id": other}, auth=False)[0], 401)
                 self.assertEqual(request("/api/accounts/activate", {"id": other}, csrf=False)[0], 403)
                 self.assertEqual(json.loads(request("/api/accounts/activate", {"id": other})[1])["status"], "ready")
                 self.assertEqual(request(f"/api/accounts/{self.key}/draft/save", {"test": "first"})[0], 200)
@@ -442,7 +445,7 @@ class BotTests(unittest.TestCase):
                 self.assertEqual(request(f"/api/accounts/{self.key}/accounts/save", {"accounts": [{"id": other, "username": "OTHER"}]})[0], 400)
                 self.assertEqual(request(f"/api/accounts/{other}/analysis/asset?id="+"a"*64)[0], 404)
                 for asset in ("/tool-workspace.js", "/monitor-ui.js", "/approvals.js", "/choices.js", "/choices.css"):
-                    self.assertEqual(request(asset, cookie=False)[0], 200)
+                    self.assertEqual(request(asset, auth=False)[0], 200)
                 own = f"/api/accounts/{self.key}"
                 foreign = f"/api/accounts/{other}"
                 calls = list(BotSyntheticSDK.calls)
@@ -469,10 +472,87 @@ class BotTests(unittest.TestCase):
                 self.assertEqual(request(f"/api/accounts/{self.key}/workbench")[0], 400)
             finally:
                 server.shutdown()
-                thread.join(2)
+                join_threads((thread,), label="local HTTP server exit", preserve_error=True)
+
+
+    def test_two_local_ports_keep_separate_sessions(self):
+        first = self.app
+        second = SimpleNamespace(launch_token="b" * 43, session_token="c" * 43, read_only=False,
+                                 bootstrap=lambda: {"instance": "second"})
+
+        def request(server, path, body=None, headers=None):
+            connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=4)
+            try:
+                connection.request("POST" if body is not None else "GET", path,
+                    None if body is None else json.dumps(body), {"Content-Type": "application/json", **(headers or {})})
+                response = connection.getresponse()
+                return response.status, dict(response.getheaders()), json.loads(response.read())
+            finally:
+                connection.close()
+
+        with BotServer(0, first) as left, BotServer(0, second) as right:
+            threads = [threading.Thread(target=server.serve_forever, kwargs={"poll_interval": .01}, daemon=True)
+                       for server in (left, right)]
+            for thread in threads:
+                thread.start()
+            try:
+                code, headers, one = request(left, "/api/session", {"token": first.launch_token})
+                self.assertEqual(code, 200)
+                self.assertNotIn("Set-Cookie", headers)
+                code, headers, two = request(right, "/api/session", {"token": second.launch_token})
+                self.assertEqual(code, 200)
+                self.assertNotIn("Set-Cookie", headers)
+                for server, own, other in ((left, one, two), (right, two, one)):
+                    self.assertEqual(request(server, "/api/bootstrap", headers={"X-VGHKS-Session": own["session"]})[0], 200)
+                    self.assertEqual(request(server, "/api/bootstrap", headers={"X-VGHKS-Session": other["session"]})[0], 401)
+                    self.assertEqual(request(server, "/api/bootstrap?access=" + own["resource"])[0], 401)
+                path = f"/api/accounts/{self.key}/analysis/asset?id=" + "a" * 64 + "&access="
+                self.assertEqual(request(left, path + two["resource"])[0], 401)
+                self.assertEqual(request(left, path + one["resource"])[0], 404)
+            finally:
+                for server in (left, right):
+                    server.shutdown()
+                join_threads(threads, label="both local HTTP servers exit", preserve_error=True)
 
 
 class GatewayTests(unittest.TestCase):
+    def test_response_timestamps_remain_ordered_per_account_across_clock_changes(self):
+        gate = NetworkGate()
+        left, right = (AccountGateway(BotSyntheticSDK, gate) for _ in range(2))
+        fixed = "2030-01-01T12:00:00.000000+08:00"
+        observed = []
+        try:
+            left.login(Settings(username="TEST", password="fake"))
+            right.login(Settings(username="OTHER", password="fake"))
+            with patch("vghks_bot.bot_gateway.timestamp", return_value=fixed):
+                for operation in (
+                    lambda: left.invoke("opd", "get_doctor_patients", "TEST", today()),
+                    lambda: left.invoke("opd", "get_doctor_patients", "TEST", today()),
+                    lambda: left.invoke("patients", "get_demographics", "TEST001"),
+                    lambda: left.resolve_identity("A123456789"),
+                ):
+                    operation()
+                    observed.append(left.response_at())
+                right.invoke("opd", "get_doctor_patients", "OTHER", today())
+                self.assertEqual(right.response_at(), fixed, "another account inherited the logical clock")
+                left.close()
+                left.login(Settings(username="TEST", password="fake"))
+                left.invoke("opd", "get_doctor_patients", "TEST", today())
+                observed.append(left.response_at())
+            with patch("vghks_bot.bot_gateway.timestamp", return_value="2029-12-31T12:00:00.000000+08:00"):
+                left.invoke("opd", "get_doctor_patients", "TEST", today())
+                observed.append(left.response_at())
+            base = datetime.fromisoformat(fixed)
+            self.assertEqual(observed, [(base + timedelta(microseconds=index)).isoformat(timespec="microseconds")
+                                        for index in range(len(observed))])
+            later = "2030-01-01T12:00:01.000000+08:00"
+            with patch("vghks_bot.bot_gateway.timestamp", return_value=later):
+                left.invoke("opd", "get_doctor_patients", "TEST", today())
+                self.assertEqual(left.response_at(), later, "forward wall time was not retained")
+        finally:
+            left.close()
+            right.close()
+
     def test_network_failure_never_replays_login_after_transport_retry(self):
         logins_before = sum(call[1] == "login" for call in BotSyntheticSDK.calls)
         gateway = AccountGateway(BotSyntheticSDK, NetworkGate())
@@ -524,34 +604,39 @@ class GatewayTests(unittest.TestCase):
         gateway.login(Settings(username="TEST", password="fake"))
         entered, release = threading.Event(), threading.Event()
         order = []
+        errors = []
         def step(name):
             order.append(name)
             if name == "one":
                 entered.set()
-                release.wait(3)
+                wait_event(release, label="release held background step", timeout=HOLD_TIMEOUT)
         gateway.connection.opd.step = step
         def background():
-            gateway.invoke("opd", "step", "one")
-            gateway.invoke("opd", "step", "two")
+            try:
+                gateway.invoke("opd", "step", "one")
+                gateway.invoke("opd", "step", "two")
+            except Exception as error:
+                errors.append(error)
         def foreground():
-            with gateway.foreground():
-                gateway.invoke("opd", "step", "foreground")
+            try:
+                with gateway.foreground():
+                    gateway.invoke("opd", "step", "foreground")
+            except Exception as error:
+                errors.append(error)
         a, b = threading.Thread(target=background), threading.Thread(target=foreground)
         try:
             a.start()
-            self.assertTrue(entered.wait(2))
+            wait_event(entered, label="background safe step entered", threads=(a, b))
             b.start()
-            with gateway.condition:
-                self.assertTrue(gateway.condition.wait_for(lambda: gateway.foreground_waiters > 0, timeout=2))
+            wait_until(lambda: gateway.foreground_waiters > 0, label="foreground request admitted",
+                       state=lambda: {"foreground_waiters": gateway.foreground_waiters}, threads=(a, b))
             release.set()
-            a.join(3)
-            b.join(3)
+            join_threads((a, b), label="background and foreground requests completed")
+            self.assertEqual(errors, [], "a synthetic request worker failed")
             self.assertEqual(order, ["one", "foreground", "two"])
         finally:
             release.set()
-            a.join(3)
-            if b.ident:
-                b.join(3)
+            join_threads((a, b), label="foreground ordering worker cleanup", preserve_error=True)
             gateway.close()
 
     def test_foreground_patient_context_is_restored_at_next_safe_step(self):
@@ -569,21 +654,29 @@ class GatewayTests(unittest.TestCase):
     def test_global_account_concurrency_is_bounded(self):
         gate = NetworkGate(2)
         active = []
+        errors, observed_lock = [], threading.Lock()
         ready, release = threading.Event(), threading.Event()
         def worker():
-            with gate.slot():
-                active.append(gate.active)
-                if len(active) == 2:
-                    ready.set()
-                release.wait(2)
+            try:
+                with gate.slot():
+                    with observed_lock:
+                        active.append(gate.active)
+                        if len(active) == 2:
+                            ready.set()
+                    wait_event(release, label="release held account slot", timeout=HOLD_TIMEOUT)
+            except Exception as error:
+                errors.append(error)
         threads = [threading.Thread(target=worker) for _ in range(4)]
-        for thread in threads:
-            thread.start()
-        self.assertTrue(ready.wait(2))
-        self.assertEqual(len(active), 2)
-        release.set()
-        for thread in threads:
-            thread.join(2)
+        try:
+            for thread in threads:
+                thread.start()
+            wait_event(ready, label="two account slots occupied", threads=threads,
+                       state=lambda: {"entered": len(active), "active": gate.active})
+            self.assertEqual(len(active), 2)
+        finally:
+            release.set()
+            join_threads(threads, label="account slot worker cleanup", preserve_error=True)
+        self.assertEqual(errors, [], "an account slot worker failed")
         self.assertEqual(len(active), 4)
         self.assertLessEqual(max(active), 2)
         with self.assertRaises(ValueError):

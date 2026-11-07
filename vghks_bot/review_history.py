@@ -18,7 +18,14 @@ from vghks_sdk.models import (
     to_jsonable,
 )
 
-from .analysis_fetch import clean, model, order_identity, unique_refs, validate_patient
+from .analysis_fetch import (
+    clean,
+    model,
+    order_identity,
+    unique_refs,
+    validate_patient,
+    visit_detail_params,
+)
 from .analysis_store import digest
 from .connection_state import should_pause
 from .encoding import report_attachment_downloads
@@ -28,6 +35,7 @@ from .report_cache import branch_complete, result_complete
 from .scanner import Cancelled, safe_failure
 from .sdk_orders import assess_order_index, order_index_complete
 from .settings import today
+from .soap_data import display_chronic_prescriptions
 from .soap_data import snapshot as soap_snapshot
 from .storage import StorageError
 
@@ -309,6 +317,8 @@ class ReviewHistory:
     def _read(self, values):
         _, mrn, resource, reference = self.scope(values)
         data, updated = self._stored(mrn, resource, reference, cataract=bool(values.get("cohort_id")))
+        if resource == "visit_soap" and data is not None:
+            display_chronic_prescriptions(data)
         index_steps = self._index_steps(mrn, resource, reference)
         issues = [issue for step in index_steps if step for issue in step.get("assessment", {}).get("issues", [])]
         complete = (all(order_index_complete(step) for step in index_steps) if index_steps else
@@ -435,13 +445,17 @@ class ReviewHistory:
                               "section_code": case.section_code, "case_no": case.case_no,
                               "source_mrn": case.mrn, "case_index": case.index,
                               "doctor": case.doctor_name, "doctor_card": case.doctor_card, **soap_snapshot(soap)}
+                    if case.case_type != "O":
+                        record["case_type"] = case.case_type
+                    if params := visit_detail_params(case.detail_params):
+                        record["detail_params"] = params
                     self.app.store.library.save_record(record, self.app.username, task["id"])
         else:
             result = self._collect_order_report(task, state)
             return {"status": result["status"], "cached": False, "resource": resource, "reference": reference}
         return {"status": "ready", "cached": False, "resource": resource, "reference": reference}
 
-    def _publish_order_report(self, task, value, state=None, *, start=False):
+    def _publish_order_report(self, task, value, state=None, *, start=False, resolved_branches=None):
         """Publish only durable files, merging late checkpoints under one transaction."""
         mrn, key = task["mrn"], "history-order:" + task["reference"]
         with self.app.store.library.batch():
@@ -484,9 +498,22 @@ class ReviewHistory:
                             items[identity]["retained"] = True
                         elif owns:
                             items[identity].pop("retained", None)
-                for field in ("details", "texts"):
-                    if owns and not snapshot.get(field):
-                        snapshot[field] = copy.deepcopy(previous.get(field, []))
+                if owns and not start:
+                    for field in ("details", "texts"):
+                        confirmed = (resolved_branches or {}).get(field, set())
+                        prior = {item["ref_key"]: item for item in previous.get(field, [])
+                                 if item.get("ref_key") and item["ref_key"] not in confirmed}
+                        incoming = {item["ref_key"]: item for item in snapshot.get(field, []) if item.get("ref_key")}
+                        # An incomplete reply may expose only metadata. Keep the
+                        # last readable result for that reference if available.
+                        branches = {**incoming, **prior}
+                        content = [{key: value for key, value in item.items() if key != "ref_key"}
+                                   for item in branches.values()]
+                        # Old compositions have no branch provenance. Keep any
+                        # unmatched legacy content until a complete refresh.
+                        legacy = [item for item in previous.get(field, []) if not item.get("ref_key")
+                                  and item not in content]
+                        snapshot[field] = copy.deepcopy([*branches.values(), *legacy])
             # A legacy composition has no stable reference IDs. Once a matching
             # file is observed, replace its legacy tile with the reference tile.
             stable_digests = {asset["digest"] for identity, asset in assets.items()
@@ -526,6 +553,7 @@ class ReviewHistory:
                   "details": [], "texts": [], "assets": [], "attachment_items": [], "issues": [],
                   "status": "partial", "processing": True, "processing_run": uuid.uuid4().hex,
                   "report_cache_revision": 2}
+        resolved_branches = {"details": set(), "texts": set()}
         details = [order.get("detail_ref") for order in variants]
         reports = [order.get("report_ref") for order in variants]
         pdfs = [ref for order in variants for ref in order.get("pdf_refs") or []]
@@ -560,7 +588,7 @@ class ReviewHistory:
                      f"已取得 {completed} / {total} 份附件" + (f"，{failed} 份未取得" if failed else ""))
             result["progress"] = {**progress(completed + failed, total, unit="份附件", failed=failed, stage=stage),
                                   "phase": phase, "discovered": len(items), "completed": completed}
-            self._publish_order_report(task, result, state, start=start)
+            self._publish_order_report(task, result, state, start=start, resolved_branches=resolved_branches)
 
         def fetch(cls, method, ref, *, binary=False, item=None):
             check_cancel()
@@ -606,8 +634,8 @@ class ReviewHistory:
             for ref in unique_refs(refs):
                 check_cancel()
                 item = None
+                identity = digest([method, ref])
                 if binary:
-                    identity = digest([method, ref])
                     item = next(item for item in result["attachment_items"] if item["id"] == identity)
                 try:
                     value = fetch(cls, method, ref, binary=binary, item=item)
@@ -617,7 +645,7 @@ class ReviewHistory:
                             item.update(asset, status="ready")
                             result["assets"].append(asset)
                         else:
-                            accept(value)
+                            accept(value, identity)
                 except (Cancelled, AuthenticationError, StorageError):
                     raise
                 except Exception as exc:
@@ -629,17 +657,21 @@ class ReviewHistory:
                         item.update(status="failed", message=message)
                 publish("attachments" if binary else "discovery")
 
-        def accept_detail(detail):
+        def accept_detail(detail, identity):
             reports.extend(detail.get("report_refs") or [])
             pdfs.extend(detail.get("pdf_refs") or [])
             studies.extend(detail.get("pacs_refs") or [])
-            result["details"].append({"fields": detail.get("fields", {})})
-        def accept_report(report):
+            result["details"].append({"fields": detail.get("fields", {}), "ref_key": identity})
+            resolved_branches["details"].add(identity)
+        def accept_report(report, identity):
             if report.get("report_text") or report.get("fields"):
                 result["texts"].append({"text": report.get("report_text", ""), "fields": report.get("fields", {}),
+                                        "ref_key": identity,
                                         "status": report.get("report_data_status", ""),
                                         "text_extraction_notes": report.get("text_extraction_notes", [])})
-            if not branch_complete(report):
+            if branch_complete(report):
+                resolved_branches["texts"].add(identity)
+            else:
                 result["issues"].append({"branch": "get_order_report", "code": "BOT_REPORT_TEXT_PARTIAL",
                                          "message": "已保留可讀內容；部分文字尚未完整解析。"})
             pdfs.extend(report.get("pdf_refs") or [])
@@ -654,7 +686,7 @@ class ReviewHistory:
         try:
             collect(OrderDetailRef, "get_order_detail", details, accept_detail)
             collect(OrderReportRef, "get_order_report", reports, accept_report)
-            collect(PacsStudyRef, "get_pacs_study", studies, lambda study: images.extend(study.get("images") or []))
+            collect(PacsStudyRef, "get_pacs_study", studies, lambda study, _: images.extend(study.get("images") or []))
             discovered = True
             publish("attachments")
             collect(PdfAttachmentRef, "download_pdf", pdfs, None, binary=True)

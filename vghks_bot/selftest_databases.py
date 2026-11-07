@@ -75,7 +75,7 @@ def check_databases(path):
             def request(route, values=None, *, context=None, application=None):
                 app = application or manager.current
                 connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=8)
-                headers = {"Content-Type": "application/json", "Cookie": "opd_session="+app.session_token,
+                headers = {"Content-Type": "application/json", "X-VGHKS-Session": app.session_token,
                            "X-CSRF-Token": app.csrf_token, "X-Database-Context": context or app.context_token}
                 connection.request("GET" if values is None else "POST", "/api/"+route,
                                    None if values is None else json.dumps(values), headers)

@@ -12,7 +12,7 @@ from .analysis_fetch import PatientCollector, RunSessions, order_identity, valid
 from .analysis_numeric import MODULES, term_match
 from .analysis_store import AnalysisStore, digest, identifier
 from .connection_state import should_pause
-from .demographics import merge_demographics
+from .demographics import merge_demographics, without_profile_contacts
 from .google_sheets import SheetError, SheetUncertain
 from .ophthalmic_orders import (
     SCOPE_KEY,
@@ -100,6 +100,8 @@ class Analysis:
         summary = str(values.get("summary", "")) == "1"
         runs = self.store.run_summaries(values.get("cohort_id")) if summary else self.store.documents("analysis_runs", cohort_id=values.get("cohort_id"))
         for run in runs:
+            if "members" in run:
+                run["members"] = [without_profile_contacts(member) for member in run["members"]]
             state = self.app.states.get(run["id"])
             if state is not None and run["status"] in ACTIVE:
                 live = state.snapshot(detail=False)
@@ -236,7 +238,8 @@ class Analysis:
                     account = self.app._account(values["account_id"])
                     for member in cohort["members"]:
                         member["account_id"] = account.id
-            cohort.update(name=name, updated_at=timestamp())
+            cohort.update(name=name, updated_at=timestamp(),
+                          members=[without_profile_contacts(member) for member in cohort["members"]])
             return public_document(self.store.save_document("analysis_cohorts", cohort))
 
     def delete_cohort(self, values):
@@ -324,7 +327,8 @@ class Analysis:
                               cataract_background=not enqueue)
             state.data["counts"].update(patients_total=len(cohort["members"]), analysis_cached=0, analysis_fetched=0)
             state.journal = self.app.store.create(state.snapshot(detail=False))
-            run = {"id": run_id, "cohort_id": cohort["id"], "name": cohort["name"], "members": cohort["members"],
+            run = {"id": run_id, "cohort_id": cohort["id"], "name": cohort["name"],
+                   "members": [without_profile_contacts(member) for member in cohort["members"]],
                    "options": options, "created_at": timestamp(), "status": "queued", "message": "等待分析…",
                    "counts": state.data["counts"], "issues": [], "resume_of": values.get("resume", "")}
             self.store.save_document("analysis_runs", run)
@@ -792,7 +796,9 @@ class Analysis:
             confirm(preview, preview["id"])
             preview.update(status="applied_changed", message="更新已送達，但部分內容之後有變動，請檢查刀表。")
         elif preview["status"] in {"applying", "uncertain"}:
-            preview.update(status="uncertain", message="尚未找到此批更新；可重試原預覽，系統以同一批次代碼防止重複新增。")
+            message = ("尚未找到此排程批次的寫入證明，請先核對刀表及來源。" if preview.get("automatic") else
+                       "尚未找到此批更新；可重試原預覽，系統以同一批次代碼防止重複新增。")
+            preview.update(status="uncertain", message=message)
         self.store.save_document("sheet_previews", preview)
         if outcome in {"verified", "changed"} and not getattr(getattr(self.app, "root", self.app), "read_only", False):
             reclaim(client, book, [(preview, OPD_KEY, [preview["id"]], lambda p: self.store.save_document("sheet_previews", p))])
@@ -812,6 +818,8 @@ class Analysis:
         if not self.app.idle.is_set():
             raise ValueError("請等待目前抓取作業結束，再套用刀表更新。")
         preview = self.store.document("sheet_previews", values.get("id"))
+        if preview.get("automatic"):
+            raise ValueError("排程批次只支援核對結果，請重新取得當日 SOAP 或建立手動預覽。")
         if not preview.get("can_apply"):
             raise ValueError("請先處理預覽中的衝突。")
 

@@ -32,8 +32,8 @@ window.CataractExport = (() => {
         for (const control of content.querySelectorAll("input,button")) control.disabled = true;
         status.textContent = "正在整理已存資料與附件…";
         try {
-          const response = await fetch(scopedPath("/api/analysis/export"), {method:"POST", credentials:"same-origin", cache:"no-store",
-            headers:{"Content-Type":"application/json", "X-CSRF-Token":config?.csrf || "", "X-Database-Context":config?.context || ""},
+          const response = await fetch(scopedPath("/api/analysis/export"), {method:"POST", credentials:"omit", cache:"no-store", redirect:"error",
+            headers:{...window.LocalSession.headers(), "Content-Type":"application/json", "X-CSRF-Token":config?.csrf || "", "X-Database-Context":config?.context || ""},
             body:JSON.stringify({cohort_id:cohort, mrns:[...selected]})});
           if (!response.ok) {const error = await response.json();throw new Error(error.error || "報告匯出未完成。");}
           const encodedName = response.headers.get("Content-Disposition")?.match(/filename\*=UTF-8''([^;]+)/i)?.[1];

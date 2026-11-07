@@ -11,6 +11,23 @@ from urllib.parse import urlsplit
 from vghks_sdk.core.transport import SafeSessionTransport
 
 _report_attachment_scope = ContextVar("report_attachment_scope", default=False)
+_prq_decode_scope = ContextVar("prq_decode_scope", default=None)
+_EVIDENCE_ENDPOINTS = {"opd": ("POST", "/QueryOPDPatList.do"), "soap": ("GET", "/QueryBillingSOAP.do")}
+_HTTP_CHARSET = re.compile(r"charset\s*=\s*[\"'\s]*([a-zA-Z0-9_-]+)", re.I)
+_META_CHARSET = re.compile(rb'<meta\b[^>]*\bcharset\s*=\s*["\x27\s]*([a-zA-Z0-9_-]+)', re.I)
+_CHARSET_LABELS = {
+    "utf-8", "utf8", "big5", "big-5", "cp950", "ms950", "big5-hkscs", "big5hkscs",
+    "utf-16", "utf-16le", "utf-16be", "iso-8859-1", "windows-1252", "us-ascii",
+}
+_HTML_REPLACEMENT = re.compile(r"&#(?:[xX]0*[fF]{3}[dD](?![0-9a-fA-F])|0*65533(?![0-9]));?")
+_HTML_NULL = re.compile(r"&#(?:[xX]0|0);")
+_JS_REPLACEMENT = re.compile(r"\\u(?:[fF]{3}[dD]|\{0*[fF]{3}[dD]\})")
+_SAFE_MARKER_BYTES = {
+    "utf8_literal": re.compile(rb"\xef\xbf\xbd"),
+    "html_numeric_entity": re.compile(rb"&#(?:[xX][fF]{3}[dD]|65533);"),
+    "html_null_entity": re.compile(rb"&#(?:[xX]0|0);"),
+    "javascript_escape": re.compile(rb"\\u(?:[fF]{3}[dD]|\{[fF]{3}[dD]\})"),
+}
 
 
 @contextmanager
@@ -23,28 +40,106 @@ def report_attachment_downloads():
         _report_attachment_scope.reset(token)
 
 
-def decode_response(content: bytes, content_type: str = "", encoding: str = "auto") -> str:
-    if content.startswith(b"\xef\xbb\xbf"):
-        return content.decode("utf-8-sig", errors="replace")
-    if encoding != "auto":
-        return content.decode("cp950" if encoding == "big5" else "utf-8", errors="replace")
+@contextmanager
+def observe_prq_decoding(operation):
+    """Collect only safe diagnostics for one known PRQ read operation."""
+    evidence = {}
+    method, path = _EVIDENCE_ENDPOINTS[operation]
+    token = _prq_decode_scope.set((method, path, evidence))
     try:
-        return content.decode("utf-8")
+        yield evidence
+    finally:
+        _prq_decode_scope.reset(token)
+
+
+def _declared_charsets(content, content_type):
+    meta = _META_CHARSET.search(content[:16384])
+    http = _HTTP_CHARSET.search(content_type)
+    return (http.group(1).lower() if http else None,
+            meta.group(1).decode("ascii").lower() if meta else None)
+
+
+def decode_response(content: bytes, content_type: str = "", encoding: str = "auto") -> str:
+    return _decode_response(content, content_type, encoding)[0]
+
+
+def _decode_response(content, content_type, encoding):
+    if content.startswith(b"\xef\xbb\xbf"):
+        return content.decode("utf-8-sig", errors="replace"), "utf-8-sig"
+    if encoding != "auto":
+        codec = "cp950" if encoding == "big5" else "utf-8"
+        return content.decode(codec, errors="replace"), codec
+    try:
+        return content.decode("utf-8"), "utf-8"
     except UnicodeDecodeError:
         pass
-    meta = re.search(rb'<meta\b[^>]*\bcharset\s*=\s*["\x27\s]*([a-zA-Z0-9_-]+)', content[:16384], re.I)
-    declared = re.search(r"charset\s*=\s*[\"'\s]*([a-zA-Z0-9_-]+)", content_type, re.I)
-    charset = (meta.group(1).decode("ascii") if meta else declared.group(1) if declared else "").lower()
-    if charset in {"utf-8", "utf8"}:
+    http, meta = _declared_charsets(content, content_type)
+    if (meta or http) in {"utf-8", "utf8"}:
         try:
-            return content.decode("cp950")
+            return content.decode("cp950"), "cp950"
         except UnicodeDecodeError:
             utf8 = content.decode("utf-8", errors="replace")
             big5 = content.decode("cp950", errors="replace")
-            return min((utf8, big5), key=lambda text: text.count("\ufffd"))
+            if utf8.count("\ufffd") <= big5.count("\ufffd"):
+                return utf8, "utf-8"
+            return big5, "cp950"
     # PRQ legacy pages are Big5/CP950. One damaged byte elsewhere in a page
     # must not cause all names and demographics to be decoded as UTF-8.
-    return content.decode("cp950", errors="replace")
+    return content.decode("cp950", errors="replace"), "cp950"
+
+
+def _masked_decode_errors(content, codec):
+    if codec == "utf-8-sig":
+        # The BOM codec reports error offsets relative to the body after the BOM.
+        content = content[3:]
+        codec = "utf-8"
+    masks = []
+    # Never retain the byte values, offsets, or neighboring text. A fixed
+    # mask represents the width of each of at most three invalid sequences.
+    for _ in range(3):
+        try:
+            content.decode(codec)
+        except UnicodeDecodeError as error:
+            masks.append("XX" * min(error.end - error.start, 4))
+            content = content[error.end:]
+        else:
+            break
+    return masks
+
+
+def _decode_evidence(content, content_type, encoding, text, codec):
+    http, meta = _declared_charsets(content, content_type)
+    masks = _masked_decode_errors(content, codec) if "\ufffd" in text else []
+    markers = []
+    # These markers concern the entire response. They cannot be attributed to
+    # any individual field or used to recover its original value.
+    if codec.startswith("utf-8") and "\ufffd" in text and (not masks or "\ufffd" in content.decode(codec, errors="ignore")):
+        markers.append("utf8_literal")
+    if _HTML_REPLACEMENT.search(text):
+        markers.append("html_numeric_entity")
+    if _HTML_NULL.search(text):
+        markers.append("html_null_entity")
+    if _JS_REPLACEMENT.search(text):
+        markers.append("javascript_escape")
+    # Only exact, public replacement marker byte sequences can leave memory.
+    # Never include other invalid bytes or any context around these matches.
+    source_samples = []
+    for marker in markers:
+        match = _SAFE_MARKER_BYTES[marker].search(content)
+        if match:
+            source_samples.append({"marker": marker, "hex": match.group().hex()})
+    return {
+        "http_charset": http if http is None or http in _CHARSET_LABELS else "other",
+        "meta_charset": meta if meta is None or meta in _CHARSET_LABELS else "other",
+        "configured_encoding": encoding if encoding in {"auto", "big5", "utf-8"} else "other",
+        "decoded_with": codec,
+        "decoder_replacement": bool(masks),
+        "source_markers": markers,
+        "source_byte_samples": source_samples,
+        "masked_byte_samples": masks,
+        "byte_sample_policy": "fixed_markers_only",
+        "scope": "response",
+    }
 
 
 class ClinicalTransport(SafeSessionTransport):
@@ -53,6 +148,7 @@ class ClinicalTransport(SafeSessionTransport):
         self.response_encoding = response_encoding
         base = urlsplit(attachment_base_url)
         self.attachment_origin = (base.scheme.lower(), base.netloc.lower()) if base.netloc else None
+        self.prq_path = base.path.rstrip("/")
         self.attachment_paths = {base.path.rstrip("/") + "/Page/JSP/" + name
                                  for name in ("showPACSPic.jsp", "showPDF.jsp")} if base.netloc else set()
         self.request_dispatch_lock = threading.RLock()
@@ -85,4 +181,14 @@ class ClinicalTransport(SafeSessionTransport):
                 super().close()
 
     def text(self, response):
-        return decode_response(response.content or b"", response.headers.get("Content-Type", ""), self.response_encoding)
+        content = response.content or b""
+        content_type = response.headers.get("Content-Type", "")
+        text, codec = _decode_response(content, content_type, self.response_encoding)
+        scope = _prq_decode_scope.get()
+        if scope is not None:
+            method, path, evidence = scope
+            if getattr(getattr(response, "request", None), "method", "") == method:
+                target = urlsplit(getattr(response, "url", "") or "")
+                if (target.scheme.lower(), target.netloc.lower()) == self.attachment_origin and target.path == self.prq_path + path:
+                    evidence.update(_decode_evidence(content, content_type, self.response_encoding, text, codec))
+        return text

@@ -43,6 +43,9 @@ if ($vghksNeedsEnvironment) {
     }
     if ($LASTEXITCODE -ne 0) { throw 'Cannot create Python environment.' }
 }
+# Check workflow syntax and expressions before installing application dependencies.
+& $vghksPythonPath -X utf8 tools\check_workflows.py --install --self-test
+if ($LASTEXITCODE -ne 0) { throw 'GitHub workflow preflight failed.' }
 & $vghksPythonPath -m pip install -r requirements-build.lock.txt
 if ($LASTEXITCODE -ne 0) { throw 'Dependency installation failed.' }
 $vghksSdkCheck = @'

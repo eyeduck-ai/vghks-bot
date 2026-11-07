@@ -129,7 +129,7 @@ class SheetAccountTests(unittest.TestCase):
             try:
                 connection = http.client.HTTPConnection("127.0.0.1", server.server_port)
                 path = f"/api/accounts/{self.target_id}/analysis/google/copy"
-                headers = {"Content-Type": "application/json", "Cookie": "opd_session=" + self.app.session_token}
+                headers = {"Content-Type": "application/json", "X-VGHKS-Session": self.app.session_token}
                 body = json.dumps({"source_account_id": self.source_id})
                 connection.request("POST", path, body, headers)
                 response = connection.getresponse()

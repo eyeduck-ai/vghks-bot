@@ -5,12 +5,11 @@ from collections import defaultdict
 from contextlib import ExitStack
 from dataclasses import asdict, fields
 from datetime import date
-from types import SimpleNamespace
 
 from vghks_sdk import OutpatientPatient
 
 from .connection_state import require_ready
-from .scanner import _checked_list, _collect, _read_patients, create_sdk
+from .scanner import _collect, _read_patients, create_sdk, read_opd_patients
 from .settings import parse_range
 from .tags import classification
 
@@ -49,15 +48,15 @@ def run_workflow(state, settings, library, *, rows=None, force=False, sdk_factor
                 cached = None if force else library.cached_list(account, day.isoformat())
                 if cached is not None:
                     state.count(days_cached=1)
-                    return [patient_model(value) for value in cached["rows"]]
-                result = _checked_list(sdk().opd.get_doctor_patients(account, day), OutpatientPatient)
+                    return [patient_model(value) for value in cached["rows"]], {"source": "cache"}
+                result, evidence = read_opd_patients(sdk(), account, day)
                 # An unexpected date must never become a permanent historical cache.
                 if all(row.visit_date == day for row in result):
                     library.save_list(account, day.isoformat(), [patient_value(row) for row in result])
-                return result
+                return result, evidence
 
             start, end = parse_range(state.data, allow_future=True)
-            _collect(SimpleNamespace(opd=SimpleNamespace(get_doctor_patients=doctor_patients)), state, settings, start, end)
+            _collect(None, state, settings, start, end, load_patients=doctor_patients)
         else:
             grouped = defaultdict(list)
             for value in rows:
