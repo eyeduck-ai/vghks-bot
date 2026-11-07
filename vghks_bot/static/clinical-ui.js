@@ -223,6 +223,55 @@ window.ClinicalUI = (() => {
     const index = sameDate.length > 1 && !sameReport ? sameDate.findIndex(peer => peer.digest === item.digest) + 1 : item.fileIndex || 1;
     return date + (multiple ? ` · 檔案 ${index}` : "");
   }
+  const pacsRequests = new Map();
+  let pacsControlId = 0;
+  function pacsControl({request, scope, enabled = true, current = () => true}) {
+    const area = document.createElement("div"), button = document.createElement("button"),
+      message = document.createElement("span"), selection = document.createElement("div"),
+      label = document.createElement("label"), select = document.createElement("select");
+    area.className = "pacs-control";button.type = "button";button.className = "quiet attachment-control";
+    button.textContent = "開啟本地 PACS";button.disabled = !enabled;
+    button.title = "使用本機已啟動的院方 PACS 檢閱器開啟這筆醫囑";
+    message.className = "caption pacs-message";message.setAttribute("role", "status");
+    select.id = "pacs-study-" + (++pacsControlId);select.name = "pacs_study";
+    label.textContent = "PACS 檢查";label.htmlFor = select.id;
+    selection.className = "pacs-selection";selection.append(label, select);selection.hidden = true;
+    message.textContent = enabled ? "" : "登入後可使用本機 PACS 檢閱器。";
+    area.append(selection, button, message);
+    const key = JSON.stringify(scope);
+    const visible = () => area.isConnected !== false && current();
+    function show(result) {
+      if (!visible()) return;
+      message.textContent = result.message || "PACS 交接未完成。";
+      message.classList.toggle("error", !["HANDOFF_SENT", "SELECTION_REQUIRED"].includes(result.status));
+      if (result.status === "SELECTION_REQUIRED") {
+        select.replaceChildren();
+        for (const choice of result.choices || []) {
+          const option = document.createElement("option");option.value = choice.id;option.textContent = choice.label;select.append(option);
+        }
+        selection.hidden = false;select.focus();
+      }
+    }
+    async function follow(promise) {
+      button.disabled = true;area.setAttribute("aria-busy", "true");message.textContent = "正在準備並交接本地 PACS…";
+      try {show(await promise);}
+      catch (error) {if (visible()) {message.textContent = (error.message || "PACS 請求未完成。") + " 請先查看本地檢閱器；系統未自動重送。";message.classList.add("error");}}
+      finally {if (visible()) {button.disabled = !enabled;area.removeAttribute("aria-busy");}}
+    }
+    button.addEventListener("click", () => {
+      if (!enabled || !current() || pacsRequests.has(key)) return;
+      // Only this user gesture may send a command. Rendering and polling only
+      // observe an existing request; a lost response never triggers a retry.
+      const promise = Promise.resolve().then(() => current() ? request({...scope,
+        ...(!selection.hidden ? {launch_id: select.value} : {})}) : {status: "CANCELLED"});
+      pacsRequests.set(key, promise);
+      void follow(promise);
+      const cleanup = () => {if (pacsRequests.get(key) === promise) pacsRequests.delete(key);};
+      promise.then(cleanup, cleanup);
+    });
+    if (pacsRequests.has(key)) void follow(pacsRequests.get(key));
+    return area;
+  }
   window.addEventListener("filecomparechange", syncComparison);
-  return {loading, elapsed, pdfURL, copyButton, mrnBadge, patientAge, ageBadge, fileName, downloadLink, saveBlob, reportText, textDownload, assetTools, comparisonChoice, comparisonName};
+  return {loading, elapsed, pdfURL, copyButton, mrnBadge, patientAge, ageBadge, fileName, downloadLink, saveBlob, reportText, textDownload, assetTools, comparisonChoice, comparisonName, pacsControl};
 })();

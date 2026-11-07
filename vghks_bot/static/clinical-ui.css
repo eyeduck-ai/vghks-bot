@@ -26,3 +26,9 @@
 .clinical-loading-elapsed{font-size:12px;color:#607169;font-variant-numeric:tabular-nums}
 @keyframes clinical-loading-spin{to{transform:rotate(360deg)}}
 @media(prefers-reduced-motion:reduce){.clinical-loading-icon{display:none;animation:none}}
+.pacs-control{display:flex;align-items:center;flex-wrap:wrap;gap:.35rem .6rem;min-width:0}
+.pacs-control .pacs-selection{display:flex;align-items:center;gap:.35rem;min-width:0}
+.pacs-control .pacs-selection[hidden]{display:none}
+.pacs-control label{white-space:nowrap}
+.pacs-control select{max-width:18rem;min-width:0}
+.pacs-control .pacs-message{overflow-wrap:anywhere;max-width:36rem}

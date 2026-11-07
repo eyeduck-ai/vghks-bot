@@ -2,7 +2,7 @@
 
 [![Windows build](https://github.com/eyeduck-ai/vghks-bot/actions/workflows/windows.yml/badge.svg)](https://github.com/eyeduck-ai/vghks-bot/actions/workflows/windows.yml)
 
-VGHKS 院內系統的本機工作台，提供 Windows 單檔 EXE、瀏覽器介面及 SQLite 儲存。版本 **6.16.4**，使用固定的 SDK **0.23.6** 與共用刀表契約 **1.3.0**。
+VGHKS 院內系統的本機工作台，提供 Windows 單檔 EXE、瀏覽器介面及 SQLite 儲存。版本 **6.17.0**，使用固定的 SDK **0.24.2** 與共用刀表契約 **1.3.0**。
 
 ## 下載與更新
 
@@ -23,6 +23,8 @@ VGHKS 院內系統的本機工作台，提供 Windows 單檔 EXE、瀏覽器介�
 | 資料庫 | 離線檢閱、備份、唯讀開啟、匯入及切換 |
 
 病人清單依內容調寬，TAG 最多顯示兩行，其餘以「+N」查看；功能面板及檢閱清單均可用邊線小箭頭收合。醫囑附件逐份驗證、保存及顯示，同份報告的指定附件免額外等待，其他爬蟲節流與病人核對保留。
+
+醫囑報告仍以 JPG／PDF 為主要檢視方式；病歷檢閱、視網膜比較與白內障分析另提供「開啟本地 PACS」，在同一台 Windows 工作站交接已啟動的院方 SmartIris／DownloadApp。使用方式與必要條件見[操作指南](docs/USER_GUIDE.md#本地-pacs-檢閱)。
 
 主程式只更新刀表；日曆監控由獨立 [vghks-sheet2cal](https://github.com/eyeduck-ai/vghks-sheet2cal) 的指定主機執行。
 

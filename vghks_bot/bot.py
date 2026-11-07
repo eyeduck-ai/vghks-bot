@@ -42,6 +42,9 @@ class Workspace(Application):
         self.review = Review(self)
         self._migrate_default_tags()
         self.scans = ScanArchive(self)
+        from .pacs import PacsLauncher
+
+        self.pacs = PacsLauncher(self)
         from .clinical_resources import ClinicalResources
 
         self.resources = ClinicalResources(self)
@@ -212,6 +215,7 @@ class BotApplication:
         self.workspaces = {}
         self.lock = threading.RLock()
         self.sheet_lock = threading.Lock()
+        self.pacs_lock = threading.Lock()
         self.launch_token, self.session_token, self.csrf_token = (secrets.token_urlsafe(32) for _ in range(3))
         self.closing = False
         self.scheduler_stop = threading.Event()

@@ -82,6 +82,10 @@ window.ReviewHistoryUI=(()=>{
   controls.append(status);
   if(work?.online&&!root.read_only){const update=action("更新資料",()=>load(context,{force:true}));if(isReport){setIcon(update,"refresh","更新資料");update.classList.add("history-report-refresh","dialog-header-control");}controls.append(update);}
   if(!result.complete&&work?.online&&!root.read_only)controls.append(action("重試未完成",()=>load(context)));
+  if(isReport&&!root.read_only){const scope={...context},sourceAccount=account;controls.append(ClinicalUI.pacsControl({
+   scope:{...scope,account:sourceAccount},enabled:!!work?.online,
+   current:()=>active()&&account===sourceAccount&&same(context,scope)&&!!work?.online&&!root.read_only,
+   request:values=>api("/reviews/pacs/open",values)}));}
   content.append(controls);
  }
  function coverage(content,result){

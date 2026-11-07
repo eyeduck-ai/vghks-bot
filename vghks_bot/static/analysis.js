@@ -238,6 +238,15 @@ function examCard(row,type,exam,comparing=false) {
     card.append(el("h4",row.name));
     const labels={complete:"已保存",partial:"部分未完成",not_executed:"醫囑未執行",no_data:"尚無報告內容",no_links:"無可用報告連結"};
     card.append(el("span",labels[row.status]||row.status,"exam-status "+row.status));
+    if(!config?.read_only&&embeddedAccount){
+      const member=compareMember(),cohort=currentCohort?.id;
+      if(member?.account_id===embeddedAccount){
+        const scope={account:embeddedAccount,cohort_id:cohort,mrn:member.mrn,resource:"order_report",reference:row.id,module:"retina"};
+        card.append(ClinicalUI.pacsControl({scope,enabled:sharedStatus?.online!==false,
+          current:()=>currentCohort?.id===cohort&&compareMember()?.mrn===member.mrn&&!config?.read_only&&sharedStatus?.online!==false,
+          request:values=>api("/api/reviews/pacs/open",values)}));
+      }
+    }
     const assets=el("div",undefined,"asset-grid");
     for(const [i,asset] of (row.assets||[]).entries()) {
       const link=el("a");link.href=window.LocalSession.resourceURL(scopedPath("/api/analysis/asset?id="+encodeURIComponent(asset.digest)));link.target="_blank";link.rel="noopener";

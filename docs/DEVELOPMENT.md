@@ -2,7 +2,7 @@
 
 ## 環境與目錄
 
-使用 Windows x64、Python 3.11、Git 與 Node.js 24。依賴固定於 `requirements-build.lock.txt`，SDK 0.23.6／`cfdf0411021b14c8bf18a0c84c136c445ce39ae5` 與共用核心 1.3.0／`3e4babe8bbb799d103372732bd2e45bc1405fb83` 也固定於 `pyproject.toml`；不可只按版本號判定安裝來源。
+使用 Windows x64、Python 3.11、Git 與 Node.js 24。依賴固定於 `requirements-build.lock.txt`，SDK 0.24.2／`0f601303fc18b3ea6d53c55b17032cfa45b3f405` 與共用核心 1.3.0／`3e4babe8bbb799d103372732bd2e45bc1405fb83` 也固定於 `pyproject.toml`；不可只按版本號判定安裝來源。
 
 ```powershell
 py -3.11 -m venv .venv
@@ -54,6 +54,8 @@ py -3.11 -m venv .venv
 - 病歷檢閱按需讀取 40 位摘要及選定病人 SOAP；虛擬列以實測高度保留錨點，畫面／本機鄰近預讀不得自動抓取全員基本資料、歷年數值或醫囑索引。
 - SQLite 保存原始內容、版本、任務引用與可重建摘要；WAL 快照讀取及批次交易維持一致。清除先預覽並重新核對引用，集合、手動 TAG、備註與診斷保留。
 - 本機 HTTP 的 Host／Origin／啟動憑證與資料庫切換租約必須保留；病人文字只當文字顯示，失敗 HTML 不執行。憑證及解密材料僅存本機，不回傳瀏覽器或公開日誌。
+- `pacs.py` 只接受已核對清單中的指定醫囑；`/reviews/pacs/open` 為須 Session／CSRF／目前資料庫 context 的明確 POST。先唯讀預檢 DownloadApp，再按需補查所選醫囑的原生參照；舊快取只補明細／文字分支，不重新下載 JPG。JPEG 參照不轉成原生參照，多筆要求明確選擇。
+- PACS 準備沿用帳號 SDK 序列鎖，本機交接使用 SDK 的獨立 Session 與跨程序鎖，平台另以全帳號鎖阻擋重複進行中的操作。不快取啟動 context、不回傳 Study／IP／URL，不自動重送、啟動或安裝 EXE；`HANDOFF_SENT` 與影像載入確認分開。
 
 ## 測試與瀏覽器驗收
 

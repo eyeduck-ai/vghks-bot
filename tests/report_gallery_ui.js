@@ -204,7 +204,7 @@ async function historyTests(){
  const pdf=asset("PDFREF","PDF","application/pdf"),image=asset("IMAGEREF","IMG");
  const items=[{ref_key:"PDFREF",ordinal:1,status:"ready",kind:"pdf"},{ref_key:"IMAGEREF",ordinal:2,status:"pending",kind:"image"}];
  const details=[{fields:{檢查項目:"合成眼科醫囑"}}];let data={...payload(items,[pdf]),details};
- c.ClinicalUI.loading=()=>s.node("div","等待","clinical-loading");c.ClinicalUI.textDownload=()=>s.node("button","文字報告");
+ c.ClinicalUI.loading=()=>s.node("div","等待","clinical-loading");c.ClinicalUI.textDownload=()=>s.node("button","文字報告");c.ClinicalUI.pacsControl=()=>s.node("div","開啟本地 PACS");
  c.window.FileCompare={context(){}};c.work.online=true;c.extensionTask="";c.dialog=()=>{$("#dataDialog").open=true;};c.setPatientDialogContext=()=>{};c.reviewPatientIdentity=()=>({name:"合成病人"});c.JobProgress={pending(){},publish(){}};
  c.Option=function(label,value){const option=s.node("option",label);option.value=value;return option;};
  c.table=(_headers,rows)=>{shown.push(rows);return s.node("table");};c.paginate=(_host,page,total,change)=>{pages.push({page,total,change});};

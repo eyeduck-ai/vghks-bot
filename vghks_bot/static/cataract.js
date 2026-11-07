@@ -516,6 +516,15 @@ window.CataractUI = (() => {
       return;
     }
     area.setAttribute("aria-label", [row.name, row.date, row.case_no].filter(Boolean).join(" · "));
+    let pacs=null;
+    if(!config?.read_only&&embeddedAccount){
+      const state=currentState,sourceAccount=embeddedAccount,cohort=currentCohort.id;
+      const scope={account:sourceAccount,cohort_id:cohort,mrn:$("#analysisPatient").value,resource:"order_report",reference:row.id};
+      pacs=ClinicalUI.pacsControl({scope,enabled:sharedStatus?.online!==false,
+        current:()=>currentState===state&&embeddedAccount===sourceAccount&&currentCohort?.id===cohort&&state.selectedOrderId===row.id&&!config?.read_only&&sharedStatus?.online!==false,
+        request:values=>api("/api/reviews/pacs/open",values)});
+      area.prepend(pacs);
+    }
     if (!value) {
       syncOrderControls();
       area.append(el("p", "此報告仍在抓取或尚未保存。", "small muted"));
@@ -535,7 +544,7 @@ window.CataractUI = (() => {
       file.src = selected.mime==="application/pdf"?ClinicalUI.pdfURL(url):url;
       file.title = `${row.name} · 所選檔案`;
       if (file.tagName === "IMG") file.alt = file.title;
-      box.append(file); area.prepend(box);
+      box.append(file); if(pacs)pacs.after(box);else area.prepend(box);
       }
     } else syncOrderControls();
     if(value.texts?.length||value.details?.length)area.append(ClinicalUI.textDownload(value,

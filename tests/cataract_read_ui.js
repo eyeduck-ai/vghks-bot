@@ -24,10 +24,10 @@ let respond, pending = 0;
 const context = {
   $, $$:()=>[], el:()=>new Node(), button:(text,run)=>{const node=new Node();node.click=run;return node;}, embeddedAccount:"b".repeat(32),
   currentCohort:{id:"a".repeat(32),members:[{mrn:"TEST001",account_id:"b".repeat(32)},{mrn:"TEST002",account_id:"b".repeat(32)}]},
-  config:{read_only:false}, performance, location:{origin:"http://synthetic.invalid"}, resultRequest:0,
+  config:{read_only:false}, sharedStatus:null, performance, location:{origin:"http://synthetic.invalid"}, resultRequest:0,
   document:{createComment:()=>new Node(),activeElement:null,addEventListener(){}},
   window:{addEventListener:(name,callback)=>messages.set(name,[...(messages.get(name)||[]),callback]),CataractNumeric:{exams:[]}},
-  ClinicalUI:{mrnBadge:()=>new Node(),ageBadge:()=>new Node(),patientAge:()=>"未提供"},
+  ClinicalUI:{mrnBadge:()=>new Node(),ageBadge:()=>new Node(),patientAge:()=>"未提供",pacsControl:()=>new Node()},
   JobProgress:{pending:()=>{pending++;return {remove(){}};}},
   loadAnalysisResult:async options=>updates.push(options), notify(){}, action:run=>run(),
   ap:(path,values)=>{calls.push({path,values});return respond(path,values);}

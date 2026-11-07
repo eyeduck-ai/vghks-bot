@@ -274,7 +274,7 @@ class BotHandler(Handler):
                     raise ValueError("請先登入此帳號，再使用網路功能。")
                 custom = {"/api/sets/save", "/api/sets/delete", "/api/sets/cohort", "/api/draft/save",
                           "/api/reviews/patients", "/api/reviews/patient", "/api/reviews/notes/page", "/api/reviews/notes/summary", "/api/sets/read", "/api/sets/search",
-                          "/api/tasks/start", "/api/tasks/stop", "/api/reviews/results", "/api/reviews/history/read",
+                          "/api/tasks/start", "/api/tasks/stop", "/api/reviews/results", "/api/reviews/history/read", "/api/reviews/pacs/open",
                           "/api/reviews/notes/read", "/api/reviews/notes/save", "/api/reviews/notes/clear", "/api/reviews/reclassify",
                           "/api/reviews/preferences", "/api/accounts/save", "/api/extensions/read"}
                 custom |= {"/api/reviews/diagnostics", "/api/tools/state", "/api/tools/state/save", "/api/tools/handoff", "/api/tools/handoff/remove"}
@@ -324,6 +324,8 @@ class BotHandler(Handler):
                     result = review.pages.notes(values, summary=True)
                 elif local == "/api/reviews/history/read":
                     result = review.history.read(values)
+                elif local == "/api/reviews/pacs/open":
+                    result = workspace.pacs.open(values)
                 elif local == "/api/reviews/notes/read":
                     result = review.read_notes(values)
                 elif local == "/api/reviews/notes/save":
