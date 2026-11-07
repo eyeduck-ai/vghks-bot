@@ -129,6 +129,7 @@ window.ReviewPaging=(()=>{
   reviewData={...pageData,patients:rows};
   renderReviewPatients(rows,{...area,positions,pin,heightAt,before:rowTop(area.start),after:rowTop(area.total)-rowTop(area.end)});
   fitWidth(rail);
+  fitReviewPatientTags(rail);
   observeMountedRows(rail);renderPager();updateNavigation();
  }
  function renderAnchored(anchor){

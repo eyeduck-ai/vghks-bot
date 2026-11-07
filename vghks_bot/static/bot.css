@@ -522,9 +522,9 @@ button.patient-chip .patient-chip-remove{flex:none;color:#738973;font-size:14px;
 .review-patient-header{flex:none;padding:6px 7px 5px;border-bottom:1px solid var(--line);background:#f2f6ee}
 .review-selection-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:4px;margin:0;font-size:11px}
 :root[data-density] .review-patient-header .review-selection-toolbar button,.review-patient-header .review-selection-toolbar button{min-height:28px;padding:2px 6px;font-size:10.5px}
-.review-list-summary{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:2px 5px;margin-top:4px;min-width:0;font-size:10px;line-height:16px}
+.review-list-summary{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:2px 5px;margin-top:4px;min-width:0;font-size:11px;line-height:16px}
 .review-list-summary>#reviewSelectionCount{white-space:nowrap}
-.review-list-summary .review-page-label{font-size:10px;line-height:16px}
+.review-list-summary .review-page-label{font-size:11px;line-height:16px}
 .review-patient-panel>.review-patients{flex:1;min-width:0;min-height:0;width:100%;height:auto;max-height:none}
 @media(max-width:780px){.review-patient-panel{border-right:0;border-bottom:1px solid var(--line)}}
 .review-patient-row{display:flex;align-items:stretch;border-bottom:1px solid var(--line)}
@@ -533,19 +533,24 @@ button.patient-chip .patient-chip-remove{flex:none;color:#738973;font-size:14px;
 .review-patient-row>.patient-select{min-width:0;flex:1;border-bottom:0}
 .review-patients.is-virtual{--review-patient-row-estimate:40px;position:relative;overflow-anchor:none;scroll-behavior:auto;overflow-x:hidden}
 .review-patients.is-virtual>.review-list-spacer{padding:0;margin:0;border:0;pointer-events:none}
-.review-patients.is-virtual>.review-patient-row{box-sizing:border-box;width:100%;min-height:var(--review-patient-row-estimate);flex:none}
-.review-patients.is-virtual .review-patient-check{box-sizing:border-box;width:24px;padding:5px 3px}
-:root[data-density] .review-patients.is-virtual .patient-select,.review-patients.is-virtual .patient-select{box-sizing:border-box;display:grid;grid-template-columns:minmax(0,1fr) fit-content(76px);grid-template-rows:16px 13px;gap:1px 6px;align-content:center;min-height:0;padding:4px 6px 4px 2px;overflow:hidden}
-.review-patients.is-virtual .review-patient-top{grid-column:1/-1;grid-row:1;display:flex;align-items:center;gap:6px;min-width:0;width:100%;height:16px;flex:none}
-.review-patients.is-virtual .review-patient-top strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;line-height:16px}
-.review-patients.is-virtual .review-sequence{display:inline-flex;flex:none;max-width:72px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:12px}
-.review-patients.is-virtual .patient-select>.caption{grid-column:1;grid-row:2;display:block;min-width:0;max-width:100%;margin:0;font-size:10px;line-height:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;align-self:center}
+.review-patients.is-virtual>.review-patient-row{box-sizing:border-box;display:grid;grid-template-columns:24px minmax(0,1fr);width:100%;min-height:var(--review-patient-row-estimate);flex:none}
+.review-patients.is-virtual>.review-patient-row.is-selected{background:#e6efdf;box-shadow:inset 3px 0 var(--green)}
+.review-patients.is-virtual .patient-select.active{box-shadow:none}
+.review-patients.is-virtual .review-patient-check{grid-column:1;grid-row:1/-1;box-sizing:border-box;width:24px;padding:5px 3px;align-self:start;min-height:38px}
+:root[data-density] .review-patients.is-virtual .patient-select,.review-patients.is-virtual .patient-select{box-sizing:border-box;grid-column:2;grid-row:1;display:grid;grid-template-columns:minmax(0,1fr) fit-content(76px);grid-template-rows:18px 15px;gap:1px 6px;align-content:center;min-height:0;padding:2px 6px 2px 2px;overflow:hidden}
+.review-patients.is-virtual .review-patient-top{grid-column:1/-1;grid-row:1;display:flex;align-items:center;gap:6px;min-width:0;width:100%;height:18px;flex:none}
+.review-patients.is-virtual .review-patient-top strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px;line-height:18px}
+.review-patients.is-virtual .review-sequence{display:inline-flex;flex:none;max-width:72px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;line-height:13px}
+.review-patients.is-virtual .patient-select>.caption{grid-column:1;grid-row:2;display:block;min-width:0;max-width:100%;margin:0;font-size:11px;line-height:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;align-self:center}
 .review-patients.is-virtual .patient-select>.review-patient-dates{grid-column:2;text-align:right}
 .review-patients.is-virtual .patient-select>.review-patient-id.is-error{color:var(--danger)}
-.review-patients.is-virtual .review-patient-tags{grid-column:1/-1;grid-row:3;display:flex;flex-wrap:wrap;align-items:center;gap:2px 3px;max-width:100%;min-width:0}
-.review-patients.is-virtual .review-patient-tags>span:not(.caption){display:contents}
-.review-patients.is-virtual .review-patient-tags .badge{display:block;flex:0 1 auto;min-width:0;max-width:100%;padding:0 5px;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;line-height:12px}
-.review-patients.is-virtual .review-patient-tags>.caption{flex:none;margin:0;font-size:10px;line-height:12px}
+.review-patients.is-virtual .review-patient-tags{position:relative;grid-column:2;grid-row:2;display:flex;flex-wrap:wrap;align-items:start;align-content:start;gap:2px 3px;max-height:34px;overflow:hidden;min-width:0;margin:0 6px 2px 2px}
+.review-patients.is-virtual .review-patient-tags .badge{display:block;flex:0 1 auto;min-width:0;max-width:100%;padding:0 5px;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;line-height:14px}
+:root[data-density] .review-patient-tags-more,.review-patient-tags-more{flex:none;min-height:0;height:16px;max-width:100%;padding:0 5px;border-radius:3px;font-size:11px;line-height:14px;color:var(--green);background:#fff}
+.review-patient-tags-more:focus-visible{outline-offset:-2px}
+#dataDialog[data-view=review-tags]{width:min(480px,calc(100vw - 30px))}
+#dataDialog[data-view=review-tags]>.dialog-heading{position:static;margin:0 0 12px;padding:0 0 12px}
+.review-patient-all-tags>span{display:contents}.review-patient-all-tags .badge{font-size:12px;margin:3px 5px 3px 0;white-space:normal;overflow-wrap:anywhere}
 .review-patient-placeholder{box-sizing:border-box;display:flex;align-items:center;height:var(--review-patient-row-estimate);padding:8px 12px;border-bottom:1px solid var(--line)}
 .task-search{flex-direction:column;align-items:stretch;gap:9px}
 .task-search-main,.task-search-filters{display:flex;flex-wrap:wrap;gap:8px;min-width:0}

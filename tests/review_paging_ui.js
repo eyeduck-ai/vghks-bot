@@ -26,7 +26,7 @@ function setup(count=1000,measureRows=false){
  c.work={tasks:[],revisions:{profile:0,review_note:0,patient_tags:0,registrations:0}};
  c.reviewFilters=()=>({q:$("#reviewQuery").value,search_mode:$("#reviewSearchMode").value||"text",tag:$("#reviewTag").value});
  c.ClinicalUI={loading:label=>s.node("div",label,"clinical-loading")};
- c.badges=(items,manual=false)=>{const list=s.node("span");for(const tag of items||[])list.append(s.node("span",tag.name||tag.category_name,manual?"badge manual":"badge"));return list;};
+ c.badges=(items,manual=false)=>{const list=s.node("span");for(const tag of items||[])list.append(s.node("span",(manual?"手動 · ":"")+(tag.name||tag.category_name),manual?"badge manual":"badge"));return list;};
  c.check=(label,checked,run)=>{const input=s.node("input");input.checked=checked;input.setAttribute("aria-label",label);input.run=run;return input;};
  const selection=new Map();c.window.ReviewHandoff={updatePatients(){},has:mrn=>selection.has(mrn),toggle:(patient,checked)=>{if(checked)selection.set(patient.mrn,{mrn:patient.mrn,name:patient.name});else selection.delete(patient.mrn);}};
  let flush=true;const selections=[];
@@ -107,19 +107,88 @@ async function compactRailContract(){
  await s.ui.load();
  for(const element of s.rows())assert.equal(element.style.height,undefined,"virtual rows were forced to one height");
  const button=s.rows()[0].querySelector(".patient-select"),label=button.getAttribute("aria-label");
- const untagged=s.rows()[1].querySelector(".patient-select"),tagLine=button.querySelector(".review-patient-tags");
- assert.equal(untagged.querySelector(".review-patient-tags"),null,"untagged patient still mounted an empty third line");
+ const untagged=s.rows()[1].querySelector(".patient-select"),tagLine=s.rows()[0].querySelector(".review-patient-tags");
+ assert.equal(s.rows()[1].querySelector(".review-patient-tags"),null,"untagged patient still mounted an empty third line");
  assert.equal(untagged.querySelector(".review-patient-dates").textContent,"2026-10-01");
  assert.ok(tagLine,"tagged patient lost its tags");assert.equal(tagLine.querySelectorAll(".badge").length,5);
  const overflowTags=s.rows()[2].querySelector(".review-patient-tags");
- assert.equal(overflowTags.querySelectorAll(".badge").length,8);assert.equal(overflowTags.querySelector(".caption").textContent,"+3");assert.match(overflowTags.title,/更多合成標記10/);
+ assert.equal(overflowTags.querySelectorAll(".badge").length,11,"tag fitting discarded labels before measuring available width");assert.match(overflowTags.title,/更多合成標記10/);
+ for(const element of s.rows())for(const control of element.querySelectorAll("button"))assert.equal(control.querySelector("button"),null,"the all-tags action was nested inside the patient select button");
+ assert.equal(tagLine.parentElement,s.rows()[0]);assert.equal(tagLine.querySelector(".review-patient-tags-more").getAttribute("aria-haspopup"),"dialog");
  assert.match(label,/合成姓名很長仍需完整提供/);assert.match(label,/2026-10-26/);assert.match(label,/合成眼科分類3/);assert.match(label,/手動重要分類/);
  assert.equal(button.title,label,"ellipsis removed complete patient metadata from the tooltip");
  const css=fs.readFileSync("vghks_bot/static/bot.css","utf8");
- assert.match(css,/--review-patient-row-estimate:40px/);assert.match(css,/grid-template-rows:16px 13px/);assert.match(css,/\.review-patient-tags\{[^}]*flex-wrap:wrap/);
+ assert.match(css,/--review-patient-row-estimate:40px/);assert.match(css,/grid-template-rows:18px 15px/);assert.match(css,/\.review-patient-tags\{[^}]*flex-wrap:wrap[^}]*max-height:34px/);
+ assert.match(css,/\.review-patient-top strong\{[^}]*font-size:14px/);assert.match(css,/\.review-patient-tags \.badge\{[^}]*font-size:11px/);
  assert.match(css,/--review-patient-width:clamp\(184px,var\(--review-patient-content-width,184px\),248px\)/);
  assert.doesNotMatch(css,/--review-patient-width:\d+px/,"a fixed responsive width replaced the fitted patient rail");
  assert.match(css,/:root\[data-density\] \.review-patients\.is-virtual \.patient-select/,"compact density can override the fixed row spacing");
+}
+
+// Deterministic flex geometry lets these tests exercise the production fitting
+// decisions; actual font widths, wrap positions and clipping are browser QA.
+function mockTagWrapping(s,initialWidth=150,tagWidth=64){
+ let width=initialWidth;
+ const original=s.context.node;
+ s.context.node=(tag,text,classes)=>{
+  const element=original(tag,text,classes);
+  if(element.classList.contains("review-patient-tags"))Object.defineProperty(element,"clientWidth",{get:()=>width});
+  return element;
+ };
+ Object.defineProperty(Object.getPrototypeOf(s.node("span")),"offsetTop",{get(){
+  const line=this.parentElement;if(!line?.classList.contains("review-patient-tags"))return 0;
+  let used=0,top=7;
+  for(const item of line.children){
+   if(item.hidden)continue;
+   const natural=item.classList.contains("badge")?tagWidth:18+7*Math.max(1,item.textContent.length-1),size=Math.min(width,natural);
+   if(used&&used+3+size>width){used=0;top+=18;}
+   if(item===this)return top;
+   used+=(used?3:0)+size;
+  }
+  return 0;
+ }});
+ return {resize:value=>{width=value;},fit:()=>s.context.fitReviewPatientTags(s.$("#reviewPatients"))};
+}
+
+async function twoLineTags(){
+ const s=setup(),c=s.context,$=s.$,layout=mockTagWrapping(s),patient=s.all[0];
+ patient.auto_tags=Array.from({length:10},(_,index)=>({category:"TAG"+index,category_name:"合成標記"+index}));patient.manual_tags=[{name:"合成手動甲"},{name:"合成手動乙"}];
+ const current=()=>s.rows()[0],line=()=>current().querySelector(".review-patient-tags"),more=()=>line().querySelector(".review-patient-tags-more");
+ const visible=()=>line().querySelectorAll(".badge").filter(tag=>!tag.hidden);
+ function assertFit(expected){
+  assert.equal(visible().length,expected);
+  if(expected<12){
+   assert.equal(more().hidden,false);assert.equal(more().textContent,"+"+(12-expected));assert.match(more().getAttribute("aria-label"),new RegExp("查看全部 12 個 TAG"));
+   assert.ok(new Set([...visible(),more()].map(item=>item.offsetTop)).size<=2,"overflow control created a third physical TAG row");
+  }else assert.equal(more().hidden,true,"all tags fit but an overflow action remained visible");
+ }
+ await s.ui.load();assertFit(3);
+ layout.resize(248);layout.fit();assertFit(6);
+ layout.resize(1000);layout.fit();assertFit(12);
+ layout.resize(130);layout.fit();assertFit(2);
+ const selected=c.reviewPatient,checked=current().querySelector(".review-handoff-check").checked,reads=s.calls.length,dialogs=[];
+ c.dialog=id=>dialogs.push(id);c.setPatientDialogContext=(...values)=>dialogs.push(values);
+ assert.match(more().title,/合成標記9/);assert.match(more().title,/手動 · 合成手動乙/);
+ await more().run();
+ assert.equal($("#dataTitle").textContent,"病人 TAG");assert.equal($("#dataDialog").dataset.view,"review-tags");
+ assert.deepEqual(dialogs,["dataDialog",["dataDialog","P1"]]);
+ assert.deepEqual($("#dataContent").querySelectorAll(".badge").map(item=>item.textContent),[...patient.auto_tags.map(tag=>tag.category_name),"手動 · 合成手動甲","手動 · 合成手動乙"]);
+ assert.equal(c.reviewPatient,selected,"viewing all TAGs changed the selected SOAP");assert.equal(current().querySelector(".review-handoff-check").checked,checked);
+ assert.equal(s.calls.length,reads,"viewing already local TAGs issued a request");
+ more().focus();const oldMore=more();patient.name="合成病人名稱更新";s.setTaskRevision(2);await s.ui.load();
+ assert.notEqual(more(),oldMore);assertFit(2);assert.equal(c.document.activeElement,more(),"patient revision moved overflow focus to the SOAP select button");
+ // Hiding a focused native button blurs it even if fitting immediately shows it
+ // again. Model that browser behavior so a width change must restore focus.
+ const overflow=more();let hidden=overflow.hidden;
+ Object.defineProperty(overflow,"hidden",{get:()=>hidden,set:value=>{hidden=value;if(value&&c.document.activeElement===overflow)c.document.activeElement=null;}});
+ layout.resize(150);layout.fit();assertFit(3);
+ assert.equal(c.document.activeElement,overflow,"refitting an existing overflow button lost keyboard focus while measuring");
+ layout.resize(1000);layout.fit();assertFit(12);
+ assert.equal(c.document.activeElement,current().querySelector(".patient-select"),"an all-fitting TAG row left focus on the now-hidden overflow button");
+ layout.resize(130);layout.fit();assertFit(2);more().focus();const beforeRefresh=more();
+ layout.resize(1000);patient.name="合成病人名稱再次更新";s.setTaskRevision(3);await s.ui.load();
+ assert.notEqual(more(),beforeRefresh);assertFit(12);
+ assert.equal(c.document.activeElement,current().querySelector(".patient-select"),"a refreshed all-fitting TAG row focused its hidden overflow action");
 }
 
 async function adaptiveWidth(){
@@ -375,4 +444,4 @@ async function prefetchCancellationAndSingleLane(){
  c.page="patients";ui.visibility();
 }
 
-(async()=>{await continuousWindow();await compactRailContract();await adaptiveWidth();await measuredWindows();await persistentHeaderAndAttention();await initialResultLayout();await focusSelectionAndNavigation();await anchorAndOverlayRevision();await changingCollectionDuringScroll();await racingReads();await sharedReadsAndBoundedMemory();await nearbyLocalPrefetch();await prefetchCompletenessAndRevision();await prefetchCancellationAndSingleLane();localReadContract();process.stdout.write("Review continuous list: measured row heights, stable MRN and End anchors, bounded DOM/cache, and local-only prefetch passed\n");})().catch(error=>{console.error(error);process.exitCode=1;});
+(async()=>{await continuousWindow();await compactRailContract();await twoLineTags();await adaptiveWidth();await measuredWindows();await persistentHeaderAndAttention();await initialResultLayout();await focusSelectionAndNavigation();await anchorAndOverlayRevision();await changingCollectionDuringScroll();await racingReads();await sharedReadsAndBoundedMemory();await nearbyLocalPrefetch();await prefetchCompletenessAndRevision();await prefetchCancellationAndSingleLane();localReadContract();process.stdout.write("Review continuous list: two-line TAG fitting and overflow focus, measured row heights, stable MRN and End anchors, bounded DOM/cache, and local-only prefetch passed\n");})().catch(error=>{console.error(error);process.exitCode=1;});

@@ -408,7 +408,7 @@ function renderReviewHeader(value){
 async function loadReview(options){return window.ReviewPaging.load(options);}
 function renderReviewPatients(values,viewport=null){
  const patients=$("#reviewPatients"),scroll=viewport?.scrollTop??patients.scrollTop,focused=document.activeElement;
- const focusMrn=focused?.dataset?.mrn||focused?.closest?.(".review-patient-row")?.dataset.mrn,focusCheck=focused?.className?.includes("review-handoff-check");
+ const focusMrn=focused?.dataset?.mrn||focused?.closest?.(".review-patient-row")?.dataset.mrn,focusSelector=focused?.classList?.contains("review-handoff-check")?".review-handoff-check":focused?.classList?.contains("review-patient-tags-more")?".review-patient-tags-more":".patient-select";
  const existing=new Map([...patients.children].filter(row=>row.dataset.mrn).map(row=>[row.dataset.mrn,row])),rows=[];
  patients.classList.toggle("is-virtual",!!viewport);
  window.ReviewHandoff?.updatePatients(values);
@@ -427,18 +427,24 @@ function renderReviewPatients(values,viewport=null){
    button.dataset.mrn=p.mrn;button.title=[p.name||p.mrn,p.mrn,"掛號序號："+(sequenceNo||"未提供"),attention,...dates,...tags.map(tag=>tag.category_name||tag.category),...(p.manual_tags||[]).map(tag=>tag.name||tag.category_name||tag.category||tag)].filter(Boolean).join(" · ");button.setAttribute("aria-label",button.title);badge.title="掛號序號："+(sequenceNo||"未提供");const name=node("strong",p.name||p.mrn);name.title=p.name||p.mrn;heading.append(name,badge);
    button.append(heading,node("span",[p.mrn,attention].filter(Boolean).join(" · "),"caption review-patient-id"+(["error","failed","partial"].includes(p.status)?" is-error":"")));
    if(dates.length){const datesLabel=node("span",dates.join("、"),"caption review-patient-dates");datesLabel.title=dates.join("、");button.append(datesLabel);}
-   if(viewport){
-    const manualTags=p.manual_tags||[],tagCount=tags.length+manualTags.length,tagLimit=8;
-    if(tagCount){
-     const tagLine=node("span",undefined,"review-patient-tags");
-     tagLine.append(badges(tags.slice(0,tagLimit)),badges(manualTags.slice(0,Math.max(0,tagLimit-tags.length)),true));
-     if(tagCount>tagLimit)tagLine.append(node("span","+"+(tagCount-tagLimit),"caption"));
-     tagLine.title=button.title;button.append(tagLine);
-    }
-   }else button.append(badges(tags),badges(p.manual_tags,true));
+   if(!viewport)button.append(badges(tags),badges(p.manual_tags,true));
    row.append(control,button);
+   if(viewport){
+    const tagLine=node("div",undefined,"review-patient-tags"),allTags=[...badges(tags).children,...badges(p.manual_tags,true).children];
+    if(allTags.length){
+     const title="全部 TAG（"+allTags.length+"）\n"+allTags.map(tag=>tag.textContent).join("\n");
+     const more=btn("",()=>{
+      $("#dataTitle").textContent="病人 TAG";
+      const content=node("div",undefined,"review-patient-all-tags");content.append(badges(tags),badges(p.manual_tags,true));
+      $("#dataContent").replaceChildren(content);dialog("dataDialog");$("#dataDialog").dataset.view="review-tags";setPatientDialogContext("dataDialog",p.mrn);
+     },"review-patient-tags-more");
+     more.title=title;more.setAttribute("aria-haspopup","dialog");more.hidden=true;
+     tagLine.title=title;tagLine.append(...allTags,more);row.append(tagLine);
+    }
+   }
   }
   row.querySelector(".patient-select").classList.toggle("active",p.mrn===reviewPatient);
+  row.classList.toggle("is-selected",p.mrn===reviewPatient);
   const checkbox=row.querySelector(".review-handoff-check");checkbox.checked=!!window.ReviewHandoff?.has(p.mrn);checkbox.disabled=!!root.read_only;
   if(viewport){const index=viewport.positions[p.mrn];row.dataset.reviewIndex=String(index);row.style.position="";row.style.top="";row.setAttribute("role","listitem");row.setAttribute("aria-posinset",String(index+1));row.setAttribute("aria-setsize",String(viewport.total));}
   rows.push(row);
@@ -459,7 +465,30 @@ function renderReviewPatients(values,viewport=null){
  for(const child of [...patients.children])if(!rows.includes(child))child.remove();
  for(const [index,row] of rows.entries())if(patients.children[index]!==row){const anchor=patients.children[index]||null;if(patients.moveBefore&&row.isConnected)patients.moveBefore(row,anchor);else patients.insertBefore(row,anchor);}
  if(!values.length&&(!viewport||!viewport.total))patients.append(empty("沒有符合的病人。"));patients.scrollTop=scroll;
- if(focusMrn&&!patients.contains(focused))rows.find(row=>row.dataset.mrn===focusMrn)?.querySelector(focusCheck?".review-handoff-check":".patient-select")?.focus({preventScroll:true});
+ if(viewport)fitReviewPatientTags(patients);
+ if(focusMrn&&!patients.contains(focused)){const row=rows.find(row=>row.dataset.mrn===focusMrn),target=row?.querySelector(focusSelector);(target&&!target.hidden?target:row?.querySelector(".patient-select"))?.focus({preventScroll:true});}
+}
+function fitReviewPatientTags(rail){
+ for(const line of rail.querySelectorAll(".review-patient-tags")){
+  const width=line.clientWidth;if(!width||line.dataset.fittedWidth===String(width))continue;
+  const tags=[...line.querySelectorAll(".badge")],more=line.querySelector(".review-patient-tags-more");
+  // Measure real wrapped rows, including the space needed by the overflow button.
+  const wasFocused=document.activeElement===more;
+  for(const tag of tags)tag.hidden=false;more.hidden=true;
+  const first=tags[0].offsetTop,second=tags.find(tag=>tag.offsetTop>first+1)?.offsetTop;
+  let count=second===undefined?tags.length:tags.findIndex(tag=>tag.offsetTop>second+1);
+  if(count<0)count=tags.length;
+  if(count<tags.length){
+   for(const tag of tags.slice(count))tag.hidden=true;more.hidden=false;
+   do{
+    more.textContent="+"+(tags.length-count);more.setAttribute("aria-label","另有 "+(tags.length-count)+" 個 TAG，查看全部 "+tags.length+" 個 TAG");
+    if(more.offsetTop<=second+1||!count)break;
+    tags[--count].hidden=true;
+   }while(true);
+  }
+  line.dataset.fittedWidth=String(width);
+  if(wasFocused)(more.hidden?line.closest(".review-patient-row").querySelector(".patient-select"):more).focus({preventScroll:true});
+ }
 }
 function soapNode(record){return SOAPView.create(record);}
 async function selectReviewPatient(mrn){return window.ReviewPaging.select(mrn);}
