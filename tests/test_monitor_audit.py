@@ -8,9 +8,12 @@ import test_followup_earnings as baseline
 
 from vghks_bot.analysis_fetch import clean
 from vghks_bot.selftest_bot import wait_task
+from vghks_bot.settings import timestamp
 
 
 class MonitorAuditTests(unittest.TestCase):
+    # Freeze the response clock in overlapping-read cases: Windows may give
+    # successive reads the same wall timestamp even when formatted with micros.
     setUp = baseline.FollowUpTests.setUp
     tearDown = baseline.FollowUpTests.tearDown
     task = baseline.FollowUpTests.task
@@ -33,7 +36,8 @@ class MonitorAuditTests(unittest.TestCase):
             case = original(ref)
             return replace(case, verify_code="1", fields={**case.fields, "VerifyCode": "1"})
 
-        with patch("vghks_bot.approvals.clean", side_effect=delayed), patch.object(
+        with patch("vghks_bot.bot_gateway.timestamp", return_value=timestamp()), patch(
+                "vghks_bot.approvals.clean", side_effect=delayed), patch.object(
                 self.work.gateway.connection.reviews, "get_case", approved):
             key = self.work.review.start({"kind": "approval_search", "force": True})["task_id"]
             try:
@@ -75,7 +79,8 @@ class MonitorAuditTests(unittest.TestCase):
             return clean(value)
 
         values = {"kind": "approval_case", "apply_seq": "1001", "force": True}
-        with patch("vghks_bot.approvals.clean", side_effect=delayed), patch.object(
+        with patch("vghks_bot.bot_gateway.timestamp", return_value=timestamp()), patch(
+                "vghks_bot.approvals.clean", side_effect=delayed), patch.object(
                 self.work.gateway.connection.reviews, "get_case", changing):
             key = self.work.review.start(values)["task_id"]
             try:
@@ -112,7 +117,8 @@ class MonitorAuditTests(unittest.TestCase):
                 release.wait(5)
             return clean(value)
 
-        with patch("vghks_bot.approvals.clean", side_effect=delayed), patch.object(
+        with patch("vghks_bot.bot_gateway.timestamp", return_value=timestamp()), patch(
+                "vghks_bot.approvals.clean", side_effect=delayed), patch.object(
                 self.work.gateway.connection.reviews, "get_cases", changing):
             key = self.work.review.start({"kind": "approval_search", "force": True})["task_id"]
             try:

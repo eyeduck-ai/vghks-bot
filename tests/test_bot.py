@@ -4,7 +4,7 @@ import tempfile
 import threading
 import time
 import unittest
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -515,6 +515,43 @@ class BotTests(unittest.TestCase):
 
 
 class GatewayTests(unittest.TestCase):
+    def test_response_timestamps_remain_ordered_per_account_across_clock_changes(self):
+        gate = NetworkGate()
+        left, right = (AccountGateway(BotSyntheticSDK, gate) for _ in range(2))
+        fixed = "2030-01-01T12:00:00.000000+08:00"
+        observed = []
+        try:
+            left.login(Settings(username="TEST", password="fake"))
+            right.login(Settings(username="OTHER", password="fake"))
+            with patch("vghks_bot.bot_gateway.timestamp", return_value=fixed):
+                for operation in (
+                    lambda: left.invoke("opd", "get_doctor_patients", "TEST", today()),
+                    lambda: left.invoke("opd", "get_doctor_patients", "TEST", today()),
+                    lambda: left.invoke("patients", "get_demographics", "TEST001"),
+                    lambda: left.resolve_identity("A123456789"),
+                ):
+                    operation()
+                    observed.append(left.response_at())
+                right.invoke("opd", "get_doctor_patients", "OTHER", today())
+                self.assertEqual(right.response_at(), fixed, "another account inherited the logical clock")
+                left.close()
+                left.login(Settings(username="TEST", password="fake"))
+                left.invoke("opd", "get_doctor_patients", "TEST", today())
+                observed.append(left.response_at())
+            with patch("vghks_bot.bot_gateway.timestamp", return_value="2029-12-31T12:00:00.000000+08:00"):
+                left.invoke("opd", "get_doctor_patients", "TEST", today())
+                observed.append(left.response_at())
+            base = datetime.fromisoformat(fixed)
+            self.assertEqual(observed, [(base + timedelta(microseconds=index)).isoformat(timespec="microseconds")
+                                        for index in range(len(observed))])
+            later = "2030-01-01T12:00:01.000000+08:00"
+            with patch("vghks_bot.bot_gateway.timestamp", return_value=later):
+                left.invoke("opd", "get_doctor_patients", "TEST", today())
+                self.assertEqual(left.response_at(), later, "forward wall time was not retained")
+        finally:
+            left.close()
+            right.close()
+
     def test_network_failure_never_replays_login_after_transport_retry(self):
         logins_before = sum(call[1] == "login" for call in BotSyntheticSDK.calls)
         gateway = AccountGateway(BotSyntheticSDK, NetworkGate())

@@ -4,6 +4,7 @@ from __future__ import annotations
 import threading
 import uuid
 from contextlib import contextmanager
+from datetime import datetime, timedelta
 from time import monotonic
 from types import SimpleNamespace
 
@@ -72,6 +73,7 @@ class AccountGateway:
         self.condition = threading.Condition()
         self.foreground_waiters = 0
         self.local = threading.local()
+        self._last_response_at = ""
         self.connection = self.manager = self.settings = None
         self.online = False
         self.context = None
@@ -438,7 +440,9 @@ class AccountGateway:
             self.require_online()
             if service == "patients" and method == "get_demographics":
                 self.local.diagnostic_emitted = False
-                return get_demographics(self, *args, **kwargs)
+                value = get_demographics(self, *args, **kwargs)
+                self._mark_response()
+                return value
             for attempt in range(2):
                 self.local.diagnostic_emitted = False
                 try:
@@ -455,7 +459,7 @@ class AccountGateway:
                     if self._failed_readiness(service, method, value, args, kwargs):
                         self.observe_auth(value)
                         raise readiness_error(value)
-                    self.local.response_at = timestamp()
+                    self._mark_response()
                     if service == "records" and method in {"get_visit_cases", "find_visit_cases"}:
                         self.context = args[0] if args else None
                     elif service in {"records", "orders"} and args and isinstance(args[0], str):
@@ -489,6 +493,14 @@ class AccountGateway:
                     self.record_event(service, method, "error", exc)
                     raise
 
+    def _mark_response(self):
+        """Order serialized responses even when the wall clock ties or rolls back."""
+        observed = timestamp()
+        if self._last_response_at and observed <= self._last_response_at:
+            observed = (datetime.fromisoformat(self._last_response_at) + timedelta(microseconds=1)).isoformat(
+                timespec="microseconds")
+        self._last_response_at = self.local.response_at = observed
+
     def response_at(self):
         return self.local.response_at
 
@@ -506,6 +518,7 @@ class AccountGateway:
                 self.local.diagnostic_emitted = False
                 try:
                     mrn = self._resolve_identity(identifier)
+                    self._mark_response()
                     self.context = mrn
                     self.record_result("patients", "resolve_identity", mrn)
                     return mrn
