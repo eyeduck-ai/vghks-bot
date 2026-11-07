@@ -42,6 +42,8 @@ def main():
     REPORTS.mkdir(parents=True, exist_ok=True)
     os.environ["PYTHONUTF8"] = "1"
     python = sys.executable
+    if not (args.tests_only or args.source_only or args.build_only):
+        run([python, "tools/check_workflows.py", "--self-test"])
     if args.build_only:
         run([python, "tools/verify_repository.py"])
         run([python, "-m", "pip", "check"])

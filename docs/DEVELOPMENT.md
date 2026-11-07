@@ -58,6 +58,9 @@ py -3.11 -m venv .venv
 ## 測試與瀏覽器驗收
 
 ```powershell
+# 首次下載固定版本 actionlint，核對 SHA-256 並驗證有效／無效工作流程。
+.venv/Scripts/python.exe tools/check_workflows.py --install --self-test
+
 # 來源、依賴、Ruff、JavaScript 與固定 GAS 契約。
 .venv/Scripts/python.exe tools/run_checks.py --checks-only --gas-repo .build/gas-contract
 
@@ -74,6 +77,8 @@ py -3.11 -m venv .venv
 
 fixture 印出本機 URL；結束測試服務後清除其暫存資料庫。`--lookup-failures --lookup-delay 5` 可驗收慢病人查核，`--registrations` 可驗收掛號。工具旗標與個別模式以 `--help` 為準。
 
+非同步測試共用 `tests/async_helpers.py`，以單調時計的共同期限等待事件、任務及執行緒。測試由明確事件控制先後順序，`finally` 釋放阻擋並檢查收尾；逾時只作故障保護，會提供等待標籤、安全狀態及相關執行緒堆疊，不輸出區域變數。診斷回呼只讀不會阻塞的事件／計數，避免在逾時後再等待同一把鎖。
+
 回歸重點包括帳號／病人身分拒收、登入恢復與不可重送操作、部分失敗及續跑、缺檔補抓、force 分流、同秒 revision、WAL／交易回復與延遲回應。瀏覽器須實際驗收桌面／窄畫面、鍵盤／觸控、TAG 兩行收合與數量、SOAP 捲動錨點、模態比較及漸進附件；圖片、PDF 節點與勾選不因更新重建。
 
 所有公開測試只使用合成資料、一次性金鑰及暫存資料庫。院內權限／真實回應、Google 分享／保護範圍及實際寫入須另在授權環境及測試副本驗收；合成測試不代表取得這些權限。日曆網路操作與常駐服務由獨立 [vghks-sheet2cal](https://github.com/eyeduck-ai/vghks-sheet2cal) 驗證。
@@ -86,7 +91,9 @@ fixture 印出本機 URL；結束測試服務後清除其暫存資料庫。`--lo
 .venv/Scripts/python.exe tools/run_checks.py --build --gas-repo .build/gas-contract
 ```
 
-完整流程：來源／版本／安裝 commit → pip／Ruff／JS → 82 項共用 GAS 契約 → 完整測試 → 來源自測 → PyInstaller → EXE 自測 → 內嵌靜態檔／空白憑證／授權核對 → ZIP／SHA-256。`tools/build_exe.py` 單獨打包不等於完整通過。建置只納入 Git 索引中的靜態檔與文件，新公開檔案須先加入索引。
+完整流程：actionlint → 來源／版本／安裝 commit → pip／Ruff／JS → 82 項共用 GAS 契約 → 完整測試 → 來源自測 → PyInstaller → EXE 自測 → 內嵌靜態檔／空白憑證／授權核對 → ZIP／SHA-256。`tools/build_exe.py` 單獨打包不等於完整通過。建置只納入 Git 索引中的靜態檔與文件，新公開檔案須先加入索引。
+
+actionlint 固定為 1.7.12，下載壓縮檔及解出的工具均核對固定 SHA-256，快取位於 `.build/`。`build.ps1` 與 CI 來源驗證工作在安裝依賴前完成預先檢查；一般 `run_checks.py --checks-only` 使用已驗證快取離線檢查。`--self-test` 實際驗證正確 YAML、錯誤 YAML 及錯誤表達式必須得到預期結果；診斷寫入 `.build/ci/actionlint.json`，CI 即使失敗也保留。
 
 | 觸發 | 門檻與產物 |
 | --- | --- |

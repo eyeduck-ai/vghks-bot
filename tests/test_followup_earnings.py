@@ -10,13 +10,15 @@ from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
+from async_helpers import HOLD_TIMEOUT, join_threads, wait_event
+from async_helpers import wait_workspace_task as wait_task
 from vghks_sdk import ConfigurationError
 
 from vghks_bot.analysis_fetch import clean
 from vghks_bot.approval_tracker import later
 from vghks_bot.bot import BotApplication
 from vghks_bot.earnings_parser import month_value, normalize_document, numeric_cell
-from vghks_bot.selftest_bot import BotSyntheticSDK, wait_task
+from vghks_bot.selftest_bot import BotSyntheticSDK
 from vghks_bot.settings import Settings, timestamp
 
 
@@ -36,11 +38,7 @@ class FollowUpTests(unittest.TestCase):
         self.temp.cleanup()
 
     def task(self, **values):
-        task = wait_task(self.work, self.work.review.start(values)["task_id"])
-        self.work.idle.wait(3)
-        for thread in list(self.work.review.threads.values()):
-            thread.join(3)
-        return task
+        return wait_task(self.work, self.work.review.start(values)["task_id"])
 
     def query(self):
         return self.task(kind="approval_search")
@@ -147,11 +145,11 @@ class FollowUpTests(unittest.TestCase):
         def block(case):
             if case.mrn == "TEST002":
                 entered.set()
-                release.wait(4)
+                wait_event(release, label=self.id() + ": release SOAP response", timeout=HOLD_TIMEOUT)
         with patch.object(BotSyntheticSDK, "on_soap", block):
             key = self.work.review.start({"set_id": group["id"]})["task_id"]
             try:
-                self.assertTrue(entered.wait(3))
+                wait_event(entered, label=self.id() + ": SOAP response entered")
                 live = self.work.review.task(key)
                 self.assertEqual(live["progress"]["percent"], 50)
                 self.assertEqual(live["done"], 1)
@@ -177,12 +175,12 @@ class FollowUpTests(unittest.TestCase):
         original = self.work.gateway.connection.reviews.get_cases
         def slow(ref):
             entered.set()
-            release.wait(4)
+            wait_event(release, label=self.id() + ": release review response", timeout=HOLD_TIMEOUT)
             return original(ref)
         with patch.object(self.work.gateway.connection.reviews, "get_cases", slow):
             self.app.follow_up_tick()
             try:
-                self.assertTrue(entered.wait(3))
+                wait_event(entered, label=self.id() + ": review response entered")
                 self.app.follow_up_tick()
                 tasks = [t for t in self.db.all("task") if t["kind"] == "approval_sync"]
                 self.assertEqual(len(tasks), 1)
@@ -198,17 +196,17 @@ class FollowUpTests(unittest.TestCase):
         def snapshot():
             with self.app.lock:
                 entered.set()
-                release.wait(4)
+                wait_event(release, label=self.id() + ": release database lock", timeout=HOLD_TIMEOUT)
         thread = threading.Thread(target=snapshot)
         thread.start()
         try:
-            self.assertTrue(entered.wait(2))
+            wait_event(entered, label=self.id() + ": database lock acquired", threads=(thread,))
             with patch.object(self.tracker, "schedule") as schedule:
                 self.app.follow_up_tick()
                 schedule.assert_not_called()
         finally:
             release.set()
-            thread.join(3)
+            join_threads((thread,), label="database lock holder cleanup", preserve_error=True)
 
 
 class EarningsArchiveTests(unittest.TestCase):
@@ -434,12 +432,12 @@ class EarningsArchiveTests(unittest.TestCase):
         def slow(sdk, credentials, kind):
             if kind == "payroll":
                 entered.set()
-                release.wait(4)
+                wait_event(release, label=self.id() + ": release month catalog", timeout=HOLD_TIMEOUT)
             return original(sdk, credentials, kind)
         with patch.object(BotSyntheticSDK, "earnings_open", slow):
             key = self.work.review.start({"kind": "earnings_capture", "all_available": True})["task_id"]
             try:
-                self.assertTrue(entered.wait(3))
+                wait_event(entered, label=self.id() + ": month catalog entered")
                 task = self.work.review.task(key)
                 self.assertEqual(task["progress"]["done"], 2)
                 self.assertIsNone(task["progress"]["percent"])
@@ -469,12 +467,12 @@ class EarningsArchiveTests(unittest.TestCase):
         def slow(context, period):
             if period == "11509":
                 entered.set()
-                release.wait(4)
+                wait_event(release, label=self.id() + ": release salary report", timeout=HOLD_TIMEOUT)
             return original(context, period)
         with patch.object(self.work.gateway.connection.earnings, "get_report", slow):
             key = self.work.review.start({"kind": "earnings_capture", "all_available": True})["task_id"]
             try:
-                self.assertTrue(entered.wait(3))
+                wait_event(entered, label=self.id() + ": salary report entered")
                 self.work.review.stop(key)
             finally:
                 release.set()

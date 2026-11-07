@@ -6,12 +6,15 @@ import json
 import tempfile
 import threading
 import unittest
+from contextlib import nullcontext
 from dataclasses import replace
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from async_helpers import drain_workspace, wait_event
+from async_helpers import wait_workspace_task as wait_task
 from vghks_sdk import AuthenticationError, ParseError, VisitCase
 from vghks_sdk.models import (
     BinaryAsset,
@@ -35,8 +38,8 @@ from vghks_bot.bot import BotApplication
 from vghks_bot.report_cache import result_complete
 from vghks_bot.scanned_records import scan_id
 from vghks_bot.scanner import Cancelled
-from vghks_bot.selftest_bot import BotSyntheticSDK, wait_task
-from vghks_bot.settings import Settings, today
+from vghks_bot.selftest_bot import BotSyntheticSDK
+from vghks_bot.settings import Settings, timestamp, today
 
 MRN = "TEST001"
 ALIAS = "ALIAS001"
@@ -211,7 +214,7 @@ class ReviewHistoryTests(unittest.TestCase):
         HistorySDK.calls.clear()
         run_id = self.work.analysis.start({"cohort_id": cohort["id"],
                                            "modules": ["cataract"]})["run_ids"][0]
-        self.assertTrue(self.work.idle.wait(15))
+        drain_workspace(self.work, label="analysis queue finished")
         run = self.work.analysis.store.document("analysis_runs", run_id)
         self.assertEqual(run["status"], "completed", run["issues"])
         self.assertFalse(any(call[1] in {"order-detail", "order-report", "pdf", "image"}
@@ -230,7 +233,7 @@ class ReviewHistoryTests(unittest.TestCase):
         HistorySDK.calls.clear()
         refreshed = self.work.analysis.start({"cohort_id": cohort["id"],
                                                "modules": ["cataract"], "refresh": True})["run_ids"][0]
-        self.assertTrue(self.work.idle.wait(15))
+        drain_workspace(self.work, label="analysis queue finished")
         self.assertEqual(self.work.analysis.store.document("analysis_runs", refreshed)["status"], "completed")
         soap_cases = [call[3] for call in HistorySDK.calls if call[1] == "soap"]
         self.assertEqual(soap_cases[:2], ["EMPTY", "ONE"])
@@ -239,7 +242,7 @@ class ReviewHistoryTests(unittest.TestCase):
         HistorySDK.calls.clear()
         selected_run = self.work.analysis.start({"cohort_id": cohort["id"],
                                                  "modules": ["cataract"], "mrn": MRN})["run_ids"][0]
-        self.assertTrue(self.work.idle.wait(15))
+        drain_workspace(self.work, label="analysis queue finished")
         self.assertEqual(self.work.analysis.store.document("analysis_runs", selected_run)["status"], "completed")
         self.assertTrue(any(call[1] == "pdf" for call in HistorySDK.calls))
         self.assertTrue(any(call[1] == "image" for call in HistorySDK.calls))
@@ -256,7 +259,7 @@ class ReviewHistoryTests(unittest.TestCase):
         HistorySDK.calls.clear()
         cached_run = self.work.analysis.start({"cohort_id": cohort["id"],
                                                "modules": ["cataract"], "mrn": MRN})["run_ids"][0]
-        self.assertTrue(self.work.idle.wait(15))
+        drain_workspace(self.work, label="analysis queue finished")
         self.assertEqual(self.work.analysis.store.document("analysis_runs", cached_run)["status"], "completed")
         self.assertFalse(any(call[1] in {"soap", "orders-history", "order-detail", "order-report", "pdf", "image"}
                              for call in HistorySDK.calls), HistorySDK.calls)
@@ -287,7 +290,7 @@ class ReviewHistoryTests(unittest.TestCase):
         HistorySDK.calls.clear()
         run_id = self.work.analysis.start({"cohort_id": cohort["id"], "modules": ["cataract"],
                                            "mrn": MRN, "refresh": True})["run_ids"][0]
-        self.assertTrue(self.work.idle.wait(15))
+        drain_workspace(self.work, label="analysis queue finished")
         run = self.work.analysis.store.document("analysis_runs", run_id)
         self.assertEqual(run["status"], "completed", run["issues"])
         stages = [call[1] for call in HistorySDK.calls]
@@ -311,7 +314,7 @@ class ReviewHistoryTests(unittest.TestCase):
         HistorySDK.calls.clear()
         run_id = self.work.analysis.start({"cohort_id": cohort["id"], "modules": ["cataract"],
                                            "mrn": MRN})["run_ids"][0]
-        self.assertTrue(self.work.idle.wait(15))
+        drain_workspace(self.work, label="analysis queue finished")
         self.assertEqual(self.work.analysis.store.document("analysis_runs", run_id)["status"], "completed")
         # The review stored the readable encounter. A newer empty encounter may
         # still need one check before the collector falls back to that record.
@@ -337,7 +340,7 @@ class ReviewHistoryTests(unittest.TestCase):
             self.work.analysis.start({"cohort_id": cohort["id"], "modules": ["retina"], "mrn": MRN})
         run_id = self.work.analysis.start({"cohort_id": cohort["id"], "modules": ["cataract"],
                                            "mrn": MRN})["run_ids"][0]
-        self.assertTrue(self.work.idle.wait(15))
+        drain_workspace(self.work, label="analysis queue finished")
         run = self.work.analysis.store.document("analysis_runs", run_id)
         self.assertEqual([member["mrn"] for member in run["members"]], [MRN])
         self.assertFalse(any("TEST002" in call for call in HistorySDK.calls))
@@ -429,14 +432,14 @@ class ReviewHistoryTests(unittest.TestCase):
         def query(mrn, options, **kwargs):
             if options.category == "OR":
                 waiting.set()
-                if not release.wait(5):
-                    raise AssertionError("test did not release query")
+                wait_event(release, label="second order category explicitly released", timeout=60)
             return original(mrn, options, **kwargs)
 
         with patch.object(self.work.gateway.connection.orders, "get_order_history", side_effect=query):
             task = self.work.review.start({"kind": "history", **self.request("orders")})
             try:
-                self.assertTrue(waiting.wait(5))
+                wait_event(waiting, label="second order category entered",
+                           state=lambda: {"operations": [call[1] for call in HistorySDK.calls]})
                 saved = self.history.read(self.request("orders"))
                 self.assertEqual(len(saved["data"]), 1)
                 self.assertFalse(saved["complete"])
@@ -596,8 +599,7 @@ class ReviewHistoryTests(unittest.TestCase):
         def download(image):
             if image.uid == "IMAGE2":
                 reached.set()
-                if not release.wait(10):
-                    raise AssertionError("synthetic second image was not released")
+                wait_event(release, label="second report image explicitly released", timeout=60)
             return BinaryAsset(original(image).content + image.uid.encode(), "image/png")
 
         with patch.object(orders, "get_pacs_study", return_value=PacsStudy(STUDY, (IMAGE, second))), \
@@ -605,9 +607,8 @@ class ReviewHistoryTests(unittest.TestCase):
             self.seed_non_image_report_branches()
             key = self.work.review.start({"kind": "history", **self.request("order_report", ref)})["task_id"]
             try:
-                if not reached.wait(10):
-                    self.fail(str({"task": self.work.review.db.task_summaries(key=key),
-                        "operations": [call[1] for call in HistorySDK.calls]}))
+                wait_event(reached, label="second report image entered",
+                           state=lambda: {"task_id": key, "operations": [call[1] for call in HistorySDK.calls]})
                 partial = self.history.read(self.request("order_report", ref))
                 task = self.work.review.task(key, summary=True)
                 self.assertFalse(partial["complete"])
@@ -649,29 +650,42 @@ class ReviewHistoryTests(unittest.TestCase):
         self.assertEqual(HistorySDK.calls, [])
 
     def test_report_cancel_saves_current_image_and_never_downloads_the_next(self):
+        self.assert_delayed_image_cancellation()
+
+    def test_delayed_image_cancellation_and_resume_remain_scoped_when_wall_clock_rolls_back(self):
+        self.assert_delayed_image_cancellation(clock_fault=True)
+
+    def assert_delayed_image_cancellation(self, *, clock_fault=False):
         self.fetch("orders")
         ref = self.history.read(self.request("orders"))["data"][0]["id"]
         second = replace(IMAGE, uid="IMAGE2")
         reached, release = threading.Event(), threading.Event()
         orders = self.work.gateway.connection.orders
         original, downloaded = orders.download_pacs_image, []
+        frozen = timestamp()
+        rolled_back = (datetime.fromisoformat(frozen) - timedelta(days=1)).isoformat(timespec="microseconds")
+        response_clock = patch("vghks_bot.bot_gateway.timestamp", return_value=frozen) if clock_fault else nullcontext()
 
         def download(image):
             downloaded.append(image.uid)
             reached.set()
-            if not release.wait(10):
-                raise AssertionError("synthetic image was not released")
-            return original(image)
+            wait_event(release, label="cancelled in-flight image explicitly released", timeout=60)
+            return BinaryAsset(original(image).content + image.uid.encode(), "image/png")
 
         with patch.object(orders, "get_pacs_study", return_value=PacsStudy(STUDY, (IMAGE, second))), \
-                patch.object(orders, "download_pacs_image", side_effect=download):
+                patch.object(orders, "download_pacs_image", side_effect=download), response_clock as clock:
             self.seed_non_image_report_branches()
             key = self.work.review.start({"kind": "history", **self.request("order_report", ref)})["task_id"]
             try:
-                if not reached.wait(10):
-                    self.fail(str({"task": self.work.review.db.task_summaries(key=key),
-                        "operations": [call[1] for call in HistorySDK.calls]}))
+                wait_event(reached, label="first report image entered before cancellation",
+                           state=lambda: {"task_id": key, "downloads": len(downloaded),
+                                          "operations": [call[1] for call in HistorySDK.calls]})
+                if clock_fault:
+                    # The SDK read returns after the clock moves backward.
+                    # All waiting still uses real monotonic deadlines.
+                    clock.return_value = rolled_back
                 self.work.review.stop(key)
+                self.assertEqual(downloaded, [IMAGE.uid], "cancellation started another image before release")
             finally:
                 release.set()
             self.assertEqual(wait_task(self.work, key)["status"], "paused")
@@ -682,10 +696,22 @@ class ReviewHistoryTests(unittest.TestCase):
         self.assertEqual(len(value["data"]["assets"]), 2)
         self.assertEqual([item["status"] for item in value["data"]["attachment_items"]], ["ready", "ready", "pending"])
         self.assertFalse(value["data"]["issues"], "cancellation was recorded as a failed clinical branch")
+        for asset in value["data"]["assets"]:
+            self.assertTrue(self.work.analysis.store.asset(asset["digest"])[0].is_file())
+            with self.work.store.library.connect() as db:
+                owners = {row[0] for row in db.execute(
+                    "SELECT DISTINCT mrn FROM analysis_asset_refs WHERE digest=?", (asset["digest"],))}
+            self.assertEqual(owners, {MRN}, "delayed attachment was saved under another patient or alias")
         HistorySDK.calls.clear()
-        with patch.object(orders, "get_pacs_study", return_value=PacsStudy(STUDY, (IMAGE, second))):
+        resume_clock = patch("vghks_bot.bot_gateway.timestamp", return_value=rolled_back) if clock_fault else nullcontext()
+        with patch.object(orders, "get_pacs_study", return_value=PacsStudy(STUDY, (IMAGE, second))), resume_clock:
             self.assertEqual(self.fetch("order_report", ref)["status"], "completed")
         self.assertEqual([call[1] for call in HistorySDK.calls], ["image"])
+        resumed = self.history.read(self.request("order_report", ref))
+        self.assertTrue(resumed["complete"])
+        self.assertEqual(len(resumed["data"]["assets"]), 3)
+        self.assertTrue({asset["digest"] for asset in value["data"]["assets"]}.issubset(
+            {asset["digest"] for asset in resumed["data"]["assets"]}), "resume discarded a verified in-flight file")
 
     def test_cancelled_branch_is_rethrown_instead_of_becoming_an_issue(self):
         self.fetch("orders")
@@ -709,14 +735,14 @@ class ReviewHistoryTests(unittest.TestCase):
 
         def failed_pdf(reference):
             reached.set()
-            if not release.wait(10):
-                raise AssertionError("synthetic PDF was not released")
+            wait_event(release, label="force-refresh PDF explicitly released", timeout=60)
             raise ValueError("synthetic new PDF failure")
 
         with patch.object(orders, "download_pdf", side_effect=failed_pdf):
             key = self.work.review.start({"kind": "history", **self.request("order_report", ref), "force": True})["task_id"]
             try:
-                self.assertTrue(reached.wait(10))
+                wait_event(reached, label="force-refresh PDF entered",
+                           state=lambda: {"task_id": key, "operations": [call[1] for call in HistorySDK.calls]})
                 refreshing = self.history.read(self.request("order_report", ref))
                 self.assertFalse(refreshing["complete"])
                 self.assertEqual({asset["digest"] for asset in refreshing["data"]["assets"]},
@@ -869,7 +895,7 @@ class ReviewHistoryTests(unittest.TestCase):
                                                  "name": "聯醫合成影像", "mrns": MRN})
         HistorySDK.cataract_order_name = "DBR, free charge"
         run_id = self.work.analysis.start({"cohort_id": cohort["id"], "modules": ["cataract"]})["run_ids"][0]
-        self.assertTrue(self.work.idle.wait(15))
+        drain_workspace(self.work, label="analysis queue finished")
         self.assertEqual(self.work.analysis.store.document("analysis_runs", run_id)["status"], "completed")
         order = self.work.analysis.results({"cohort_id": cohort["id"], "mrn": MRN, "module": "cataract"})["orders"][0]
         request = {"cohort_id": cohort["id"], "mrn": MRN, "resource": "order_report", "reference": order["id"]}

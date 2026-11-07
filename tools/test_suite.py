@@ -101,15 +101,39 @@ class Result(unittest.TextTestResult):
         self.test_started = time.monotonic()
         super().startTest(test)
 
+    def _diagnose(self, test, err):
+        """Keep the assertion and add safe thread locations before formatting."""
+        error = err[1]
+        if any(isinstance(value, str) and "Async wait failed:" in value for value in error.args):
+            return
+        if any("Async diagnostics:" in note for note in getattr(error, "__notes__", ()) if isinstance(note, str)):
+            return
+        try:
+            # Discovery adds tests/ to sys.path. Collection imports this module
+            # without discovery, so do not import test helpers at module scope.
+            from async_helpers import format_diagnostics
+
+            error.add_note(format_diagnostics(test.id(), state={"result": type(error).__name__}))
+        except Exception as diagnostic_error:
+            # Diagnostics cannot turn one assertion into a different failure.
+            try:
+                error.add_note("Async diagnostics unavailable: " + type(diagnostic_error).__name__)
+            except Exception:
+                pass
+
     def addFailure(self, test, err):
+        self._diagnose(test, err)
         super().addFailure(test, err)
         print(f"FAIL: {test.id()}\n{self.failures[-1][1]}", flush=True)
 
     def addError(self, test, err):
+        self._diagnose(test, err)
         super().addError(test, err)
         print(f"ERROR: {test.id()}\n{self.errors[-1][1]}", flush=True)
 
     def addSubTest(self, test, subtest, err):
+        if err is not None:
+            self._diagnose(subtest, err)
         super().addSubTest(test, subtest, err)
         if err is not None:
             failure = issubclass(err[0], test.failureException)

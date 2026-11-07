@@ -27,6 +27,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.11'
+          architecture: x64
+          cache: pip
+          cache-dependency-path: requirements-build.lock.txt
+      - name: Check GitHub Actions workflows before installing dependencies
+        run: python tools/check_workflows.py --install --self-test
       - name: Read pinned GAS revision
         id: gas
         shell: pwsh
@@ -40,12 +48,6 @@ jobs:
           ref: ${{ steps.gas.outputs.revision }}
           path: .build/gas-contract
           persist-credentials: false
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
-        with:
-          python-version: '3.11'
-          architecture: x64
-          cache: pip
-          cache-dependency-path: requirements-build.lock.txt
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: '24'
@@ -53,12 +55,14 @@ jobs:
       - run: python tools/run_checks.py --checks-only --gas-repo .build/gas-contract
       - run: python tools/run_checks.py --source-only
       - name: Upload source self-test reports
+        if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: source-${{ github.sha }}
           overwrite: true
           path: |
             .build/ci/source-selftest.json
+            .build/ci/actionlint.json
           include-hidden-files: true
           retention-days: 14
           if-no-files-found: error
