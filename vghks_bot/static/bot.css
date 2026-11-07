@@ -266,7 +266,7 @@ button.panel-toggle.icon-button:hover{background:#dce8d7;border-color:#c4d4bd}
 @media(max-width:780px){.sidebar-account{max-width:320px}.review-page>.page-heading #reviewProgress{order:3;flex-basis:100%;max-width:none}}
 @media(prefers-reduced-motion:reduce){.sidebar-account>summary::before{transition:none}}
 .review-layout.patients-collapsed{grid-template-columns:minmax(0,1fr)}
-.review-layout{--review-patient-width:248px;grid-template-columns:var(--review-patient-width) minmax(0,1fr);position:relative}
+.review-layout{--review-patient-width:clamp(184px,var(--review-patient-content-width,184px),248px);grid-template-columns:var(--review-patient-width) minmax(0,1fr);position:relative}
 .review-layout.patients-collapsed{grid-template-columns:minmax(0,1fr)}
 #reviewPatientsToggle{position:absolute;z-index:4;left:calc(var(--review-patient-width) + 2px);top:11px;transform:none;width:18px;min-width:18px;height:22px;min-height:22px;flex:0 0 18px;padding:2px!important;border:1px solid var(--line)!important;border-radius:4px;background:var(--paper)!important;box-shadow:none}
 #reviewPatientsToggle .icon{width:10px;height:10px;flex-basis:10px}
@@ -361,7 +361,6 @@ body.review-result-compact .review-page .review-layout{flex:1;height:auto;max-he
  .review-layout #reviewPatientsToggle,.review-layout.patients-collapsed #reviewPatientsToggle{position:static;left:auto;top:auto;transform:none;align-self:center;justify-self:center;margin:0;z-index:1;width:18px;min-width:18px;height:24px;min-height:24px;flex:none}
  .review-layout.patients-collapsed .detail-meta{padding-left:0}
 }
-@media(min-width:781px) and (max-width:1150px){.review-layout{--review-patient-width:232px}}
 @media(min-width:781px) and (pointer:coarse){.review-layout{grid-template-columns:var(--review-patient-width) 24px minmax(0,1fr)}.review-layout.patients-collapsed{grid-template-columns:24px minmax(0,1fr)}.review-layout #reviewPatientsToggle,.review-layout.patients-collapsed #reviewPatientsToggle{width:22px;min-width:22px;height:30px;min-height:30px}}
 .review-patient-top{display:flex;align-items:baseline;justify-content:space-between;gap:4px;min-width:0}
 .review-patient-top strong{min-width:0;overflow-wrap:anywhere}
@@ -536,7 +535,7 @@ button.patient-chip .patient-chip-remove{flex:none;color:#738973;font-size:14px;
 .review-patients.is-virtual>.review-list-spacer{padding:0;margin:0;border:0;pointer-events:none}
 .review-patients.is-virtual>.review-patient-row{box-sizing:border-box;width:100%;min-height:var(--review-patient-row-estimate);flex:none}
 .review-patients.is-virtual .review-patient-check{box-sizing:border-box;width:24px;padding:5px 3px}
-:root[data-density] .review-patients.is-virtual .patient-select,.review-patients.is-virtual .patient-select{box-sizing:border-box;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,76px);grid-template-rows:16px 13px;gap:1px 6px;align-content:center;min-height:0;padding:4px 6px 4px 2px;overflow:hidden}
+:root[data-density] .review-patients.is-virtual .patient-select,.review-patients.is-virtual .patient-select{box-sizing:border-box;display:grid;grid-template-columns:minmax(0,1fr) fit-content(76px);grid-template-rows:16px 13px;gap:1px 6px;align-content:center;min-height:0;padding:4px 6px 4px 2px;overflow:hidden}
 .review-patients.is-virtual .review-patient-top{grid-column:1/-1;grid-row:1;display:flex;align-items:center;gap:6px;min-width:0;width:100%;height:16px;flex:none}
 .review-patients.is-virtual .review-patient-top strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;line-height:16px}
 .review-patients.is-virtual .review-sequence{display:inline-flex;flex:none;max-width:72px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:12px}
@@ -568,4 +567,17 @@ button.patient-chip .patient-chip-remove{flex:none;color:#738973;font-size:14px;
  .task-search #taskSummary{grid-column:1/-1;width:100%;margin-left:0;text-align:right}
  .task-search-filters>label{flex:1 1 130px}
  .task-note-tools{flex-basis:100%;margin-left:0;padding-left:0;border-left:0;justify-content:space-between}
+}
+
+/* The collapsed feature panel keeps one reachable restore control beside the workspace. */
+:root[data-density] .sidebar-toggle,.sidebar-toggle{display:inline-flex;align-items:center;justify-content:center;flex:none;width:28px;min-width:28px;min-height:28px;height:28px;padding:4px;background:var(--paper);border:1px solid #bdcdb5}
+.shell.sidebar-collapsed{grid-template-columns:32px minmax(0,1fr)}
+.sidebar-restore{position:sticky;top:0;align-self:start;height:100dvh;padding:10px 2px;background:#e8eee3;border-right:1px solid #d4dece}
+@media(max-width:780px){
+ .shell.sidebar-collapsed{display:block}
+ .sidebar-restore{z-index:5;height:auto;padding:4px 12px;border-right:0;border-bottom:1px solid #d4dece}
+}
+@media(pointer:coarse){
+ :root[data-density] .sidebar-toggle,.sidebar-toggle{width:44px;min-width:44px;min-height:44px;height:44px}
+ .shell.sidebar-collapsed{grid-template-columns:48px minmax(0,1fr)}
 }

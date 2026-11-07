@@ -117,8 +117,26 @@ async function compactRailContract(){
  assert.equal(button.title,label,"ellipsis removed complete patient metadata from the tooltip");
  const css=fs.readFileSync("vghks_bot/static/bot.css","utf8");
  assert.match(css,/--review-patient-row-estimate:40px/);assert.match(css,/grid-template-rows:16px 13px/);assert.match(css,/\.review-patient-tags\{[^}]*flex-wrap:wrap/);
- assert.deepEqual([...css.matchAll(/--review-patient-width:(\d+)px/g)].map(match=>Number(match[1])),[248,232],"an old responsive rule narrowed the expanded rail");
+ assert.match(css,/--review-patient-width:clamp\(184px,var\(--review-patient-content-width,184px\),248px\)/);
+ assert.doesNotMatch(css,/--review-patient-width:\d+px/,"a fixed responsive width replaced the fitted patient rail");
  assert.match(css,/:root\[data-density\] \.review-patients\.is-virtual \.patient-select/,"compact density can override the fixed row spacing");
+}
+
+async function adaptiveWidth(){
+ const s=setup(1000,true),c=s.context,$=s.$,properties=new Map(),rail=$("#reviewPatients");
+ $("#reviewLayout").style={setProperty:(name,value)=>properties.set(name,value),getPropertyValue:name=>properties.get(name)||"",removeProperty:name=>properties.delete(name)};
+ rail.offsetWidth=264;
+ c.getComputedStyle=element=>({fontWeight:element.tagName==="strong"?"700":"400",fontSize:element.tagName==="strong"?"13px":"10px",fontFamily:"sans-serif",paddingLeft:"2px",paddingRight:"6px",columnGap:"6px",width:"24px"});
+ c.document.createElement=()=>({getContext:()=>({measureText:text=>({width:[...text].length*10})})});
+ await s.ui.load();
+ const width=()=>parseInt(properties.get("--review-patient-content-width"),10);
+ assert.ok(width()>=184&&width()<248,"short identities did not release width for SOAP");
+ s.all[0].name="合成姓名非常長".repeat(4);s.setTaskRevision(2);await s.ui.load();
+ assert.equal(width(),248,"long identity did not widen within the maximum");
+ const before=rail.scrollTop;await s.scroll(500);assert.equal(width(),248,"scrolling to short names made SOAP jump horizontally");
+ assert.equal(c.reviewPatient,"P1","fitting list width changed the selected patient");assert.equal(before,0);
+ $("#reviewQuery").value="last";await s.ui.load();
+ assert.ok(width()>=184&&width()<248,"a new filtered scope retained an unrelated long identity width");
 }
 
 async function measuredWindows(){
@@ -356,4 +374,4 @@ async function prefetchCancellationAndSingleLane(){
  c.page="patients";ui.visibility();
 }
 
-(async()=>{await continuousWindow();await compactRailContract();await measuredWindows();await persistentHeaderAndAttention();await initialResultLayout();await focusSelectionAndNavigation();await anchorAndOverlayRevision();await changingCollectionDuringScroll();await racingReads();await sharedReadsAndBoundedMemory();await nearbyLocalPrefetch();await prefetchCompletenessAndRevision();await prefetchCancellationAndSingleLane();localReadContract();process.stdout.write("Review continuous list: measured row heights, stable MRN and End anchors, bounded DOM/cache, and local-only prefetch passed\n");})().catch(error=>{console.error(error);process.exitCode=1;});
+(async()=>{await continuousWindow();await compactRailContract();await adaptiveWidth();await measuredWindows();await persistentHeaderAndAttention();await initialResultLayout();await focusSelectionAndNavigation();await anchorAndOverlayRevision();await changingCollectionDuringScroll();await racingReads();await sharedReadsAndBoundedMemory();await nearbyLocalPrefetch();await prefetchCompletenessAndRevision();await prefetchCancellationAndSingleLane();localReadContract();process.stdout.write("Review continuous list: measured row heights, stable MRN and End anchors, bounded DOM/cache, and local-only prefetch passed\n");})().catch(error=>{console.error(error);process.exitCode=1;});

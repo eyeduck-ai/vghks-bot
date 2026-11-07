@@ -816,6 +816,27 @@ function tagRuleRow(tag={id:crypto.randomUUID().replaceAll("-",""),name:"",keywo
 function openRules(){window.ToolWorkspace?.beginSettings();$("#ruleTags").replaceChildren(...work.categories.map(tagRuleRow));$("#tagSettingsSummary").textContent=work.categories.map(t=>t.name).join("、");dialog("rulesDialog");}
 
 
+function initializeSidebar(){
+ const shell=$("#shell"),panel=$("#featureSidebar"),restore=$("#sidebarRestore"),collapse=$("#sidebarCollapse"),expand=$("#sidebarExpand");
+ const preference="vghks.sidebar-collapsed";
+ setIcon(collapse,"panelClose","收合功能面板");setIcon(expand,"panelOpen","展開功能面板");
+ function apply(collapsed,focus=false){
+  panel.hidden=collapsed;restore.hidden=!collapsed;shell.classList.toggle("sidebar-collapsed",collapsed);
+  collapse.setAttribute("aria-expanded",String(!collapsed));expand.setAttribute("aria-expanded",String(!collapsed));
+  if(collapsed)$("#sidebarAccount").open=false;
+  if(focus)(collapsed?expand:collapse).focus();
+ }
+ function change(collapsed){
+  apply(collapsed,true);
+  try{window.localStorage.setItem(preference,collapsed?"1":"0");}catch(_){/* This tab still supports the control when storage is unavailable. */}
+ }
+ let collapsed=false;
+ try{collapsed=window.localStorage.getItem(preference)==="1";}catch(_){/* Start expanded when browser storage is unavailable. */}
+ apply(collapsed);
+ collapse.addEventListener("click",()=>change(true));expand.addEventListener("click",()=>change(false));
+}
+initializeSidebar();
+
 $("#loginAccount").addEventListener("change",()=>loginFields($("#loginAccount").value));
 $("#loginForm").addEventListener("submit",e=>{e.preventDefault();login($("#loginAccount").value);});
 $("#offlineButton").addEventListener("click",()=>act(async()=>{const key=$("#loginAccount").value;await ra("/accounts/offline",{id:key});await enter(key);}));

@@ -445,6 +445,40 @@ function layoutTests(){
  c.page="review";c.updateReviewLayout();assert.ok(classes.has("review-result-compact"),"returning to active review lost viewport layout");
  c.reviewData=null;c.updateReviewLayout();assert.equal(classes.has("review-result-compact"),false);
 }
+async function sidebarTests(){
+ const source=fs.readFileSync("vghks_bot/static/bot.js","utf8"),start=source.indexOf("function initializeSidebar()"),end=source.indexOf('$("#loginAccount")',start);
+ const stored=new Map(),preference="vghks.sidebar-collapsed";
+ function create(storage){
+  const s=surface(),c=s.context,$=s.$;
+  c.window.localStorage=storage;
+  $("#shell").className="shell";
+  $("#shell").append($("#featureSidebar"),$("#sidebarRestore"),$("#mainShell"));
+  $("#featureSidebar").append($("#sidebarCollapse"),$("#sidebarAccount"));
+  $("#sidebarRestore").append($("#sidebarExpand"));
+  vm.runInContext(source.slice(start,end),c);
+  return s;
+ }
+ const storage={getItem:key=>stored.get(key),setItem:(key,value)=>stored.set(key,value)};
+ const s=create(storage),c=s.context,$=s.$;
+ assert.equal($("#featureSidebar").hidden,false);assert.equal($("#sidebarRestore").hidden,true);
+ assert.equal($("#sidebarCollapse").getAttribute("aria-expanded"),"true");
+ $("#sidebarAccount").open=true;await $("#sidebarCollapse").emit("click");
+ assert.equal($("#featureSidebar").hidden,true);assert.equal($("#sidebarRestore").hidden,false);
+ assert.equal($("#sidebarAccount").open,false);assert.ok($("#shell").classList.contains("sidebar-collapsed"));
+ assert.equal(c.document.activeElement,$("#sidebarExpand"),"collapse left focus inside the hidden sidebar");
+ assert.equal($("#sidebarExpand").getAttribute("aria-expanded"),"false");assert.equal(stored.get(preference),"1");
+ const restored=create(storage);
+ assert.equal(restored.$("#featureSidebar").hidden,true,"reload forgot the collapsed preference");
+ assert.equal(restored.context.document.activeElement,null,"applying a preference stole focus");
+ await $("#sidebarExpand").emit("click");
+ assert.equal($("#featureSidebar").hidden,false);assert.equal($("#sidebarRestore").hidden,true);
+ assert.equal(c.document.activeElement,$("#sidebarCollapse"));assert.equal(stored.get(preference),"0");
+ assert.equal($("#sidebarCollapse").getAttribute("aria-expanded"),"true");
+ const denied=create({getItem(){throw new Error("storage unavailable");},setItem(){throw new Error("storage unavailable");}});
+ assert.equal(denied.$("#featureSidebar").hidden,false);
+ await denied.$("#sidebarCollapse").emit("click");assert.equal(denied.$("#featureSidebar").hidden,true);
+ await denied.$("#sidebarExpand").emit("click");assert.equal(denied.$("#featureSidebar").hidden,false);
+}
 async function identifierTests(){
  const s=surface(),c=s.context,$=s.$,starts=[],resolved=[],states=[],details=new Map();c.epoch=0;
  const settle=async()=>{for(let index=0;index<50;index++)await Promise.resolve();};
@@ -847,4 +881,4 @@ async function earningsViewTests(){
  assert.equal($("#earningsView").value,"active");assert.equal($("#earningsViewField").hidden,true,"an empty archive stranded the user in a hidden view");
 }
 module.exports={surface,deferred,tick};
-if(require.main===module)(async()=>{await noteTests();await editLoginNoteTests();await externalNoteTests();await activityTests();await profileTests();await historyLoadingTests();layoutTests();await identifierTests();await manualSelectionTests();await toolSelectionTests();await handoffTests();await sheetSyncTests();await destinationTests();await fuTests();syncDetailsTests();await earningsViewTests();process.stdout.write("Review UI race, identifiers, hierarchy, patient profile, loading, viewport, handoff, FU and sheet sync checks passed\n");})().catch(error=>{console.error(error);process.exitCode=1;});
+if(require.main===module)(async()=>{await noteTests();await editLoginNoteTests();await externalNoteTests();await activityTests();await profileTests();await historyLoadingTests();layoutTests();await sidebarTests();await identifierTests();await manualSelectionTests();await toolSelectionTests();await handoffTests();await sheetSyncTests();await destinationTests();await fuTests();syncDetailsTests();await earningsViewTests();process.stdout.write("Review UI race, identifiers, hierarchy, patient profile, loading, viewport, handoff, FU and sheet sync checks passed\n");})().catch(error=>{console.error(error);process.exitCode=1;});

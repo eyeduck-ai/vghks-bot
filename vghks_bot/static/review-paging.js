@@ -8,11 +8,12 @@ window.ReviewPaging=(()=>{
  let owner="",pageData=null,detail=null,navigation=null,filtersKey="",collection="",listSequence=0,detailSequence=0,selectionSequence=0,statusSignature="",detailSignature="",busy=false;
  let scrollTimer=null,scrollJob=null,scrollWanted=false,scrollLoading=false,listError="",prefetchTimer=null,prefetchJob=null,prefetchSequence=0,boundRail=null;
  let resizeObserver=null,resizeFrame=null,railResized=false,railWidth=0;
+ let contentWidth=184,widthFonts="",textMeasure=null;
  const scope=()=>JSON.stringify([account,currentReview,epoch]);
  const taskSignature=(task,revisions={})=>JSON.stringify([task?.revision??task?.updated_at,task?.status,revisions.profile,revisions.review_note,revisions.patient_tags,revisions.preferences,revisions.records,revisions.registrations]);
  const visible=()=>page==="review"&&!document.hidden;
  function cancelPrefetch(){prefetchSequence++;clearTimeout(prefetchTimer);prefetchTimer=null;}
- function reset(){owner="";pageData=detail=navigation=null;filtersKey=collection=statusSignature=detailSignature=listError="";listSequence++;detailSequence++;selectionSequence++;busy=false;blocks.clear();details.clear();pending.clear();clearMeasurements();cancelPrefetch();clearTimeout(scrollTimer);scrollTimer=null;scrollWanted=false;}
+ function reset(){owner="";pageData=detail=navigation=null;filtersKey=collection=statusSignature=detailSignature=listError="";listSequence++;detailSequence++;selectionSequence++;busy=false;blocks.clear();details.clear();pending.clear();clearMeasurements();resetWidth();cancelPrefetch();clearTimeout(scrollTimer);scrollTimer=null;scrollWanted=false;}
  function ensure(){const key=scope();if(key!==owner){reset();owner=key;}bind();return key;}
  function active(){return owner===scope()&&!!pageData;}
  function patient(){return active()&&detail?.mrn===reviewPatient?detail:null;}
@@ -29,6 +30,31 @@ window.ReviewPaging=(()=>{
   rowHeights.clear();heightDeltas.clear();pendingSizes.clear();
   for(const row of observedRows)resizeObserver.unobserve(row);
   observedRows.clear();
+ }
+ function resetWidth(){contentWidth=184;widthFonts="";$("#reviewLayout").style.removeProperty?.("--review-patient-content-width");}
+ function fitWidth(rail){
+  if(rail.hidden||typeof getComputedStyle!=="function")return;
+  const rows=[...rail.querySelectorAll(".review-patient-row")],sample=rows[0];if(!sample)return;
+  textMeasure ||= document.createElement("canvas").getContext?.("2d");if(!textMeasure)return;
+  const selectors=["strong",".review-sequence",".review-patient-id",".review-patient-dates"];
+  const styles=selectors.map(selector=>getComputedStyle(rail.querySelector(selector)||sample.querySelector(".patient-select")));
+  const fonts=styles.map(style=>`${style.fontWeight} ${style.fontSize} ${style.fontFamily}`),signature=fonts.join("|");
+  if(signature!==widthFonts){contentWidth=184;widthFonts=signature;}
+  function textWidth(element,index){
+   if(!element)return 0;
+   textMeasure.font=fonts[index];const style=styles[index];
+   return textMeasure.measureText(element.textContent).width+(parseFloat(style.paddingLeft)||0)+(parseFloat(style.paddingRight)||0);
+  }
+  const buttonStyle=getComputedStyle(sample.querySelector(".patient-select")),checkStyle=getComputedStyle(sample.querySelector(".review-patient-check"));
+  const gap=parseFloat(buttonStyle.columnGap)||0;
+  const chrome=(parseFloat(checkStyle.width)||24)+(parseFloat(buttonStyle.paddingLeft)||0)+(parseFloat(buttonStyle.paddingRight)||0)+Math.max(0,rail.offsetWidth-rail.clientWidth)+1;
+  for(const row of rows){
+   const name=textWidth(row.querySelector(selectors[0]),0),sequence=Math.min(72,textWidth(row.querySelector(selectors[1]),1));
+   const identity=textWidth(row.querySelector(selectors[2]),2),date=Math.min(76,textWidth(row.querySelector(selectors[3]),3));
+   contentWidth=Math.max(contentWidth,Math.min(248,Math.ceil(chrome+gap+Math.max(name+sequence,identity+date))));
+  }
+  const layout=$("#reviewLayout"),value=contentWidth+"px";
+  if(layout.style.getPropertyValue("--review-patient-content-width")!==value)layout.style.setProperty("--review-patient-content-width",value);
  }
  function heightAt(index){return rowHeights.get(index)??estimatedHeight;}
  // A sparse Fenwick tree holds only differences from the estimated height.
@@ -103,6 +129,7 @@ window.ReviewPaging=(()=>{
   const pinIndex=Number(focusRow?.dataset.reviewIndex),pin=focusRow&&pinIndex>=0&&pinIndex<area.total&&!rows.some(row=>row.mrn===focusRow.dataset.mrn)?{mrn:focusRow.dataset.mrn,top:rowTop(pinIndex)}:null;
   reviewData={...pageData,patients:rows};
   renderReviewPatients(rows,{...area,positions,pin,heightAt,before:rowTop(area.start),after:rowTop(area.total)-rowTop(area.end)});
+  fitWidth(rail);
   observeMountedRows(rail);renderPager();updateNavigation();
  }
  function renderAnchored(anchor){
@@ -269,7 +296,7 @@ window.ReviewPaging=(()=>{
   if(!currentReview)return;
   const key=ensure(),filters=reviewFilters(),nextFilters=JSON.stringify(filters),observedRevisions={...work?.revisions},rail=$("#reviewPatients");
   const resetList=filtersKey!==nextFilters||resetPage;
-  if(resetList){blocks.clear();collection="";details.clear();clearMeasurements();rail.scrollTop=0;detailSequence++;selectionSequence++;}
+  if(resetList){blocks.clear();collection="";details.clear();clearMeasurements();resetWidth();rail.scrollTop=0;detailSequence++;selectionSequence++;}
   const anchor=anchorAtViewport(),jump=Number.isInteger(requestedOffset),requestIndex=jump?Math.max(0,requestedOffset):anchor.index;
   filtersKey=nextFilters;listError="";cancelPrefetch();const sequence=++listSequence,requestSelected=reviewPatient;busy=true;renderPager();
   try{
