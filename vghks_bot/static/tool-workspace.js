@@ -246,11 +246,14 @@ window.ToolWorkspace=(()=>{
     setupOpen=!setupOpen;if(page==="review"){reviewSetupExpanded=setupOpen;updateReviewLayout();}render();
     if(setupOpen){const revision=generation;await ensureMembers();if(revision!==generation)return;render();$("#toolSourcePanel").scrollIntoView({block:"start"});$("#toolIdentifier").focus({preventScroll:true});}
   }
-  for(const button of $$("[data-tool]"))button.addEventListener("click",()=>act(async()=>{
-    if(button.dataset.tool==="review")return resumeReview();
-    if(button.dataset.tool==="cataract"&&await restoreCataract())return;
-    return open(button.dataset.tool);
-  },button));
+  async function navigateTool(value){
+    if(!Object.hasOwn(names,value))throw new Error("找不到此進階工具。");
+    if(page==="review"&&value!=="review"&&!await window.ReviewNotesUI.flushAll())throw new Error("有備註尚未儲存，請重試後再切換功能。");
+    if(value==="review")return resumeReview();
+    if(value==="cataract"&&await restoreCataract())return;
+    return open(value);
+  }
+  for(const button of $$("[data-tool]"))button.addEventListener("click",()=>act(()=>navigateTool(button.dataset.tool),button));
   for(const button of $$("[data-use-tool]"))button.addEventListener("click",()=>act(async()=>{await open(button.dataset.useTool,await saveCurrentSet());}));
   $("#toolOpenSaved").addEventListener("click",()=>act(async()=>{$("#toolSavedQuery").value="";await refresh();await renderSaved();dialog("toolSavedDialog");}));
   $("#toolSavedQuery").addEventListener("input",()=>{clearTimeout(savedTimer);savedTimer=setTimeout(()=>void act(renderSaved),180);});
@@ -261,5 +264,5 @@ window.ToolWorkspace=(()=>{
   for(const id of ["toolEditSetup","toolHeadingToggle"])$("#"+id).addEventListener("click",event=>{event.stopPropagation();return act(toggleSetup);});
   $("#toolStartForm").addEventListener("submit",e=>{e.preventDefault();act(start);});$("#toolRules").addEventListener("click",openRules);
   $("#toolFetchSoap").addEventListener("click",()=>act(async()=>{if(starting)return;requireChecked();if(!soapSetup){soapSetup=true;render();}else{const revision=generation,source=sourceRevision;starting=true;render();try{await startReview(true);}finally{if(revision===generation&&source===sourceRevision){starting=false;render();}}}}));
-  return {reset,open,activate,visibility,adoptReview,adoptModule,receivedHandoff,poll,watched:()=>soapTask?[soapTask]:[],refreshSettings:render,beginSettings,commitSettings,cancelSettings,queryOptions,refreshPatient};
+  return {reset,open,navigate:navigateTool,currentKind:()=>kind,activate,visibility,adoptReview,adoptModule,receivedHandoff,poll,watched:()=>soapTask?[soapTask]:[],refreshSettings:render,beginSettings,commitSettings,cancelSettings,queryOptions,refreshPatient};
 })();

@@ -292,6 +292,7 @@ def main():
     parser.add_argument("--lookup-delay", type=float, default=0, help="Delay each synthetic demographics lookup by 0-30 seconds")
     parser.add_argument("--registrations", action="store_true", help="Complete registration fields, explicit and unknown attendance")
     parser.add_argument("--sheet-management", action="store_true", help="Synthetic online sheet statistics; no Google calls")
+    parser.add_argument("--account-switcher", action="store_true", help="Four account cards with two campuses, long names and a password-required account")
     parser.add_argument("--review-patients", type=int, default=0, help="Seed a completed synthetic review with 1-20000 patients")
     args = parser.parse_args()
     if not 0 <= args.review_patients <= 20000:
@@ -310,8 +311,15 @@ def main():
         manager = DatabaseManager(Path(directory), Settings(), sdk)
         app = manager.current
         try:
-            for user, label in (("SECOND", "合成帳號乙"), ("TEST", "合成帳號甲")):
-                key = app.login({"username": user, "password": "synthetic", "label": label})["account"]["id"]
+            profiles = [("SECOND", "合成帳號乙", "高榮", True), ("TEST", "合成帳號甲", "高榮", True)]
+            if args.account_switcher:
+                profiles = [("SECOND", "", "高榮", True),
+                            ("TEST", "TEST", "聯醫", True),
+                            ("LONG_ACCOUNT_03", "高榮同院區的另一個長名稱合成帳號", "高榮", True),
+                            ("PASSWORD_REQUIRED", "聯醫需輸入密碼的合成帳號", "聯醫", False)]
+            for user, label, campus, remember in profiles:
+                key = app.login({"username": user, "password": "synthetic", "label": label,
+                                 "campus": campus, "remember": remember})["account"]["id"]
                 if args.review_patients:
                     seed_large_review(app.workspace(key), args.review_patients)
                 if args.sheet_management:
@@ -349,6 +357,8 @@ def main():
                     seed_ophthalmic(app.workspace(key), report_gallery=args.report_gallery)
                     if args.demographics:
                         seed_ophthalmic(app.workspace(key), "00012345", report_gallery=args.report_gallery)
+                if args.account_switcher and not remember:
+                    app.logout(key)
             with BotServer(0, app, manager) as server:
                 if args.sheet_management:
                     server.RequestHandlerClass = SyntheticSheetHandler

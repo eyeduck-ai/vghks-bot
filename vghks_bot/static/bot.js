@@ -46,6 +46,8 @@ let collapsedDays=new Set();
 let suppressCompletedReview=false,reconnectTask="",reconnectTarget="";
 const reconnectAttempts=new Map(),recoverySeen=new Map(),resumedTasks=new Set();
 let recoveringConnection=false;
+let accountTransition=false,restoringAccountView=false,reconnectRevision=0;
+const accountViews=new Map();
 let catalogRevision="",activityRevision="",pollTimer=0;
 window.WorkspacePoll=(()=>{
  let latest=null,owner="",busy=false;
@@ -82,7 +84,7 @@ async function request(path, body, scoped=true){
 const api=(path,body)=>request(path,body,true), ra=(path,body)=>request(path,body,false);
 const time=value=>(value||"").slice(0,19).replace("T"," ");
 const info=()=>root.accounts.find(a=>a.id===account);
-function updateAccountHeader(){const current=info(),label=$("#currentAccountLabel");label.textContent=current?.label||current?.username||"目前帳號";label.title=current?(current.label||current.username)+" · "+current.campus:"";}
+function updateAccountHeader(){window.AccountSwitcher?.render(root,account);}
 function fillSelect(select,items,placeholder="全部",selectedValue=select.value){select.replaceChildren(new Option(placeholder,""),...items.map(i=>new Option(i.name||i.label||i.id,i.id)));if(items.some(i=>i.id===selectedValue))select.value=selectedValue;}
 function badges(tags,manualTag=false){const wrap=node("span");for(const tag of tags||[])wrap.append(node("span",(manualTag?"手動 · ":"")+(tag.name||tag.category_name),"badge"+(manualTag?" manual":"")));return wrap;}
 function categoryOptions(){const cats=work?.categories||[];for(const id of ["reviewTag","libraryTag","tagFilter"])fillSelect($("#"+id),cats,"全部 tag");}
@@ -110,35 +112,37 @@ function dialog(id){Choices.sync();if(id==="dataDialog"){extensionTask="";extens
 function confirmDelete(text,{title="確認刪除",label="刪除"}={}){$("#confirmText").textContent=text;const d=$("#confirmDialog");d.querySelector("h2").textContent=title;d.querySelector('button[value="delete"]').textContent=label;d.returnValue="";d.showModal();return new Promise(resolve=>d.addEventListener("close",()=>resolve(d.returnValue==="delete"),{once:true}));}
 
 function renderAccounts(){
- const keep=$("#loginAccount").value;
- fillSelect($("#loginAccount"),root.accounts.map(a=>({id:a.id,name:(a.label||a.username)+" · "+a.campus})),"新增帳號",keep);
- $("#accountSwitch").replaceChildren(...root.accounts.map(a=>new Option((a.label||a.username)+" · "+a.campus+(a.online?" · 已連線":""),a.id)),new Option("＋ 新增帳號","__new"));
- $("#accountSwitch").value=account;
+ if(!root.accounts.some(a=>a.id===$("#loginAccount").value))$("#loginAccount").value="";
  updateAccountHeader();
 }
-function loginFields(key=""){
+function loginFields(key="",reveal=true){
  const a=root.accounts.find(a=>a.id===key);$("#loginAccount").value=key;$("#loginUsername").value=a?.username||"";$("#loginUsername").readOnly=!!a;
  $("#loginLabel").value=a?.label||"";const campus=a?.campus||"高榮",campusField=$("#loginCampus");campusField.querySelector("option[data-legacy]")?.remove();if(![...campusField.options].some(option=>option.value===campus)){const legacy=new Option(campus+"（既有院區）",campus);legacy.dataset.legacy="true";campusField.add(legacy);}campusField.value=campus;$("#loginPassword").value="";$("#loginPassword").placeholder=a?.remembered?"已保存；留白使用保存的密碼":"請輸入院內密碼";
  $("#rememberLogin").checked=a?!!a.remembered:true;$("#offlineButton").disabled=!a;$("#forgetPassword").disabled=!a?.remembered;$("#loginError").hidden=true;
+ $("#loginFields").hidden=!reveal;$("#loginFieldsTitle").textContent=a?"登入選項 · "+(a.label||a.username):"新增帳號";
+ renderAccounts();
 }
-function showEntry(key=""){
+function showEntry(key="",reveal=true){
+ window.AccountSwitcher?.close(false);
  window.JobProgress?.context("");window.LibraryDataUI?.reset();
  cataractScroll=null;
- if(account&&work&&!root.read_only){clearTimeout(draftTimer);api("/draft/save",draftValue()).catch(()=>{});}
- clearTimeout(draftTimer);manualLookup.reset();manualErrors.clear();window.ReviewPaging?.reset();window.ToolWorkspace?.reset();window.SurgerySystem?.reset();window.SheetManagement?.reset();window.ReviewNotesUI?.reset();window.ReviewHandoff?.reset();epoch++;account="";$("#moduleFrame").removeAttribute("src");$("#cataractFrame").removeAttribute("src");for(const d of $$("dialog[open]"))d.close();$("#shell").hidden=true;$("#entry").hidden=false;loginFields(key);
+ clearTimeout(draftTimer);manualLookup.reset();manualErrors.clear();window.ReviewPaging?.reset();window.ToolWorkspace?.reset();window.SurgerySystem?.reset();window.SheetManagement?.reset();window.ReviewNotesUI?.reset();window.ReviewHandoff?.reset();epoch++;account="";$("#moduleFrame").removeAttribute("src");$("#cataractFrame").removeAttribute("src");for(const d of $$("dialog[open]"))d.close();$("#shell").hidden=true;$("#entry").hidden=false;loginFields(key,reveal);
  window.FileCompare?.context("", "");window.CataractExpanded?.clear();
 }
 async function login(key, automatic=false){
- const revision=epoch;
+ if(accountTransition||root.read_only)return;
+ const revision=epoch,context=root.context;
+ accountTransition=true;window.AccountSwitcher?.busy(key||"__new","正在登入…");
  const control=$("#loginSubmit");control.disabled=true;control.textContent="正在登入…";$("#loginError").hidden=true;
  try {
   const body=automatic?{id:key}:{id:key||undefined,username:$("#loginUsername").value,password:$("#loginPassword").value,label:$("#loginLabel").value,campus:$("#loginCampus").value,remember:$("#rememberLogin").checked};
-  const value=await ra("/accounts/login",body);if(revision!==epoch)return;reconnectAttempts.delete(value.account.id);$("#loginPassword").value="";root=await ra("/bootstrap");if(revision!==epoch)return;renderAccounts();await enter(value.account.id);
- }catch(e){if($("#entry").hidden)say("帳號已登入，畫面載入未完成："+(e.message||"請稍後重試"),true);else{$("#loginError").textContent=e.message;$("#loginError").hidden=false;}}
- finally{control.disabled=false;control.textContent="登入";}
+  const value=await ra("/accounts/login",body);if(revision!==epoch||context!==root.context)return;reconnectAttempts.delete(value.account.id);$("#loginPassword").value="";const next=await ra("/bootstrap");if(revision!==epoch||context!==next.context)return;root=next;renderAccounts();await enter(value.account.id);
+ }catch(e){if(context!==root.context)return;if($("#entry").hidden)say("帳號已登入，畫面載入未完成："+(e.message||"請稍後重試"),true);else{const selected=root.accounts.find(value=>value.id===key);if(selected)selected.online=false;loginFields(key);$("#loginError").textContent=e.message;$("#loginError").hidden=false;}}
+ finally{accountTransition=false;window.AccountSwitcher?.busy();control.disabled=!!root.read_only;control.textContent="登入";applyReadonly();}
 }
 function openReconnect(taskId="",target=account,reason=""){
  if(!target||root.read_only)return;
+ window.AccountSwitcher?.close(false);reconnectRevision++;
  const selected=root.accounts.find(a=>a.id===target);
  $("#reconnectTitle").textContent=target===account?"重新連線院內系統":"連線至 "+(selected?.label||selected?.username||"所選帳號");
  reconnectTask=taskId;reconnectTarget=target;$("#reconnectReason").textContent=reason||`${selected?.label||selected?.username||"此帳號"}：`+(taskId?"院內連線已中斷；重新連線後會從已保存的任務進度續跑。":"重新連線後會保留目前畫面與已取得的資料。");
@@ -146,7 +150,80 @@ function openReconnect(taskId="",target=account,reason=""){
  $("#reconnectRemember").checked=!!selected?.remembered;$("#reconnectError").hidden=true;
  dialog("reconnectDialog");$("#reconnectPassword").focus();
 }
+function rememberAccountView(){
+ if(!account||restoringAccountView)return;
+ const tool=["tool","review","module"].includes(page)?(page==="review"?"review":window.ToolWorkspace?.currentKind?.()):"";
+ if(tool)accountViews.set(JSON.stringify([root.context,account]),{tool});
+ else if($$("[data-page]").some(button=>button.dataset.page===page))accountViews.set(JSON.stringify([root.context,account]),{page});
+}
 async function enter(key){
+ const destination=accountViews.get(JSON.stringify([root.context,key]));
+ restoringAccountView=true;
+ try{
+  await loadAccount(key);
+  if(account!==key)return;
+  const revision=epoch;
+  try{
+   if(destination?.tool)await window.ToolWorkspace.navigate(destination.tool);
+   else if(destination?.page&&destination.page!=="patients")await navigate(destination.page);
+  }catch(error){
+   if(account!==key||revision!==epoch||error.name==="AbortError")return;
+   showPage("patients");say("已切換帳號，上次功能無法開啟，已返回病人清單："+(error.message||"請稍後重試"),true);
+  }
+ }finally{restoringAccountView=false;rememberAccountView();}
+}
+async function prepareAccountLeave(){
+ if(!account)return;
+ const source=account,revision=epoch;
+ if(!await window.ReviewNotesUI.flushAll())throw new Error("有備註尚未儲存，請重試後再切換帳號。");
+ if(source!==account||revision!==epoch)throw new DOMException("帳號已切換","AbortError");
+ clearTimeout(draftTimer);
+ if(!root.read_only)await api("/draft/save",draftValue());
+ if(source!==account||revision!==epoch)throw new DOMException("帳號已切換","AbortError");
+ rememberAccountView();
+}
+async function activateAccount(key){
+ if(accountTransition)return;
+ if(key===account){window.AccountSwitcher.close();return;}
+ const revision=epoch,context=root.context;
+ accountTransition=true;window.AccountSwitcher.busy(key,"正在切換帳號…");
+ try{
+  await prepareAccountLeave();if(revision!==epoch||context!==root.context)return;
+  const result=await ra("/accounts/activate",{id:key});if(revision!==epoch||context!==root.context)return;
+  if(result.online||result.status==="offline"){
+   const next=await ra("/bootstrap");if(revision!==epoch||context!==next.context)return;root=next;
+   window.AccountSwitcher.close(false);await enter(key);renderAccounts();
+   say(result.online?"已切換帳號，原帳號的連線仍保留。":"已切換至離線檢閱。");
+  }else{
+   const target=root.accounts.find(value=>value.id===key);if(target)target.online=false;renderAccounts();
+   if(result.status==="needs_password")openReconnect("",key,"此帳號需要密碼才能連線。"+(result.message||""));
+   else throw new Error("目標帳號暫時無法連線，請稍後重試。"+(result.message||""));
+  }
+ }finally{accountTransition=false;window.AccountSwitcher.busy();applyReadonly();}
+}
+async function offlineAccount(key){
+ if(accountTransition)return;
+ accountTransition=true;window.AccountSwitcher.busy(key,"正在開啟離線資料…");
+ const revision=epoch,context=root.context;
+ try{await prepareAccountLeave();if(revision!==epoch)return;await ra("/accounts/offline",{id:key});if(revision!==epoch||context!==root.context)return;await enter(key);}
+ finally{accountTransition=false;window.AccountSwitcher.busy();applyReadonly();}
+}
+async function addWorkspaceAccount(){
+ if(accountTransition||root.read_only)return;
+ accountTransition=true;window.AccountSwitcher.busy("__new","正在保存目前工作區…");
+ try{await prepareAccountLeave();showEntry();}
+ finally{accountTransition=false;window.AccountSwitcher.busy();}
+ $("#loginUsername").focus();
+}
+function selectSavedLogin(key){
+ if(accountTransition)return;
+ if(root.read_only)return offlineAccount(key);
+ const selected=root.accounts.find(value=>value.id===key);
+ loginFields(key,!selected?.remembered&&!selected?.online);
+ if(selected?.remembered||selected?.online)return login(key,true);
+ $("#loginPassword").focus();
+}
+async function loadAccount(key){
  window.JobProgress?.context(key,!!root?.read_only);window.LibraryDataUI?.reset();
  cataractScroll=null;
  collapsedDays.clear();manualLookup.reset();manualErrors.clear();
@@ -155,7 +232,7 @@ async function enter(key){
  $("#moduleFrame").removeAttribute("src");$("#cataractFrame").removeAttribute("src");for(const d of $$("dialog[open]"))d.close();
  for(const id of ["reviewQuery","listQuery","libraryQuery","libraryStart","libraryEnd","tagQuery"])$("#"+id).value="";
  for(const id of ["libraryTag","tagFilter","reviewTag","libraryTask"])$("#"+id).value="";
- $("#entry").hidden=true;$("#shell").hidden=false;$("#accountSwitch").value=key;updateAccountHeader();$("#startDate").value=$("#endDate").value=root.today;$("#dateMode").value="single";dateMode();
+ $("#entry").hidden=true;$("#shell").hidden=false;updateAccountHeader();$("#startDate").value=$("#endDate").value=root.today;$("#dateMode").value="single";dateMode();
  for(const id of ["taskList","libraryRecords","tagPatients","reviewPatients","reviewDetail","dataContent","librarySoapContent","savedSets"])$("#"+id)?.replaceChildren();
  $("#listJob").textContent="";$("#connectionStatus").textContent="載入中";showPage("patients");renderList();renderSets();
  const revision=epoch;
@@ -166,7 +243,7 @@ async function enter(key){
  if(await readList(intent)&&currentListIntent(intent)){renderSets();applyReadonly();}
 }
 function updateReviewLayout(){document.body.classList.toggle("review-result-compact",page==="review"&&!!reviewData&&!reviewSetupExpanded);}
-function showPage(name){if(page==="module"&&name!=="module")captureCataractScroll();page=name;document.body.classList.toggle("module-workspace",name==="module");$("#sidebarAccount").open=false;Choices.sync();window.ToolWorkspace?.visibility(name);window.SurgerySystem?.visibility(name);window.SheetManagement?.visibility(name);for(const section of $$("main>.page"))section.hidden=section.id!==name+"Page";for(const b of $$("[data-page]"))b.classList.toggle("active",b.dataset.page===name);updateReviewLayout();window.WorkspacePoll?.visibility();window.ReviewPaging?.visibility();}
+function showPage(name){if(page==="module"&&name!=="module")captureCataractScroll();page=name;document.body.classList.toggle("module-workspace",name==="module");window.AccountSwitcher?.close();Choices.sync();window.ToolWorkspace?.visibility(name);window.SurgerySystem?.visibility(name);window.SheetManagement?.visibility(name);for(const section of $$("main>.page"))section.hidden=section.id!==name+"Page";for(const b of $$("[data-page]"))b.classList.toggle("active",b.dataset.page===name);updateReviewLayout();window.WorkspacePoll?.visibility();window.ReviewPaging?.visibility();rememberAccountView();}
 function toggleReviewPatients(){const hidden=!$("#reviewPatientPanel").hidden;$("#reviewPatientPanel").hidden=hidden;$("#reviewPatients").hidden=hidden;$("#reviewPager").hidden=hidden;$("#reviewLayout").classList.toggle("patients-collapsed",hidden);const toggle=$("#reviewPatientsToggle");toggle.setAttribute("aria-expanded",String(!hidden));toggle.title=hidden?"展開病人清單":"收合病人清單";toggle.setAttribute("aria-label",toggle.title);}
 async function navigate(name){if(page==="review"&&name!=="review"&&!await window.ReviewNotesUI?.flushAll())throw new Error("有備註尚未儲存，請重試後再切換頁面。");showPage(name);if(name==="library")await loadLibrary();if(name==="tags")await loadTags();if(name==="tasks")await refresh();if(name==="approvals"){await window.Approvals.enter();}if(name==="earnings")await window.Earnings.open();if(name==="surgery")await window.SurgerySystem.open();if(name==="sheetManagement")await window.SheetManagement.open();}
 const draftValue=()=>({start:$("#startDate").value,end:$("#endDate").value,mode:$("#dateMode").value,selected:[...selected],manual,tab:listTab});
@@ -348,6 +425,7 @@ async function refresh({light=false}={}){
  const history={runs:value.runs};
  const password=work.password_status,connectionLabels={network:"網路問題",credentials:"登入被拒絕",password_change:"需變更密碼",login:"尚未登入"};
  $("#connectionStatus").textContent=work.online?"已登入"+(password?.status==="EXPIRING"?(Number.isInteger(password.remaining_days)?` · 密碼剩 ${password.remaining_days} 日`:" · 密碼即將到期"):""):work.offline_mode?"離線檢閱":connectionLabels[work.connection_issue?.action]||"連線中斷";$("#connectionStatus").classList.toggle("offline",!work.online);
+ window.AccountSwitcher?.syncConnection?.();
  const previous=recoverySeen.get(account);recoverySeen.set(account,work.recovery_count||0);if(previous!==undefined&&work.recovery_count>previous)say("院內連線已自動恢復，查詢已繼續。");
  if(watchedListRun&&activeListRun===watchedListRun&&listIntent===watchedListIntent){
   const run=history.runs.find(r=>r.id===watchedListRun);
@@ -382,7 +460,7 @@ function interruptedTask(){
  return (work?.tasks||[]).filter(task=>task.status==="paused"&&/^(AUTH_|PORTAL_|NETWORK_|TLS_|HTTP_)/.test(task.error_code||"")&&!resumedTasks.has(account+task.id)&&Date.now()-Date.parse(task.finished_at||"")<300000).sort((a,b)=>(b.finished_at||"").localeCompare(a.finished_at||""))[0];
 }
 async function maybeRecoverConnection(){
- if(!account||!work||root.read_only||work.online||work.offline_mode||recoveringConnection||work.tasks?.some(task=>inProgress.has(task.status)))return;
+ if(window.AccountSwitcher?.isBusy()||!account||!work||root.read_only||work.online||work.offline_mode||recoveringConnection||work.tasks?.some(task=>inProgress.has(task.status)))return;
  const key=account,state=reconnectAttempts.get(key)||{blocked:false};
  if(state.blocked)return;
  state.blocked=true;reconnectAttempts.set(key,state);
@@ -853,7 +931,7 @@ function initializeSidebar(){
  function apply(collapsed,focus=false){
   panel.hidden=collapsed;collapse.hidden=collapsed;restore.hidden=!collapsed;shell.classList.toggle("sidebar-collapsed",collapsed);
   collapse.setAttribute("aria-expanded",String(!collapsed));expand.setAttribute("aria-expanded",String(!collapsed));
-  if(collapsed)$("#sidebarAccount").open=false;
+  if(collapsed)window.AccountSwitcher?.close(false);
   if(focus)(collapsed?expand:collapse).focus({preventScroll:collapsed&&narrow.matches});
  }
  function change(collapsed){
@@ -874,28 +952,41 @@ function initializeSidebar(){
 initializeSidebar();
 
 $("#loginAccount").addEventListener("change",()=>loginFields($("#loginAccount").value));
+window.AccountSwitcher.init({
+ onSwitch:key=>act(()=>activateAccount(key),null),onLogin:key=>act(()=>selectSavedLogin(key),null),
+ onOffline:key=>act(()=>offlineAccount(key),null),onNew:()=>act(addWorkspaceAccount,null),
+ onOptions:key=>{if(!accountTransition){loginFields(key);$("#loginPassword").focus();}},
+ onOpen:()=>act(async()=>{const revision=epoch,context=root.context,next=await ra("/bootstrap");if(revision!==epoch||accountTransition||next.context!==context)return;root=next;renderAccounts();},null),
+});
 $("#loginForm").addEventListener("submit",e=>{e.preventDefault();login($("#loginAccount").value);});
-$("#offlineButton").addEventListener("click",()=>act(async()=>{const key=$("#loginAccount").value;await ra("/accounts/offline",{id:key});await enter(key);}));
+$("#offlineButton").addEventListener("click",()=>act(()=>offlineAccount($("#loginAccount").value),null));
 $("#forgetPassword").addEventListener("click",()=>act(async()=>{const id=$("#loginAccount").value;await ra("/accounts/forget",{id});root=await ra("/bootstrap");renderAccounts();loginFields(id);say("已移除資料庫保存的密碼。");}));
-$("#accountSwitch").addEventListener("change",()=>act(async()=>{const key=$("#accountSwitch").value,previous=account;try{if(!await window.ReviewNotesUI.flushAll())throw new Error("有備註尚未儲存，請重試後再切換帳號。");if(key==="__new"){showEntry();renderAccounts();return;}if(key===account)return;if(!root.read_only)await api("/draft/save",draftValue());const result=await ra("/accounts/activate",{id:key});if(result.online||result.status==="offline"){root=await ra("/bootstrap");renderAccounts();await enter(key);say(result.online?"已切換帳號，原帳號的連線仍保留。":"已切換至離線檢閱。");}else if(result.status==="needs_password")openReconnect("",key,"此帳號需要密碼才能連線。"+(result.message||""));else say("目標帳號暫時無法連線，請稍後重試。"+(result.message||""),true);}finally{if(account===previous)$("#accountSwitch").value=previous;}}));
-$("#sidebarAccount").addEventListener("toggle",()=>{if($("#sidebarAccount").open)act(async()=>{root=await ra("/bootstrap");renderAccounts();});});
 for(const b of $$("[data-page]"))b.addEventListener("click",()=>act(()=>navigate(b.dataset.page)));
-document.addEventListener("click",event=>{const panel=$("#sidebarAccount");if(panel.open&&!panel.contains(event.target))panel.open=false;});
 $("#reviewPatientsToggle").addEventListener("click",toggleReviewPatients);
 for(const b of $$("[data-close]"))b.addEventListener("click",()=>$("#"+b.dataset.close).close());
-$("#logout").addEventListener("click",()=>act(async()=>{if(!await window.ReviewNotesUI.flushAll())throw new Error("有備註尚未儲存，請重試後再登出。");const key=account;clearTimeout(draftTimer);if(!root.read_only){await api("/draft/save",draftValue());await ra("/accounts/logout",{id:key});}showEntry(key);}));
+$("#logout").addEventListener("click",()=>act(async()=>{
+ if(accountTransition)return;accountTransition=true;window.AccountSwitcher.busy(account,"正在登出…");
+ try{const key=account;await prepareAccountLeave();if(!root.read_only){await ra("/accounts/logout",{id:key});const selected=root.accounts.find(value=>value.id===key);if(selected)selected.online=false;}showEntry(key,false);}
+ finally{accountTransition=false;window.AccountSwitcher.busy();applyReadonly();}
+},null));
 $("#reconnect").addEventListener("click",()=>openReconnect());
-$("#reconnectForm").addEventListener("submit",event=>{event.preventDefault();const button=event.submitter;button.disabled=true;$("#reconnectError").hidden=true;const affected=reconnectTask,target=reconnectTarget||account;const password=$("#reconnectPassword").value;
+$("#reconnectDialog").addEventListener("close",()=>{reconnectRevision++;reconnectTask=reconnectTarget="";$("#reconnectPassword").value="";});
+$("#reconnectForm").addEventListener("submit",event=>{event.preventDefault();if(accountTransition)return;const button=event.submitter;button.disabled=true;$("#reconnectError").hidden=true;const affected=reconnectTask,target=reconnectTarget||account;const password=$("#reconnectPassword").value,attempt=reconnectRevision,revision=epoch,context=root.context;
+ accountTransition=true;window.AccountSwitcher.busy(target,"正在重新連線…");
  (async()=>{try{
+  if(target!==account)await prepareAccountLeave();
+  if(attempt!==reconnectRevision||revision!==epoch||context!==root.context)return;
   await ra("/accounts/login",{id:target,password,remember:$("#reconnectRemember").checked});
-  reconnectAttempts.delete(target);root=await ra("/bootstrap");renderAccounts();$("#reconnectDialog").close();$("#reconnectPassword").value="";reconnectTask="";reconnectTarget="";
-  if(target!==account){if(!root.read_only)await api("/draft/save",draftValue());await enter(target);say("已切換並連線至所選帳號。");return;}
+  if(attempt!==reconnectRevision||revision!==epoch||context!==root.context)return;
+  const next=await ra("/bootstrap");if(attempt!==reconnectRevision||revision!==epoch||next.context!==context)return;
+  reconnectAttempts.delete(target);root=next;renderAccounts();$("#reconnectDialog").close();
+  if(target!==account){await enter(target);say("已切換並連線至所選帳號。");return;}
   await refresh();
   const task=work.tasks.find(item=>item.id===affected);
   if(task&&["paused","failed"].includes(task.status))await api("/tasks/start",{resume:affected});
   await refresh();say("院內系統已重新連線。已保存的畫面與任務保留。");
- }catch(error){$("#reconnectError").textContent=error.message||"重新連線失敗。";$("#reconnectError").hidden=false;}
- finally{button.disabled=false;}})();
+ }catch(error){if(attempt===reconnectRevision&&context===root.context){$("#reconnectError").textContent=error.message||"重新連線失敗。";$("#reconnectError").hidden=false;}}
+ finally{accountTransition=false;window.AccountSwitcher.busy();button.disabled=false;applyReadonly();}})();
 });
 $("#exit").addEventListener("click",()=>act(async()=>{if(!await window.ReviewNotesUI.flushAll())throw new Error("有備註尚未儲存，請重試後再結束程式。");clearTimeout(draftTimer);if(!root.read_only)await api("/draft/save",draftValue());await ra("/shutdown",{});stopped=true;document.body.replaceChildren(empty("VGHKS-bot 已結束，資料與任務進度已保留。"));}));
 $("#dateMode").addEventListener("change",dateMode);$("#startDate").addEventListener("change",dateMode);
@@ -949,12 +1040,14 @@ $("#dataDialog").addEventListener("close",()=>{extensionTask="";extensionContext
 $("#rulesForm").addEventListener("invalid",e=>{for(let p=e.target.parentElement;p&&p!==e.currentTarget;p=p.parentElement)if(p.tagName==="DETAILS")p.open=true;},true);
 for(const button of $$("button[data-icon]"))setIcon(button,button.dataset.icon,button.dataset.iconLabel||button.textContent,button.dataset.iconText!=="true");
 for(const [id,name,label] of [["refreshTasks","refresh","更新爬蟲紀錄"],["refreshList","refresh","更新門診清單"],["previousDay","left","前一天"],["nextDay","right","後一天"]])setIcon($("#"+id),name,label);
-$("#accountSettings").addEventListener("click",()=>{$("#settingsAccount").textContent=(info()?.label||info()?.username)+" · "+info()?.campus;$("#concurrency").value=String(root.concurrency);dialog("settingsDialog");});
+$("#accountSettings").addEventListener("click",()=>{window.AccountSwitcher.close(false);$("#settingsAccount").textContent=(info()?.label||info()?.username)+" · "+info()?.campus;$("#concurrency").value=String(root.concurrency);dialog("settingsDialog");});
 $("#editLogin").addEventListener("click",()=>act(async()=>{
+ if(accountTransition||root.read_only)return;
  const revision=epoch;
- if(!await window.ReviewNotesUI.flushAll())throw new Error("有備註尚未儲存，請重試後再更新登入資訊。");
- if(revision===epoch)showEntry(account);
-}));
+ accountTransition=true;window.AccountSwitcher.busy(account,"正在保存目前工作區…");
+ try{await prepareAccountLeave();if(revision===epoch)showEntry(account);}
+ finally{accountTransition=false;window.AccountSwitcher.busy();applyReadonly();}
+},null));
 $("#saveConcurrency").addEventListener("click",()=>act(async()=>{const r=await ra("/concurrency",{value:Number($("#concurrency").value)});root.concurrency=r.concurrency;$("#settingsDialog").close();say("連線設定已保存。");}));
 window.addEventListener("message",e=>{if(e.origin!==location.origin||!["moduleFrame","cataractFrame"].some(id=>e.source===$("#"+id).contentWindow))return;window.JobProgress.receive(e,[$("#moduleFrame"),$("#cataractFrame")],account,root.read_only);if(e.data?.type==="bot:task-started")act(refresh);else if(page==="module"&&e.source===activeModuleFrame().contentWindow){if(e.data?.type==="bot:compare-open")window.FileCompare?.open();else window.FileCompare?.receive(e,activeModuleFrame(),account);}});
 window.addEventListener("jobprogressaction",event=>act(async()=>{
@@ -971,5 +1064,5 @@ async function poll(){
  if(!stopped)pollTimer=setTimeout(poll,window.WorkspacePoll?.active()?2000:10000);
 }
 document.addEventListener("visibilitychange",()=>{window.WorkspacePoll?.visibility();clearTimeout(pollTimer);if(!document.hidden&&!pollBusy&&!stopped)void poll();});
-async function initialize(){const token=location.hash.slice(1);if(/^[A-Za-z0-9_-]{43}$/.test(token)){window.LocalSession.accept(await ra("/session",{token}));history.replaceState(null,"",location.pathname);}root=await ra("/bootstrap");for(const name of Object.keys(reviewIconFiles))reviewIconImage(name);$("#version").textContent=$("#sidebarVersion").textContent="v"+root.version;renderAccounts();loginFields(root.last_account||"");if(root.read_only&&root.accounts.length){const key=root.last_account||root.accounts[0].id;await ra("/accounts/offline",{id:key});await enter(key);}else if(root.accounts.find(a=>a.id===root.last_account)?.remembered)await login(root.last_account,true);applyReadonly();if(root.database_notice){say(root.database_notice);await window.DatabaseUI.open();}poll();}
+async function initialize(){const token=location.hash.slice(1);if(/^[A-Za-z0-9_-]{43}$/.test(token)){window.LocalSession.accept(await ra("/session",{token}));history.replaceState(null,"",location.pathname);}root=await ra("/bootstrap");for(const name of Object.keys(reviewIconFiles))reviewIconImage(name);$("#version").textContent=$("#sidebarVersion").textContent="v"+root.version;renderAccounts();loginFields(root.last_account||"",!root.accounts.length||!!root.last_account&&!root.accounts.find(a=>a.id===root.last_account)?.remembered);if(root.read_only&&root.accounts.length){const key=root.last_account||root.accounts[0].id;await ra("/accounts/offline",{id:key});await enter(key);}else if(root.accounts.find(a=>a.id===root.last_account)?.remembered)await login(root.last_account,true);applyReadonly();if(root.database_notice){say(root.database_notice);await window.DatabaseUI.open();}poll();}
 initialize().catch(e=>say(e.message,true));

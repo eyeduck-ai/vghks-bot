@@ -90,6 +90,7 @@ class BotHandler(Handler):
             return
         assets = {"/": ("bot.html", "text/html; charset=utf-8"),
                   "/bot.js": ("bot.js", "text/javascript; charset=utf-8"),
+                  "/account-switcher.js": ("account-switcher.js", "text/javascript; charset=utf-8"),
                   "/local-session.js": ("local-session.js", "text/javascript; charset=utf-8"),
                   "/review-history.js": ("review-history.js", "text/javascript; charset=utf-8"),
                   "/review-paging.js": ("review-paging.js", "text/javascript; charset=utf-8"),

@@ -136,7 +136,7 @@ async function activityTests(){
 async function editLoginNoteTests(){
  const s=surface(),c=s.context,$=s.$,notesSaved=[];
  let saved="",fail=true;
- Object.assign(c,{epoch:0,draftTimer:null,draftValue:()=>({}),manualLookup:{reset(){}},manualErrors:{clear(){}},loginFields(){},
+ Object.assign(c,{epoch:0,accountTransition:false,draftTimer:null,draftValue:()=>({}),manualLookup:{reset(){}},manualErrors:{clear(){}},loginFields(){},applyReadonly(){},rememberAccountView(){},
   api:async(path,values)=>{
    if(path==="/reviews/notes/summary")return {task_id:"R1",note_count:Number(!!saved)};
    if(path==="/reviews/notes/page")return {task_id:"R1",patients:[{mrn:"P1",text:saved}]};
@@ -145,8 +145,10 @@ async function editLoginNoteTests(){
    throw new Error(path);
   }
  });
+ c.window.AccountSwitcher={busy(){},close(){}};
  const source=fs.readFileSync("vghks_bot/static/bot.js","utf8");
  vm.runInContext(source.slice(source.indexOf("function showEntry("),source.indexOf("async function login("))+
+  source.slice(source.indexOf("async function prepareAccountLeave("),source.indexOf("async function activateAccount("))+
   source.slice(source.indexOf('$("#editLogin").addEventListener'),source.indexOf('$("#saveConcurrency").addEventListener')),c);
  s.run("vghks_bot/static/review-notes.js");
  const notes=c.window.ReviewNotesUI;
@@ -481,10 +483,10 @@ async function sidebarTests(){
  const s=create(storage),c=s.context,$=s.$;
  assert.equal($("#featureSidebar").hidden,false);assert.equal($("#sidebarRestore").hidden,true);
  assert.equal($("#sidebarCollapse").getAttribute("aria-expanded"),"true");
- $("#sidebarAccount").open=true;await $("#sidebarCollapse").emit("click");
+ let accountPanelClosed=false;c.window.AccountSwitcher={close:()=>{accountPanelClosed=true;}};await $("#sidebarCollapse").emit("click");
  assert.equal($("#featureSidebar").hidden,true);assert.equal($("#sidebarRestore").hidden,false);
  assert.equal($("#sidebarCollapse").hidden,true,"the boundary control stayed visible after collapse");
- assert.equal($("#sidebarAccount").open,false);assert.ok($("#shell").classList.contains("sidebar-collapsed"));
+ assert.equal(accountPanelClosed,true);assert.ok($("#shell").classList.contains("sidebar-collapsed"));
  assert.equal(c.document.activeElement,$("#sidebarExpand"),"collapse left focus inside the hidden sidebar");
  assert.equal($("#sidebarExpand").getAttribute("aria-expanded"),"false");assert.equal(stored.get(preference),"1");
  const restored=create(storage);

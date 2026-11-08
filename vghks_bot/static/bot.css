@@ -219,14 +219,14 @@ dialog.saved-sets-dialog{width:min(540px,94vw);padding:20px 22px}
  .review-page .review-detail{height:auto;max-height:none}.tool-heading{gap:6px 10px}
  .review-page>.page-heading .actions{max-width:none;gap:4px}.review-retrieval>.caption{min-width:0;flex-basis:100%}
 }
-.sidebar-header{display:flex;align-items:center;justify-content:space-between;gap:4px;margin-bottom:12px;min-width:0}
+.sidebar-header{display:flex;align-items:center;justify-content:space-between;gap:4px;margin-bottom:14px;min-width:0}
 .sidebar-header .brand{font-size:21px;line-height:1.25;margin:0}
 button.panel-toggle.icon-button{width:30px;min-width:30px;min-height:30px;flex:0 0 30px;padding:4px!important;border-color:transparent;background:transparent;color:var(--green)}
 button.panel-toggle.icon-button:hover{background:#dce8d7;border-color:#c4d4bd}
 @media(pointer:coarse){button.panel-toggle.icon-button{width:44px;min-width:44px;min-height:44px;flex-basis:44px;padding:10px!important}}
 @media(min-width:781px){
  :root[data-density] .sidebar{padding:12px;overflow-y:auto}
- :root[data-density] .sidebar-header{margin-bottom:10px}
+ :root[data-density] .sidebar-header{margin-bottom:14px}
  :root[data-density] .sidebar nav{gap:1px}
  :root[data-density] .sidebar .nav{min-height:29px;padding:4px 10px;line-height:20px}
  :root[data-density] .sidebar .nav-system-title{font-size:13px;line-height:19px;padding:4px 10px}
@@ -240,7 +240,7 @@ button.panel-toggle.icon-button:hover{background:#dce8d7;border-color:#c4d4bd}
 }
 @media(min-width:781px) and (max-height:650px){
  :root[data-density] .sidebar{padding:8px 12px}
- :root[data-density] .sidebar-header{margin-bottom:6px}
+ :root[data-density] .sidebar-header{margin-bottom:10px}
  :root[data-density] .sidebar .nav{min-height:25px;padding:2.5px 10px;line-height:18px}
  :root[data-density] .sidebar .nav-system-title{padding:2px 10px}
  :root[data-density] .sidebar .nav-group-title{min-height:22px;padding:1px 10px}
@@ -250,25 +250,53 @@ button.panel-toggle.icon-button:hover{background:#dce8d7;border-color:#c4d4bd}
  :root[data-density] .sidebar-bottom{padding-top:3px}
  :root[data-density] #sidebarVersion{display:none}
 }
-.sidebar-account{border-top:1px solid #ccd7c5;border-bottom:1px solid #ccd7c5;margin:0 0 7px;padding:4px 0 5px;min-width:0}
-.sidebar-account>summary{display:flex;align-items:center;gap:5px;min-height:28px;padding:2px 5px;cursor:pointer;list-style:none;font-size:12px;color:var(--ink)}
-.sidebar-account>summary::-webkit-details-marker{display:none}
-.sidebar-account>summary::before{content:"";width:5px;height:5px;flex:0 0 5px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(-45deg);transition:transform .15s}
-.sidebar-account[open]>summary::before{transform:rotate(45deg)}
-#currentAccountLabel{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:650}
-.sidebar-account .pill{font-size:10px;padding:2px 5px}
-.sidebar-account-controls{display:grid;gap:5px;padding:5px 4px 3px}
-:root[data-density] .sidebar-account-controls select{min-width:0;width:100%;min-height:29px;padding:3px 5px;font-size:12px}
-.sidebar-account-controls .account-actions{display:flex;gap:4px}
-:root[data-density] .sidebar-account-controls button{flex:1;min-width:0;min-height:28px;padding:3px 5px;font-size:11px}
+:root[data-density] .account-trigger{display:flex;align-items:center;gap:6px;width:100%;min-width:0;min-height:32px;flex-shrink:0;text-align:left;white-space:nowrap;padding:5px 8px;margin:0 0 14px;border:1px solid #bdcdb7;border-radius:5px;background:#f6f9f2;color:var(--ink);font-size:12px;line-height:20px}
+:root[data-density] .account-trigger:hover,:root[data-density] .account-trigger[aria-expanded=true]{background:#eaf2e4;border-color:#93aa89}
+.account-campus{color:var(--green);font-size:11px;font-weight:650;white-space:nowrap}
+.account-trigger .account-campus,.account-divider,.account-trigger-chevron{flex-shrink:0}
+.account-divider,.account-trigger-chevron{color:var(--muted);font-weight:400}
+.account-trigger .account-username{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:650;font-variant-numeric:tabular-nums}
+.account-trigger .pill{flex-shrink:0;max-width:72px;overflow:hidden;text-overflow:ellipsis;font-size:10px;line-height:16px;padding:0 4px;text-align:left}
+.account-panel{position:fixed;inset:auto;margin:0;width:280px;max-width:calc(100vw - 16px);max-height:calc(100dvh - 16px);padding:0;border:1px solid #bccdb6;border-radius:6px;background:#fcfdfa;color:var(--ink);box-shadow:0 8px 20px rgb(28 58 35 / 13%);z-index:180;flex-direction:column;overflow:hidden;font:13px/1.5 "Segoe UI","Microsoft JhengHei",sans-serif}
+.account-panel[popover]{display:none}
+.account-panel:popover-open{display:flex}
+.account-panel-fallback{display:flex}
+.account-panel-heading{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--line);flex-shrink:0}
+.account-panel-heading h2{font-size:13px;line-height:1.4}
+:root[data-density] #accountPanelClose{min-width:26px;min-height:26px;padding:0;font-size:20px;line-height:1}
+.account-options{display:grid;gap:4px;padding:6px;overflow-y:auto;overscroll-behavior:contain;min-height:0}
+:root[data-density] .account-option{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;padding:7px 9px;text-align:left;white-space:normal;background:#fff;border:1px solid var(--line);border-radius:4px;min-height:40px}
+:root[data-density] .account-option:hover{border-color:#95ad8d;background:#f4f8ef}
+:root[data-density] .account-option[aria-pressed=true]{border-color:#90ad84;background:#edf4e7;box-shadow:inset 2px 0 var(--green)}
+.account-option-copy{display:grid;gap:2px;min-width:0;flex:1}
+.account-option-heading{display:flex;align-items:baseline;gap:7px;min-width:0}
+.account-option-heading strong{min-width:0;font-size:13px;font-weight:650;overflow-wrap:anywhere;line-height:1.4;font-variant-numeric:tabular-nums}
+.account-nickname{font-size:11px;color:var(--muted);line-height:1.4;overflow-wrap:anywhere}
+.account-option-status{font-size:10px;color:var(--muted);line-height:1.4}
+.account-option-marker{flex-shrink:0;align-self:center;color:var(--green);font-size:12px;font-weight:650}
+.account-switch-status{padding:0 12px 6px;flex-shrink:0;overflow-wrap:anywhere}
+.account-panel-actions{display:grid;grid-template-columns:1fr 1fr;gap:2px;padding:6px;border-top:1px solid var(--line);background:#f1f5ed;flex-shrink:0}
+:root[data-density] .account-panel-actions button{font-size:11px;min-height:30px;padding:4px 6px;background:transparent;border-color:transparent;text-align:left}
+:root[data-density] .account-panel-actions button:hover{background:#e3ebdd;border-color:#cad8c4}
+.saved-login-accounts{display:grid;gap:6px;max-height:460px;overflow-y:auto;overscroll-behavior:contain;padding:3px;margin:-3px}
+.saved-account{border:1px solid var(--line);border-radius:6px;overflow:hidden;background:#fff}
+:root[data-density] .saved-account .account-option{border:0;border-radius:0;padding:8px 10px}
+.saved-account-actions{display:flex;justify-content:space-between;gap:7px;padding:2px 6px;border-top:1px solid #edf0e8;background:#fafcf7}
+:root[data-density] .saved-account-actions button{font-size:11px;min-height:26px;padding:3px 5px}
+:root[data-density] .new-login-account{border-style:dashed;color:var(--green);background:transparent;padding:9px;min-height:38px}
+.login-fields{display:grid;gap:15px;min-width:0;margin:2px 0 0;padding:17px 0 0;border:0;border-top:1px solid var(--line)}
+.login-fields legend{padding:0 7px 0 0;font-size:12px;font-weight:650;color:var(--green)}
+.login-fields>button{width:100%}
+@media(min-width:781px){.entry{padding-top:7vh;padding-bottom:7vh;align-items:start}}
+@media(max-width:780px){:root[data-density] .account-trigger{max-width:320px}.saved-login-accounts{max-height:none}}
+@media(pointer:coarse){:root[data-density] .account-trigger,:root[data-density] .account-option,:root[data-density] .account-panel-actions button,:root[data-density] .saved-account-actions button,:root[data-density] #accountPanelClose{min-height:44px}}
 .review-page>.page-heading #reviewProgress{flex:1;min-width:0;max-width:380px}
 .review-page>.page-heading #reviewProgress:empty{display:none}
 .review-page>.page-heading #reviewProgress .job-progress{margin:0;max-width:none}
 :root[data-density=compact] .task-row{padding:7px 10px;margin-bottom:6px;gap:8px}
 .task-row>div:first-child{min-width:0;flex:1}
 :root[data-density=compact] .feature-controls .task-row{margin:6px 0 0}
-@media(max-width:780px){.sidebar-account{max-width:320px}.review-page>.page-heading #reviewProgress{order:3;flex-basis:100%;max-width:none}}
-@media(prefers-reduced-motion:reduce){.sidebar-account>summary::before{transition:none}}
+@media(max-width:780px){.review-page>.page-heading #reviewProgress{order:3;flex-basis:100%;max-width:none}}
 .review-layout.patients-collapsed{grid-template-columns:minmax(0,1fr)}
 .review-layout{--review-patient-width:clamp(184px,var(--review-patient-content-width,184px),248px);grid-template-columns:var(--review-patient-width) minmax(0,1fr);position:relative}
 .review-layout.patients-collapsed{grid-template-columns:minmax(0,1fr)}

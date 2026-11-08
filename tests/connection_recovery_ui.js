@@ -3,7 +3,7 @@ const assert=require("node:assert/strict"),fs=require("node:fs"),vm=require("nod
 const source=fs.readFileSync("vghks_bot/static/bot.js","utf8");
 const operation=source.match(/async function maybeRecoverConnection\(\)\{[\s\S]*?\n\}/)[0];
 const requests=[],dialogs=[],messages=[],status={textContent:""};
-const context={account:"test",root:{read_only:false},work:{online:false,offline_mode:false,tasks:[],connection_error_code:"AUTH_LOGIN_REJECTED"},
+const context={window:{},account:"test",root:{read_only:false},work:{online:false,offline_mode:false,tasks:[],connection_error_code:"AUTH_LOGIN_REJECTED"},
   recoveringConnection:false,reconnectAttempts:new Map(),resumedTasks:new Set(),inProgress:new Set(["queued","running","cancelling"]),
   Date,$:()=>status,interruptedTask:()=>({id:"failed-input"}),openReconnect:(...args)=>dialogs.push(args),
   ra:async path=>{requests.push(path);return {status:"unavailable",message:"連線暫時中斷"};},say:(...args)=>messages.push(args),

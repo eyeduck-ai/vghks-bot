@@ -75,6 +75,9 @@ py -3.11 -m venv .venv
 
 # 一次性合成瀏覽器工作區；不連院內。
 .venv/Scripts/python.exe tools/browser_bot_fixture.py --review-patients 1000 --report-gallery --demographics --local-board
+
+# 四個合成帳號：不同院區、同院區長名稱與需要密碼的帳號。
+.venv/Scripts/python.exe tools/browser_bot_fixture.py --account-switcher --sheet-management --local-board
 ```
 
 fixture 印出本機 URL；結束測試服務後清除其暫存資料庫。`--lookup-failures --lookup-delay 5` 可驗收慢病人查核，`--registrations` 可驗收掛號。工具旗標與個別模式以 `--help` 為準。
