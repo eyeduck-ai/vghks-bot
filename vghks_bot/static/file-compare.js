@@ -291,15 +291,18 @@ window.FileCompare = (() => {
     render();
   }
   function zoom(digest, delta, reset = false) {
+    const item = (embedded ? remoteItems : items).find(row => row.digest === digest);
+    // The native PDF viewer owns document zoom; resizing its iframe does not.
+    if (!item || item.mime === "application/pdf") return;
     if (embedded) {
       window.parent.postMessage({type:"bot:compare-zoom", account, mrn, digest, ...(reset ? {reset:true} : {delta})}, location.origin);
       return;
     }
-    const item = items.find(row => row.digest === digest);
-    if (item) {item.zoom = reset ? 1 : Math.max(.5, Math.min(3, item.zoom + delta));render();}
+    item.zoom = reset ? 1 : Math.max(.5, Math.min(3, item.zoom + delta));render();
   }
   function pane(item, index, inline = false) {
     const collection = inline ? remoteItems : items;
+    const pdf = item.mime === "application/pdf";
     const wrap = make("section", undefined, "file-compare-pane");
     wrap.dataset.digest = item.digest;
     wrap.dataset.active = String(index === (inline ? inlineActive : activeIndex));
@@ -315,19 +318,20 @@ window.FileCompare = (() => {
     const moveItem = delta => inline
       ? window.parent.postMessage({type:"bot:compare-move", account, mrn, digest:item.digest, delta}, location.origin)
       : move(itemIndex(), delta);
-    const resetZoom = button(Math.round(item.zoom * 100) + "%", () => zoom(item.digest, 0, true));
-    resetZoom.className = "file-compare-zoom";
-    resetZoom.setAttribute("aria-label", "重設縮放為 100%");resetZoom.title = "點擊重設為 100%";
-    buttons.append(button("←", () => moveItem(-1)), button("→", () => moveItem(1)),
-      button("−", () => zoom(item.digest, -.25)), resetZoom,
-      button("＋", () => zoom(item.digest, .25)),
-      button("×", () => inline ? removeDigest(item.digest) : remove(itemIndex())));
-    for (const [i, el] of [...buttons.children].entries()) if (i < 2) el.setAttribute("aria-label", i ? "將檔案向右移" : "將檔案向左移");
-    buttons.children[2].setAttribute("aria-label", "縮小檔案");
-    buttons.children[4].setAttribute("aria-label", "放大檔案");
-    buttons.children[5].setAttribute("aria-label", `移除 ${label}`);
-    buttons.children[5].className = "file-compare-remove";
-    buttons.children[5].title = "移除檔案";
+    const left = button("←", () => moveItem(-1)), right = button("→", () => moveItem(1));
+    left.setAttribute("aria-label", "將檔案向左移");right.setAttribute("aria-label", "將檔案向右移");
+    buttons.append(left, right);
+    if (!pdf) {
+      const smaller = button("−", () => zoom(item.digest, -.25)), larger = button("＋", () => zoom(item.digest, .25));
+      const resetZoom = button(Math.round(item.zoom * 100) + "%", () => zoom(item.digest, 0, true));
+      resetZoom.className = "file-compare-zoom";
+      resetZoom.setAttribute("aria-label", "重設縮放為 100%");resetZoom.title = "點擊重設為 100%";
+      smaller.setAttribute("aria-label", "縮小檔案");larger.setAttribute("aria-label", "放大檔案");
+      buttons.append(smaller, resetZoom, larger);
+    }
+    const removeFile = button("×", () => inline ? removeDigest(item.digest) : remove(itemIndex()));
+    removeFile.setAttribute("aria-label", `移除 ${label}`);removeFile.className = "file-compare-remove";removeFile.title = "移除檔案";
+    buttons.append(removeFile);
     buttons.children[0].disabled = index === 0;
     buttons.children[1].disabled = index === collection.length - 1;
     header.append(name, caption, buttons);
@@ -335,15 +339,17 @@ window.FileCompare = (() => {
     const path = location.pathname === "/tools" && !new URLSearchParams(location.search).has("account")
       ? `/api/analysis/asset?id=${item.digest}` : `/api/accounts/${item.account}/analysis/asset?id=${item.digest}`;
     const url = window.LocalSession.resourceURL(path);
-    const documentNode = make(item.mime === "application/pdf" ? "iframe" : "img");
-    documentNode.src = item.mime === "application/pdf" ? ClinicalUI.pdfURL(url) : url;
+    const documentNode = make(pdf ? "iframe" : "img");
+    documentNode.src = pdf ? ClinicalUI.pdfURL(url) : url;
     documentNode.title = name.title;
     if (documentNode.tagName === "IMG") documentNode.alt = documentNode.title;
     buttons.append(ClinicalUI.assetTools({url,asset:item,name:[label,item.name].filter(Boolean).join(" "),image:documentNode,compact:true}));
-    documentNode.style.width = (item.zoom * 100) + "%";
-    documentNode.style.height = item.mime === "application/pdf" ? (item.zoom * 100) + "%" : "auto";
+    documentNode.style.width = pdf ? "100%" : (item.zoom * 100) + "%";
+    documentNode.style.height = pdf ? "100%" : "auto";
     scroll.append(documentNode);
-    wrap.append(header, scroll);
+    wrap.append(header);
+    if (pdf) wrap.append(make("p", "PDF 縮放請使用檢閱器內的比例調整。", "file-compare-pdf-hint"));
+    wrap.append(scroll);
     return wrap;
   }
   function updatePane(current, item, index, collection, active) {
@@ -363,9 +369,10 @@ window.FileCompare = (() => {
     const downloadName = [label,item.name].filter(Boolean).join(" ");
     if (download.download !== ClinicalUI.fileName(downloadName, item.mime))
       download.replaceWith(ClinicalUI.downloadLink(download.href, downloadName, item.mime, true));
-    file.style.width = (item.zoom * 100) + "%";
-    file.style.height = item.mime === "application/pdf" ? (item.zoom * 100) + "%" : "auto";
-    current.querySelector(".file-compare-zoom").textContent = Math.round(item.zoom * 100) + "%";
+    const pdf = item.mime === "application/pdf";
+    file.style.width = pdf ? "100%" : (item.zoom * 100) + "%";
+    file.style.height = pdf ? "100%" : "auto";
+    if (!pdf) current.querySelector(".file-compare-zoom").textContent = Math.round(item.zoom * 100) + "%";
   }
   function updateSwitches(host, collection, active, activate) {
     const focused = host.ownerDocument.activeElement;

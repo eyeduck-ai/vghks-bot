@@ -459,7 +459,9 @@ class Analysis:
         scope = self.store.step(mrn, SCOPE_KEY)
         categories, case_keys = ("*", "OR"), None
         if scope:
-            categories = ("*",) if scope["payload"].get("history_complete", True) else ()
+            # Partial indices still contain individually verified rows. The eye
+            # context checks below decide which rows belong in this view.
+            categories = ("*",)
             case_keys = set(scope["payload"]["case_keys"]) if "case_keys" in scope["payload"] else None
         contexts = eye_order_contexts(visits, mrn)
         sources = []

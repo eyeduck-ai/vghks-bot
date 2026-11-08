@@ -412,13 +412,18 @@ class PatientCollector:
                 sources[category] = result
         history_incomplete = len(sources) < len(categories)
         history_parsed = all(order_index_complete(self.store.step(self.mrn, "orders-history:" + category)) for category in sources)
-        order_indices_complete = visits is not None and history_parsed
+        history_complete = not history_incomplete and history_parsed
+        # A rejected row from another encounter must not hide confirmed eye
+        # orders. Verify each eye encounter when the history index is partial.
+        backfill_eye_scope = eye_only and not history_complete
+        order_indices_complete = visits is not None and (history_parsed or eye_only)
+        checked_eye_contexts = set()
         order_cases = set()
         for raw in eligible:
             self.state.check_cancel()
             if eye_only and not is_eye_visit(raw):
                 continue
-            if raw["visit_date"] >= order_cutoff and not history_incomplete:
+            if raw["visit_date"] >= order_cutoff and not (history_incomplete or backfill_eye_scope):
                 continue
             selected = backfill_case(raw)
             if selected is None:
@@ -430,8 +435,10 @@ class PatientCollector:
                                 validator=lambda value, _, case=case: validate_case_orders(value, case))
             if result is not None:
                 sources[key] = result
-            else:
+            if result is None or not order_index_complete(self.store.step(self.mrn, "orders-case:" + key)):
                 order_indices_complete = False
+            else:
+                checked_eye_contexts.update(eye_order_contexts([raw], self.mrn))
         # Include already cached per-case indices when a later run reuses history.
         for saved in self.store.steps(self.mrn, "order_index"):
             source = saved["key"].removeprefix("orders-case:")
@@ -443,9 +450,11 @@ class PatientCollector:
                 except (TypeError, ValueError):
                     pass
         if eye_only:
+            if backfill_eye_scope:
+                order_indices_complete = order_indices_complete and eye_contexts <= checked_eye_contexts
             self.store.save_step(self.mrn, SCOPE_KEY, "order_scope", {
                 "scope": "ophthalmology", "visit_signature": eye_visit_signature(visits, self.mrn),
-                "history_complete": "*" in sources and history_parsed, "case_keys": sorted(order_cases),
+                "history_complete": history_complete, "case_keys": sorted(order_cases),
                 "complete": order_indices_complete and not (self.options.get("start") or self.options.get("end")),
             }, self.settings.username)
         groups = defaultdict(list)

@@ -230,6 +230,7 @@ async function historyTests(){
  await ui.open("orders","TEST001");assert.equal($("#dataDialog").classList.contains("report-view-dialog"),false,"report-only layout leaked into order list");assert.equal($("#dataDialog").classList.contains("order-list-dialog"),true);assert.ok($("#dataDialogActions").querySelector(".history-controls"));assert.equal(panel.querySelector(".history-controls"),null);assert.equal(pages.at(-1).total,45,"historical orders did not default to ophthalmic checks");
  assert.equal(panel.querySelectorAll(".history-action").find(value=>value.textContent.startsWith("眼科檢查"))["aria-pressed"],"true");
  const grid=panel.querySelector(".history-order-table"),headers=grid.querySelectorAll("th"),names=()=>grid.querySelector("tbody").children.map(row=>row.children[0].textContent);
+ assert.equal(panel.querySelectorAll("button").some(value=>value.textContent==="更早醫囑"),false,"historical orders retained the misleading visit-history shortcut");
  assert.deepEqual(names().slice(0,3),["Beta 0","Beta 1","Beta 2"]);
  await panel.querySelectorAll(".history-action").find(value=>value.textContent.startsWith("全部")).run();assert.equal(pages.at(-1).total,105,"all tab hid other reports");
  assert.equal(panel.querySelectorAll("table").length,1,"orders were split into multiple tables");

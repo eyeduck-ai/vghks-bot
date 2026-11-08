@@ -368,6 +368,60 @@ class ReviewHistoryTests(unittest.TestCase):
         self.assertFalse(any(call[1] == "image" for call in HistorySDK.calls),
                          "fixture setup downloaded an image under test")
 
+    def test_orders_backfill_older_visits_into_the_same_list_without_fetching_reports(self):
+        HistorySDK.calls.clear()
+        self.assertEqual(self.fetch("orders")["status"], "completed")
+        saved = self.history.read(self.request("orders"))
+        self.assertTrue(saved["complete"])
+        self.assertEqual({row["name"] for row in saved["data"]}, {"跨科影像", "舊門診檢驗"})
+        self.assertEqual([call[2] for call in HistorySDK.calls if call[1] == "case-orders"], ["LEGACY"])
+        self.assertFalse(any(call[1] in {"soap", "order-detail", "order-report", "pdf", "image"}
+                             for call in HistorySDK.calls))
+        calls = list(HistorySDK.calls)
+        self.assertEqual(self.fetch("orders")["status"], "completed")
+        self.assertEqual(HistorySDK.calls, calls)
+
+    def test_cached_history_is_incomplete_until_older_visits_are_backfilled(self):
+        for category in ("*", "OR"):
+            self.work.analysis.store.save_step(MRN, "orders-history:" + category, "order_index", [], "TEST")
+        self.assertFalse(self.history.read(self.request("orders"))["complete"])
+        HistorySDK.calls.clear()
+        with patch.object(self.work.gateway.connection.orders, "get_order_history",
+                          side_effect=AssertionError("complete history index was fetched again")):
+            self.assertEqual(self.fetch("orders")["status"], "completed")
+        self.assertEqual([call[2] for call in HistorySDK.calls if call[1] == "case-orders"], ["LEGACY"])
+        saved = self.history.read(self.request("orders"))
+        self.assertTrue(saved["complete"])
+        self.assertEqual([row["name"] for row in saved["data"]], ["舊門診檢驗"])
+
+    def test_partial_older_visit_keeps_rows_and_retries_only_that_visit(self):
+        from vghks_bot.sdk_orders import OrderIndex
+
+        original = self.work.gateway.connection.orders.get_case_orders
+
+        def partial(case):
+            return OrderIndex(original(case), issues=[ParseError("synthetic", code="TEST_PARSE").info])
+
+        with patch.object(self.work.gateway.connection.orders, "get_case_orders", side_effect=partial):
+            self.assertEqual(self.fetch("orders")["status"], "partial")
+        saved = self.history.read(self.request("orders"))
+        self.assertFalse(saved["complete"])
+        self.assertEqual({row["name"] for row in saved["data"]}, {"跨科影像", "舊門診檢驗"})
+        self.assertEqual(saved["issues"][0]["code"], "TEST_PARSE")
+        HistorySDK.calls.clear()
+        self.assertEqual(self.fetch("orders")["status"], "completed")
+        self.assertEqual([call[1] for call in HistorySDK.calls], ["case-orders"])
+        self.assertTrue(self.history.read(self.request("orders"))["complete"])
+
+    def test_older_visit_rejects_an_order_from_a_different_encounter(self):
+        wrong = ClinicalOrder(ALIAS, "OTHER", "O", "錯誤就診", "2012-01-01")
+        with patch.object(self.work.gateway.connection.orders, "get_case_orders", return_value=[wrong]):
+            self.assertEqual(self.fetch("orders")["status"], "partial")
+        saved = self.history.read(self.request("orders"))
+        self.assertFalse(saved["complete"])
+        self.assertEqual([row["name"] for row in saved["data"]], ["跨科影像"])
+        self.assertEqual(saved["issues"][0]["code"], "ORDER_REF_CASE_MISMATCH")
+
     def test_real_order_parser_keeps_verified_alias_and_partial_rows_then_retries_only_partial_category(self):
         from test_sdk_orders import order_page
 
@@ -391,7 +445,7 @@ class ReviewHistoryTests(unittest.TestCase):
             task = self.fetch("orders")
             self.assertEqual(task["status"], "partial", task)
             saved = self.history.read(self.request("orders"))
-            self.assertEqual(len(saved["data"]), 2)
+            self.assertEqual(len(saved["data"]), 3)
             self.assertEqual(len(saved["issues"]), 2)
             self.assertFalse(saved["complete"])
             self.assertEqual({order["mrn"] for order in self.work.analysis.store.step(MRN, "orders-history:*")["payload"]}, {MRN, ALIAS})
@@ -416,7 +470,7 @@ class ReviewHistoryTests(unittest.TestCase):
         with patch.object(self.work.gateway.connection.orders, "get_order_history", side_effect=query):
             self.assertEqual(self.fetch("orders")["status"], "partial")
         before = self.history.read(self.request("orders"))
-        self.assertEqual(len(before["data"]), 1)
+        self.assertEqual(len(before["data"]), 2)
         self.assertFalse(before["complete"])
         with patch.object(self.work.gateway.connection.orders, "get_order_history", side_effect=ParseError("synthetic", code="TEST_PARSE")):
             self.assertEqual(self.fetch("orders", force=True)["status"], "partial")
@@ -487,7 +541,7 @@ class ReviewHistoryTests(unittest.TestCase):
         self.assertEqual(self.fetch("orders")["status"], "completed")
         orders = self.history.read(self.request("orders"))
         self.assertTrue(orders["complete"])
-        self.assertEqual(len(orders["data"]), 1)
+        self.assertEqual(len(orders["data"]), 2)
         self.assertEqual(orders["data"][0]["name"], "跨科影像")
         self.assertFalse(any(call[1] in {"order-detail", "pdf", "image"} for call in HistorySDK.calls))
         ref = orders["data"][0]["id"]

@@ -176,7 +176,6 @@ window.ReviewHistoryUI=(()=>{
   }
   search.addEventListener("input",()=>{orderQuery=search.value;orderPage=0;draw(true);});
   controls.append(search,categories);footer.append(pager);
-  if(context.resource==="orders"){const older=action("更早醫囑",()=>jump("visits"));older.title="從歷次就診選擇更早醫囑";footer.append(older);}
   content.append(controls,results,footer);
   return {update(next){rows=next;draw();}};
  }

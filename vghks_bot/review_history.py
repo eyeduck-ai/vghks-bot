@@ -23,6 +23,7 @@ from .analysis_fetch import (
     model,
     order_identity,
     unique_refs,
+    validate_case_orders,
     validate_patient,
     visit_detail_params,
 )
@@ -164,7 +165,7 @@ class ReviewHistory:
             groups.setdefault(self._order_key(order), []).append(order)
         return groups
 
-    def _save_order_index(self, mrn, key, orders, *, issues=()):
+    def _save_order_index(self, mrn, key, orders, *, issues=(), case=None):
         assessment = to_jsonable(assess_order_index(orders))
         assessment["issues"].extend(issues)
         allowed = self._allowed_mrns(mrn)
@@ -174,8 +175,12 @@ class ReviewHistory:
                 if not isinstance(order, dict) or order.get("mrn") not in allowed:
                     raise ValueError("unverified patient")
                 validate_patient(order, order["mrn"])
+                if case:
+                    validate_case_orders([order], case)
             except (TypeError, ValueError):
-                assessment["issues"].append({"code": "ORDER_REF_MRN_MISMATCH", "category": "PARSE"})
+                code = ("ORDER_REF_CASE_MISMATCH" if case and isinstance(order, dict)
+                        and order.get("mrn") == case.mrn else "ORDER_REF_MRN_MISMATCH")
+                assessment["issues"].append({"code": code, "category": "PARSE"})
             else:
                 payload.append(order)
         if assessment["issues"]:
@@ -188,6 +193,8 @@ class ReviewHistory:
                     if not isinstance(order, dict) or order.get("mrn") not in allowed:
                         raise ValueError("unverified patient")
                     validate_patient(order, order["mrn"])
+                    if case:
+                        validate_case_orders([order], case)
                 except (TypeError, ValueError):
                     continue
                 retained[self._order_key(order)] = order
@@ -197,6 +204,14 @@ class ReviewHistory:
         assessment["availability"] = "AVAILABLE" if payload else "EMPTY"
         self.store.save_step(mrn, key, "order_index", payload, self.app.username, assessment=assessment)
         return assessment["issues"]
+
+    def _older_order_cases(self, mrn):
+        visits, _ = self._visits(mrn)
+        cutoff = today() - timedelta(days=4000)
+        cases = (model(VisitCase, raw) for raw in visits or [])
+        return list({case.identity: case for case in cases
+                     if case.patient_mrn == mrn and case.case_type == "O"
+                     and case.visit_date and case.visit_date < cutoff}.values())
 
     def _index_steps(self, mrn, resource, reference=""):
         if resource == "visits":
@@ -212,7 +227,9 @@ class ReviewHistory:
                       self.review.db.get("numeric", case_key(case), required=False)]
             return [value for value in values if value] or [None]
         if resource == "orders":
-            return [self.store.step(mrn, "orders-history:" + category) for category in ("*", "OR")]
+            return ([self.store.step(mrn, "orders-history:" + category) for category in ("*", "OR")]
+                    + [self.store.step(mrn, "orders-case:" + digest(case.identity))
+                       for case in self._older_order_cases(mrn)])
         if resource == "case_orders":
             return [self.store.step(mrn, "orders-case:" + digest(self.case(mrn, reference).identity))]
         return []
@@ -254,10 +271,10 @@ class ReviewHistory:
             step = self.store.step(mrn, "numeric-history")
             return (step["payload"], step["saved_at"]) if step else (None, "")
         if resource == "orders":
-            steps = [self.store.step(mrn, "orders-history:" + category) for category in ("*", "OR")]
+            steps = self._index_steps(mrn, resource)
             if not any(steps):
                 return None, ""
-            orders = [order for step in steps if step for order in step["payload"]]
+            orders = self._order_sources(mrn)
             return self._public_orders(self._groups(mrn, orders)), max(step["saved_at"] for step in steps if step)
         if resource == "visits":
             cases, saved = self._visits(mrn)
@@ -404,6 +421,25 @@ class ReviewHistory:
                     # while the remaining category is still being fetched.
                     if state:
                         self.review.report(state, task, stage="已保存歷年醫囑 · " + ("全部類別" if category == "*" else "OR"))
+                for case in self._older_order_cases(mrn):
+                    if state:
+                        state.check_cancel()
+                    key = "orders-case:" + digest(case.identity)
+                    if order_index_complete(self.store.step(mrn, key)) and not task.get("force"):
+                        continue
+                    try:
+                        orders = sdk.orders.get_case_orders(case)
+                    except (Cancelled, StorageError):
+                        raise
+                    except Exception as exc:
+                        if should_pause(exc):
+                            raise
+                        issues = self._save_order_index(mrn, key, [], issues=[to_jsonable(error_info(exc))], case=case)
+                    else:
+                        issues = self._save_order_index(mrn, key, orders, case=case)
+                    failures.extend(issues)
+                    if state:
+                        self.review.report(state, task, stage="已補查更早門診醫囑")
             return {"status": "partial" if failures else "ready", "cached": False,
                     "resource": resource, "reference": reference, "issues": failures}
         elif resource in CASE_RESOURCES:
@@ -427,7 +463,7 @@ class ReviewHistory:
                     self.store.save_step(mrn, "numeric-case:" + digest(case.identity), "numeric", clean(report), self.app.username)
                 elif resource == "case_orders":
                     orders = sdk.orders.get_case_orders(case)
-                    issues = self._save_order_index(mrn, "orders-case:" + digest(case.identity), orders)
+                    issues = self._save_order_index(mrn, "orders-case:" + digest(case.identity), orders, case=case)
                     return {"status": "partial" if issues else "ready", "cached": False,
                             "resource": resource, "reference": reference, "issues": issues}
                 else:

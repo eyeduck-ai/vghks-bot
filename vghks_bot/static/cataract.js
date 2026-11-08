@@ -4,6 +4,7 @@
 window.CataractUI = (() => {
   let status = null, orderSequence = 0, patientsCollapsed = false, patientsScroll = 0;
   let currentKey = "", currentState = null, currentUI = null;
+  let imageResizeObserver = null;
   let patientFitFrame = null, patientResize = null;
   const patientStates = new Map();
   const resultCache = new Map(), resultReads = new Map();
@@ -86,6 +87,7 @@ window.CataractUI = (() => {
     if (typeof requestAnimationFrame === "function") patientFitFrame = requestAnimationFrame(fit);else fit();
   }
   window.addEventListener("resize", fitPatientRail, {passive:true});
+  window.addEventListener("resize", refitImagePreviews, {passive:true});
   window.addEventListener("scroll", fitPatientRail, {passive:true});
 
   function stateFor(member) {
@@ -95,7 +97,7 @@ window.CataractUI = (() => {
       view: "overview", overviewMobile: "soap", mobile: "orders", numericOpen: true, eye: "both", expansionKey,
       expanded: new Set(expandedStates.get(expansionKey) || window.CataractNumeric.exams),
       orderInitialized: false, orderExpanded: new Set(),
-      selectedOrderId: "", selectedAssetDigest: "", orderRow: null, report: null, reportSavedAt: ""
+      selectedOrderId: "", selectedAssetDigest: "", orderRow: null, report: null, reportSavedAt: "", imageViews: new Map()
     });
     if (key !== currentKey) {
       currentKey = key;
@@ -145,6 +147,7 @@ window.CataractUI = (() => {
       toggle.title = toggle.getAttribute("aria-label");
     }
     if (enabled) renderPatients();
+    refitImagePreviews();
   }
 
   async function refreshStatus({force = false} = {}) {
@@ -207,11 +210,26 @@ window.CataractUI = (() => {
     const heading = el("h3", `病人清單 · ${currentCohort.members.length} 位`);
     list.append(heading);
     const cataract = activeView(), queue = cataract ? status?.queue : null;
+    const states = new Map((status?.members || []).map(row => [row.mrn, row]));
     if (queue && !["idle", "completed"].includes(queue.state)) {
       const controls = el("div", undefined, "cataract-queue-controls");
       const paused = queue.state === "paused";
-      controls.append(el("small", `${paused ? "已暫停" : queue.active_mrn ? "背景抓取" : "等待中"} · ${queue.pending?.length || 0} 位`));
-      const toggle = button(paused ? "▶" : "Ⅱ", () => action(() => enqueue(paused ? "resume" : "pause")), "quiet-button");
+      controls.dataset.state = queue.state;
+      const members = currentCohort.members.filter(member => member.account_id === embeddedAccount);
+      const saved = members.filter(member => states.get(member.mrn)?.ready).length;
+      const summary = el("div", undefined, "cataract-queue-summary"), caption = el("div", undefined, "cataract-queue-caption");
+      caption.append(el("strong", "集合進度"), el("span", `${saved} / ${members.length} 位已保存`));
+      const bar = el("progress", undefined, "cataract-queue-progress");
+      bar.max = Math.max(1, members.length);bar.value = saved;
+      bar.setAttribute("aria-label", "本集合已保存病人");
+      bar.setAttribute("aria-valuetext", `${saved} / ${members.length} 位已保存`);
+      const current = members.find(member => member.mrn === queue.active_mrn);
+      const detail = paused ? "已暫停" : current ? `正在處理 ${current.name || current.mrn}` : "等待下一位";
+      const state = el("small", detail);state.title = detail;
+      summary.append(caption, bar, state);controls.append(summary);
+      const toggle = button("", () => action(() => enqueue(paused ? "resume" : "pause")), "quiet-button");
+      const icon = el("span", undefined, paused ? "cataract-queue-icon is-play" : "cataract-queue-icon is-pause");
+      icon.setAttribute("aria-hidden", "true");toggle.append(icon);
       toggle.setAttribute("aria-label", paused ? "繼續背景抓取" : "暫停背景抓取");
       toggle.title = toggle.getAttribute("aria-label");
       toggle.dataset.queueAction = "toggle";
@@ -219,7 +237,6 @@ window.CataractUI = (() => {
       controls.title = queue.reason || "";
       controls.append(toggle);list.append(controls);
     }
-    const states = new Map((status?.members || []).map(row => [row.mrn, row]));
     for (const member of currentCohort.members) {
       const state = states.get(member.mrn);
       const label = state?.active_run_id ? "抓取中" : state?.ready ? "已保存" :
@@ -395,6 +412,7 @@ window.CataractUI = (() => {
     currentUI[view].dataset.mobile = key;
     for (const control of currentUI[view].querySelectorAll(".cataract-mobile-switch button"))
       control.setAttribute("aria-pressed", String(control.dataset.mobileView === key));
+    refitImagePreviews();
   }
 
   function mobileSwitch(view, state) {
@@ -424,6 +442,7 @@ window.CataractUI = (() => {
     currentUI.railToggle.setAttribute("aria-label", currentState.numericOpen ? "收合歷年眼科數值" : "展開歷年眼科數值");
     currentUI.railToggle.textContent = currentState.numericOpen ? "‹" : "›";
     currentUI.railToggle.hidden = view !== "work";
+    refitImagePreviews();
   }
 
   function render(data) {
@@ -485,7 +504,6 @@ window.CataractUI = (() => {
     nav.append(compare, retry, railToggle); heading.append(nav);
     const tools = el("details", undefined, "cataract-header-tools");
     const toolsPanel = el("div", undefined, "cataract-header-tools-panel");
-    toolsPanel.append(toolbar, coverage);
     tools.append(el("summary", "資料與操作"), toolsPanel);
     tools.addEventListener("keydown", event => {
       if (event.key === "Escape") {
@@ -510,8 +528,14 @@ window.CataractUI = (() => {
     currentUI = {heading, identity, identitySignature, tools, pages:{overview, work:workPage}, tabs, compare, retry,
       overview, overviewNumeric, work:workPage, soap, numeric, orders, preview, workspace, railToggle,
       numericSignature, soapSignature, orderSignature};
-    renderOrder(state.report, state.orderRow);
     area.append(heading, overview, workPage);
+    // Keep the shared controls connected while constructing the new view.
+    // Report rendering reads their values, including a restored selection.
+    for (const control of [toolbar, coverage]) {
+      if (typeof toolsPanel.moveBefore === "function") toolsPanel.moveBefore(control, null);
+      else toolsPanel.append(control);
+    }
+    renderOrder(state.report, state.orderRow);
     showView(state.view);
     syncAttachments();
     const selectedRow = state.orderRow;
@@ -532,6 +556,61 @@ window.CataractUI = (() => {
       const row = status?.members?.find(item => item.mrn === $("#analysisPatient").value);
       currentUI.retry.hidden = !row?.attempted || row.cache_cleared || row.ready || !!row.active_run_id;
     }
+  }
+
+  function refitImagePreviews() {
+    for (const box of $$(".cataract-image-preview")) box.refit?.();
+  }
+
+  function imagePreview(asset, url, title) {
+    const views = currentState.imageViews;
+    if (!views.has(asset.digest)) views.set(asset.digest, {fit:true, zoom:1, left:0, top:0});
+    const view = views.get(asset.digest);
+    const box = el("div", undefined, "cataract-asset cataract-image-preview");box.dataset.digest = asset.digest;
+    const tools = el("div", undefined, "cataract-image-tools"), controls = el("div", undefined, "cataract-image-zoom");
+    controls.setAttribute("role", "group");controls.setAttribute("aria-label", "圖片縮放");
+    const viewport = el("div", undefined, "cataract-image-viewport");
+    let restored = false;
+    viewport.tabIndex = 0;viewport.setAttribute("role", "region");viewport.setAttribute("aria-label", "醫囑圖片預覽，可捲動查看");
+    const file = el("img");file.title = file.alt = title;
+    const fitScale = () => file.naturalWidth && file.naturalHeight && viewport.clientWidth && viewport.clientHeight
+      ? Math.min(1, viewport.clientWidth / file.naturalWidth, viewport.clientHeight / file.naturalHeight) : null;
+    function apply() {
+      const fit = fitScale();
+      if (!box.isConnected || fit === null) return;
+      if (view.fit) view.zoom = fit;
+      file.style.width = Math.floor(file.naturalWidth * view.zoom * 100) / 100 + "px";
+      const percent = Math.round(view.zoom * 100) || +(view.zoom * 100).toPrecision(2);
+      reset.textContent = percent + "%";
+      reset.setAttribute("aria-label", `目前縮放 ${percent}%，回到最適比例`);
+      for (const control of [less, reset, more]) control.disabled = false;
+      if (!restored) {viewport.scrollLeft = view.left;viewport.scrollTop = view.top;restored = true;}
+    }
+    function step(direction) {
+      const fit = fitScale();
+      if (fit === null) return;
+      const small = view.zoom < .25 || view.zoom === .25 && direction < 0;
+      const next = small ? direction < 0 ? view.zoom * .8 : Math.min(.25, view.zoom * 1.25)
+        : (direction > 0 ? Math.floor(view.zoom * 4 + 1e-9) + 1 : Math.ceil(view.zoom * 4 - 1e-9) - 1) / 4;
+      view.fit = false;view.zoom = Math.max(Math.min(.01, fit / 2), Math.min(4, next));apply();
+    }
+    const less = button("−", () => step(-1)), more = button("＋", () => step(1));
+    less.setAttribute("aria-label", "縮小圖片");less.title = "縮小圖片";
+    more.setAttribute("aria-label", "放大圖片");more.title = "放大圖片";
+    const reset = button("…", () => {view.fit = true;view.left = view.top = 0;viewport.scrollLeft = viewport.scrollTop = 0;apply();});
+    reset.className = "cataract-image-fit";reset.title = "回到最適比例";reset.setAttribute("aria-label", "回到最適比例");
+    for (const control of [less, reset, more]) control.disabled = true;
+    controls.append(less, reset, more);tools.append(el("span", "圖片縮放", "small muted"), controls);
+    viewport.append(file);box.append(tools, viewport);box.refit = apply;
+    viewport.addEventListener("scroll", () => {view.left = viewport.scrollLeft;view.top = viewport.scrollTop;}, {passive:true});
+    file.addEventListener("load", apply);
+    file.addEventListener("error", () => {reset.textContent = "載入失敗";for (const control of [less, reset, more]) control.disabled = true;});
+    file.src = url;
+    if (!imageResizeObserver && typeof ResizeObserver === "function") {
+      // Observe the stable layout once; detached images are never retained.
+      imageResizeObserver = new ResizeObserver(refitImagePreviews);imageResizeObserver.observe($("#cataractLayout"));
+    }
+    return box;
   }
 
   function renderOrder(value, fallback) {
@@ -571,14 +650,15 @@ window.CataractUI = (() => {
       syncOrderControls();
       const selected = assets.find(asset => asset.digest === currentState.selectedAssetDigest);
       if(!retained){
-      const box = el("div", undefined, "cataract-asset");box.dataset.digest=selected.digest;
-      const file = el(selected.mime === "application/pdf" ? "iframe" : "img");
       const url=window.LocalSession.resourceURL(scopedPath("/api/analysis/asset?id=" + encodeURIComponent(selected.digest)));
-      file.src = selected.mime==="application/pdf"?ClinicalUI.pdfURL(url):url;
-      file.title = `${row.name} · 所選檔案`;
-      if (file.tagName === "IMG") file.alt = file.title;
-      box.append(file); if(pacs)pacs.after(box);else area.prepend(box);
+      let box;
+      if (selected.mime === "application/pdf") {
+        box = el("div", undefined, "cataract-asset");box.dataset.digest = selected.digest;
+        const file = el("iframe");file.src = ClinicalUI.pdfURL(url);file.title = `${row.name} · 所選檔案`;box.append(file);
+      } else box = imagePreview(selected, url, `${row.name} · 所選檔案`);
+      if(pacs)pacs.after(box);else area.prepend(box);
       }
+      refitImagePreviews();
     } else syncOrderControls();
     if(value.texts?.length||value.details?.length)area.append(ClinicalUI.textDownload(value,
       [row.date,row.name||"醫囑報告"].filter(Boolean).join(" ")));

@@ -211,30 +211,38 @@ function compareSetup({embedded=false}={}){
 function comparisonZoomReset(){
   const s=compareSetup(),{ui,item}=s;ui.add(item("1"));ui.add(item("2",{mime:"image/png"}));ui.open();
   const panes=s.document.getElementById("fileComparePanes"),pdf=panes.children[0].querySelector("iframe"),image=panes.children[1].querySelector("img");
-  const scroll=pdf.parentElement,reset=panes.children[0].querySelector(".file-compare-zoom");scroll.scrollTop=173;scroll.scrollLeft=31;reset.focus();
-  panes.children[0].querySelectorAll(".file-compare-pane-actions button")[4].dispatchEvent({type:"click"});
-  assert.equal(reset.textContent,"125%");assert.equal(pdf.style.width,"125%");assert.equal(pdf.style.height,"125%");
+  const pdfPane=panes.children[0],scroll=pdf.parentElement,source=pdf.src;
+  assert.equal(pdfPane.querySelector(".file-compare-zoom"),null,"PDF retained an outer zoom control");
+  assert.match(pdfPane.querySelector(".file-compare-pdf-hint").textContent,/檢閱器/);
+  assert.ok(pdfPane.querySelectorAll(".file-compare-pane-actions button").every(button=>!["放大檔案","縮小檔案"].includes(button.getAttribute("aria-label"))));
+  scroll.scrollTop=173;scroll.scrollLeft=31;
+  const reset=panes.children[1].querySelector(".file-compare-zoom");reset.focus();
+  panes.children[1].querySelectorAll(".file-compare-pane-actions button")[4].dispatchEvent({type:"click"});
+  assert.equal(reset.textContent,"125%");assert.equal(image.style.width,"125%");assert.equal(image.style.height,"auto");
   reset.dispatchEvent({type:"click"});assert.equal(reset.textContent,"100%");assert.equal(reset.tagName,"BUTTON");assert.equal(reset.type,"button");assert.match(reset.getAttribute("aria-label"),/100%/);
-  assert.equal(pdf.style.width,"100%");assert.equal(pdf.style.height,"100%");assert.equal(panes.children[0].querySelector("iframe"),pdf,"reset recreated the PDF browsing context");
+  assert.equal(pdf.style.width,"100%");assert.equal(pdf.style.height,"100%");assert.equal(panes.children[0].querySelector("iframe"),pdf,"image zoom recreated the PDF browsing context");assert.equal(pdf.src,source);
   assert.equal(scroll.scrollTop,173);assert.equal(scroll.scrollLeft,31);assert.equal(s.document.activeElement,reset,"zoom dropped the reset button's focus");
   panes.children[1].querySelectorAll(".file-compare-pane-actions button")[2].dispatchEvent({type:"click"});
   panes.children[1].querySelector(".file-compare-zoom").dispatchEvent({type:"click"});assert.equal(image.style.width,"100%");assert.equal(image.style.height,"auto");
-  const frame={contentWindow:{postMessage(){}}},message={origin:s.context.location.origin,source:null,data:{type:"bot:compare-zoom",account:accountA,mrn:"SYN001",digest:item("1").digest,reset:true}};
-  panes.children[0].querySelectorAll(".file-compare-pane-actions button")[4].dispatchEvent({type:"click"});
+  const frame={contentWindow:{postMessage(){}}},message={origin:s.context.location.origin,source:null,data:{type:"bot:compare-zoom",account:accountA,mrn:"SYN001",digest:item("2").digest,reset:true}};
+  panes.children[1].querySelectorAll(".file-compare-pane-actions button")[4].dispatchEvent({type:"click"});
   ui.receive(message,frame,accountA);assert.equal(reset.textContent,"125%","untrusted source reset a comparison");
   message.source=frame.contentWindow;message.data.mrn="OTHER";ui.receive(message,frame,accountA);assert.equal(reset.textContent,"125%");
   message.data.mrn="SYN001";message.data.account=accountB;ui.receive(message,frame,accountA);assert.equal(reset.textContent,"125%");
   message.data.account=accountA;ui.receive(message,frame,accountA);assert.equal(reset.textContent,"100%");assert.equal(s.requests.length,0);
+  message.data.digest=item("1").digest;message.data.reset=false;message.data.delta=.25;ui.receive(message,frame,accountA);
+  assert.equal(pdf.style.width,"100%","a stale PDF zoom message resized its browsing context");assert.equal(pdf.src,source);
 
   const inner=compareSetup({embedded:true}),host=inner.element("div"),emit=(rows,overrides={})=>inner.window.dispatchEvent({type:"message",origin:inner.context.location.origin,source:inner.window.parent,data:{type:"bot:compare-state",account:accountA,mrn:"SYN001",items:rows,...overrides}});
   inner.ui.renderInline(host);const one=inner.item("3",{zoom:1.5}),two=inner.item("4",{mime:"image/png",zoom:1});emit([one,two]);
-  const inlinePane=host.querySelectorAll(".file-compare-pane")[0],inlinePDF=inlinePane.querySelector("iframe"),inlineReset=inlinePane.querySelector(".file-compare-zoom");
+  const inlinePane=host.querySelectorAll(".file-compare-pane")[0],inlinePDF=inlinePane.querySelector("iframe"),imagePane=host.querySelectorAll(".file-compare-pane")[1],inlineReset=imagePane.querySelector(".file-compare-zoom");
+  assert.equal(inlinePane.querySelector(".file-compare-zoom"),null);assert.equal(inlinePDF.style.width,"100%","legacy PDF zoom state resized the native viewer");
   inlinePDF.parentElement.scrollTop=219;inlinePDF.parentElement.scrollLeft=45;inlineReset.focus();
-  inlineReset.dispatchEvent({type:"click"});assert.equal(inner.messages.at(-1).value.reset,true);assert.equal(inner.messages.at(-1).value.type,"bot:compare-zoom");assert.equal(inner.messages.at(-1).value.digest,one.digest);
+  inlineReset.dispatchEvent({type:"click"});assert.equal(inner.messages.at(-1).value.reset,true);assert.equal(inner.messages.at(-1).value.type,"bot:compare-zoom");assert.equal(inner.messages.at(-1).value.digest,two.digest);
   emit([{...one,zoom:1},two]);assert.equal(inlineReset.textContent,"100%");assert.equal(inlinePDF.style.width,"100%");assert.equal(inlinePDF.style.height,"100%");
   assert.equal(inlinePane.querySelector("iframe"),inlinePDF,"parent zoom state rebuilt an inline PDF");assert.equal(inlinePDF.parentElement.scrollTop,219);assert.equal(inlinePDF.parentElement.scrollLeft,45);assert.equal(inner.document.activeElement,inlineReset);
-  emit([two,{...one,zoom:1.25}]);assert.equal(inlinePane.style.order,"1");assert.equal(inlinePane.querySelector("iframe"),inlinePDF);assert.equal(inlineReset.textContent,"125%");
-  inlinePane.querySelectorAll(".file-compare-pane-actions button")[2].dispatchEvent({type:"click"});assert.equal(inner.messages.at(-1).value.delta,-.25);
+  emit([{...two,zoom:1.25},{...one,zoom:2}]);assert.equal(inlinePane.style.order,"1");assert.equal(inlinePane.querySelector("iframe"),inlinePDF);assert.equal(inlineReset.textContent,"125%");assert.equal(inlinePDF.style.width,"100%");
+  imagePane.querySelectorAll(".file-compare-pane-actions button")[2].dispatchEvent({type:"click"});assert.equal(inner.messages.at(-1).value.delta,-.25);
   host.querySelector(".file-compare-inline-tabs").children[0].dispatchEvent({type:"click"});assert.equal(inlinePane.querySelector("iframe"),inlinePDF,"switching inline tabs recreated the PDF");
   emit([{...one,zoom:3}],{account:accountB});assert.equal(inlineReset.textContent,"125%","foreign account state changed inline zoom");assert.equal(inner.requests.length,0);
 }
@@ -355,4 +363,4 @@ async function confirmationSafety(){
   assert.equal(s.requests.length,0,"cross-document updates unexpectedly fetched an attachment");
 }
 
-(async()=>{await clocksWhilePending();dockPlacement();progressClockCleanup();comparisonZoomReset();comparisonSwitchFocus();await scanPreviewLifecycle();await confirmationSafety();process.stdout.write("Utility control clocks, dock placement, confirmations and selection isolation checks passed\nModal footer and persistent PDF/image zoom reset checks passed\n");})().catch(error=>{console.error(error);process.exitCode=1;});
+(async()=>{await clocksWhilePending();dockPlacement();progressClockCleanup();comparisonZoomReset();comparisonSwitchFocus();await scanPreviewLifecycle();await confirmationSafety();process.stdout.write("Utility control clocks, dock placement, confirmations and selection isolation checks passed\nModal footer, native PDF zoom guidance and persistent image zoom reset checks passed\n");})().catch(error=>{console.error(error);process.exitCode=1;});

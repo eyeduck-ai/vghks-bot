@@ -22,13 +22,13 @@ const deferred = () => {let resolve;const promise=new Promise(done=>resolve=done
 const calls = [], updates = [], surgeryFocus = [];
 let respond, pending = 0;
 const context = {
-  $, $$:()=>[], el:()=>new Node(), button:(text,run)=>{const node=new Node();node.click=run;return node;}, embeddedAccount:"b".repeat(32),
+  $, $$:()=>[], el:(tag,text,className)=>{const node=new Node();node.tagName=tag.toUpperCase();node.textContent=text;node.className=className||"";return node;}, button:(text,run)=>{const node=new Node();node.click=run;return node;}, embeddedAccount:"b".repeat(32),
   currentCohort:{id:"a".repeat(32),members:[{mrn:"TEST001",account_id:"b".repeat(32)},{mrn:"TEST002",account_id:"b".repeat(32)}]},
   config:{read_only:false}, sharedStatus:null, performance, location:{origin:"http://synthetic.invalid"}, resultRequest:0,
   document:{createComment:()=>new Node(),activeElement:null,addEventListener(){}},
   window:{addEventListener:(name,callback)=>messages.set(name,[...(messages.get(name)||[]),callback]),CataractNumeric:{exams:[]}},
   ClinicalUI:{mrnBadge:()=>new Node(),ageBadge:()=>new Node(),patientAge:()=>"未提供",pacsControl:()=>new Node()},
-  JobProgress:{pending:()=>{pending++;return {remove(){}};}},
+  JobProgress:{pending:()=>{pending++;return {remove(){pending--;}};}},
   loadAnalysisResult:async options=>updates.push(options), notify(){}, action:run=>run(),
   focusSurgeryPatient:mrn=>surgeryFocus.push(mrn),
   ap:(path,values)=>{calls.push({path,values});return respond(path,values);}
@@ -93,6 +93,21 @@ async function main() {
   assert.equal(toggle.children.length,1,"collapse control has no decorative arrow");assert.equal(toggle.children[0].getAttribute("aria-hidden"),"true");
   $("#cataractPatients").scrollTop=75;await toggle.click();assert.equal($("#cataractPatients").hidden,true);assert.equal(toggle.getAttribute("aria-expanded"),"false");
   await toggle.click();assert.equal($("#cataractPatients").hidden,false);assert.equal($("#cataractPatients").scrollTop,75);assert.equal(toggle.getAttribute("aria-expanded"),"true");
+  let queueState="running";
+  const queued=()=>({members:[{mrn:"TEST001",ready:true},{mrn:"TEST002",ready:false,attempted:true}],
+    queue:{state:queueState,pending:["TEST002"],active_mrn:queueState==="running"?"TEST002":""}});
+  respond=async(path,values)=>{if(path==="cataract/queue"){queueState=values.action==="pause"?"paused":"running";return {};}return queued();};
+  await ui.refreshStatus({force:true});
+  const queueControls=()=>$("#cataractPatients").children.find(node=>node.className==="cataract-queue-controls");
+  const bar=queueControls().children[0].children.find(node=>node.tagName==="PROGRESS");
+  assert.equal(bar.max,2);assert.equal(bar.value,1,"incomplete/attempted patient was counted as saved");
+  assert.equal(bar.getAttribute("aria-label"),"本集合已保存病人");assert.equal(bar.getAttribute("aria-valuetext"),"1 / 2 位已保存");
+  let queueToggle=queueControls().children[1];assert.equal(queueToggle.getAttribute("aria-label"),"暫停背景抓取");
+  assert.equal(queueToggle.children[0].className,"cataract-queue-icon is-pause");assert.equal(queueToggle.children[0].getAttribute("aria-hidden"),"true");
+  await queueToggle.click();assert.equal(calls.filter(call=>call.path==="cataract/queue").at(-1).values.action,"pause");
+  queueToggle=queueControls().children[1];assert.equal(queueToggle.getAttribute("aria-label"),"繼續背景抓取");assert.equal(queueToggle.children[0].className,"cataract-queue-icon is-play");
+  await queueToggle.click();assert.equal(calls.filter(call=>call.path==="cataract/queue").at(-1).values.action,"resume");assert.equal(pending,0);
+  context.config.read_only=true;ui.renderPatients();assert.equal(queueControls().children[1].disabled,true);context.config.read_only=false;
   $("#analysisView").value="retina";ui.layout();
   assert.equal($("#cataractPatients").hidden,false,"retina has no patient rail");assert.equal($("#cataractUpdate").hidden,true);
   const beforeRetinaCalls=calls.length,beforeRetinaUpdates=updates.length;

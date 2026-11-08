@@ -16,6 +16,7 @@
 @media(max-width:1200px){.file-compare-pane-head{display:grid;grid-template-columns:minmax(0,1fr) auto}.file-compare-pane-head strong{max-width:none}.file-compare-pane-head>.file-compare-pane-actions{grid-column:1/3;justify-content:flex-end}}
 .file-compare-scroll{min-height:0;flex:1;overflow:auto;background:#e7edef}.file-compare-scroll iframe{display:block;min-width:100%;min-height:100%;border:0}.file-compare-scroll img{display:block;min-width:100%;height:auto}
 .file-compare-inline-tabs{display:none;gap:5px;overflow-x:auto;padding:5px 0;white-space:nowrap}
+.file-compare-pdf-hint{margin:0;padding:2px 6px;font-size:10px;line-height:1.5;color:#536e77;background:#f6f9fa;border-bottom:1px solid #dce5e7}
 .file-compare-inline-tabs button{min-height:30px;padding:5px 9px;font-size:11px}
 .file-compare-inline-tabs button[aria-pressed=true]{background:#d4edf1;border-color:#498aa2}
 .file-compare-inline-panes{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr));gap:8px;align-items:stretch}
@@ -96,4 +97,5 @@
 @media(max-width:1200px){.file-compare-pane-head{display:flex}.file-compare-pane-actions{margin-left:auto}.file-compare-pane-head strong{max-width:100%}}
 .file-compare-pane-actions :is(button,a.attachment-control){box-sizing:border-box;width:24px!important;height:24px!important;min-width:24px!important;min-height:24px!important;max-width:24px!important;max-height:24px!important;padding:0!important;display:inline-flex;align-items:center;justify-content:center;font-size:11px!important;line-height:1;border:1px solid #cbdad7;border-radius:3px;background:#fff;color:#3a6866;flex:none}
 .file-compare-pane-actions .attachment-actions{gap:2px;flex-wrap:nowrap}.file-compare-pane-actions>span{min-width:4ch;text-align:center}
+.file-compare-pane-actions button.file-compare-zoom{width:44px!important;min-width:44px!important;max-width:44px!important}
 @media(pointer:coarse){.file-compare-heading button{min-width:32px;min-height:32px}.file-compare-pane-actions :is(button,a.attachment-control){width:32px!important;height:32px!important;min-width:32px!important;min-height:32px!important;max-width:32px!important;max-height:32px!important}}

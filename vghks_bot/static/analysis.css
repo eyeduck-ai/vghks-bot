@@ -187,4 +187,17 @@ html[data-density=compact] .tool-embedded .cataract-file-choice button{min-heigh
 html[data-density=compact] .tool-embedded .cataract-file-choice input{width:13px;height:13px;min-height:13px;padding:0}
 .cataract-file-choice{grid-template-columns:16px minmax(0,1fr) auto auto!important}.cataract-file-choice .attachment-control{width:21px;padding:1px!important;min-height:22px!important}.cataract-file-choice .attachment-actions{flex-wrap:nowrap}.cataract-file-choice .attachment-copy-status{right:0}.cataract-report-preview>.attachment-control{margin:5px 0}
 
-.cataract-queue-controls{display:flex;align-items:center;justify-content:space-between;gap:4px;margin:3px 0 6px}.cataract-queue-controls small{font-size:10px;color:var(--muted)}.cataract-queue-controls button{min-height:24px;padding:1px 5px;font-size:12px}
+.cataract-queue-controls{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px;margin:5px 0 9px}
+.cataract-queue-summary{display:grid;gap:4px;min-width:0}.cataract-queue-caption{display:flex;justify-content:space-between;align-items:baseline;gap:6px;font-size:10px;white-space:nowrap}.cataract-queue-caption strong{font-weight:600}.cataract-queue-caption span{color:var(--muted);font-variant-numeric:tabular-nums}
+.cataract-queue-controls small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;line-height:1.4;color:var(--muted)}
+.cataract-queue-progress{appearance:none;display:block;width:100%;height:5px;border:0 solid;border-radius:4px;overflow:clip;background:var(--line);--queue-progress-fill:var(--green)}
+.cataract-queue-progress::-webkit-progress-bar{background:transparent}.cataract-queue-progress::-webkit-progress-value{background:var(--queue-progress-fill);border-radius:4px}.cataract-queue-progress::-moz-progress-bar{background:var(--queue-progress-fill);border-radius:4px}
+.cataract-queue-controls[data-state=paused] .cataract-queue-progress{--queue-progress-fill:var(--muted)}
+.cataract-queue-controls button{display:inline-flex;align-items:center;justify-content:center;min-width:28px;min-height:28px;padding:4px;color:var(--green)}
+.cataract-queue-icon{display:inline-flex;align-items:center;justify-content:center;width:12px;height:12px;gap:3px}.cataract-queue-icon.is-pause::before,.cataract-queue-icon.is-pause::after{content:"";display:block;width:3px;height:12px;border-radius:1px;background:currentColor}.cataract-queue-icon.is-play::before{content:"";display:block;border-top:6px solid transparent;border-bottom:6px solid transparent;border-left:9px solid currentColor;margin-left:2px}
+@media(pointer:coarse){.cataract-queue-controls button{min-width:36px;min-height:36px}}
+.cataract-image-tools{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:5px 0}.cataract-image-zoom{display:flex;align-items:center;gap:3px}.cataract-image-zoom button{min-width:28px;min-height:28px;padding:2px 6px;font-size:12px}.cataract-image-zoom .cataract-image-fit{min-width:54px;font-variant-numeric:tabular-nums}
+.cataract-image-viewport{height:calc(100dvh - 165px);min-height:280px;overflow:auto;background:#edf2ef;border:1px solid var(--line);border-radius:4px}
+.cataract-asset.cataract-image-preview .cataract-image-viewport img{display:block;max-width:none;width:auto;height:auto;min-height:0;object-fit:initial;margin:0 auto}
+@media(max-width:780px){.cataract-image-viewport{height:65dvh;min-height:0}}
+@media(pointer:coarse){.cataract-image-zoom button{min-width:36px;min-height:36px}}

@@ -4,6 +4,7 @@ import unittest
 from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from vghks_sdk import ParseError, VisitCase
 from vghks_sdk.models import (
@@ -20,6 +21,7 @@ from vghks_bot.analysis_fetch import clean, model, order_identity
 from vghks_bot.analysis_store import digest
 from vghks_bot.bot import BotApplication
 from vghks_bot.ophthalmic_orders import SCOPE_KEY
+from vghks_bot.sdk_orders import OrderIndex, parse_order_index
 from vghks_bot.selftest_bot import BotSyntheticSDK
 from vghks_bot.settings import Settings, today
 
@@ -101,6 +103,74 @@ class CataractOrderScopeTests(unittest.TestCase):
                                       **options})["run_ids"][0]
         self.assertTrue(self.work.idle.wait(15))
         return self.store.document("analysis_runs", run_id)
+
+    def partial_history(self, mrn, options, *, verified_cases=()):
+        from test_sdk_orders import order_page
+
+        MixedOrdersSDK.calls.append(("TEST", "orders-history", mrn, options.category))
+        current = order_page(photo=False).replace("caseNo=EYE1", "caseNo=ONE")
+        foreign = order_page(photo=False, other_mrn="OTHER001").replace("DBR, free charge", "Surgical pathology Level III")
+        return parse_order_index(current + foreign, mrn=mrn, verified_cases=verified_cases, allow_partial=True)
+
+    def test_partial_history_recovers_eye_scope_without_accepting_the_foreign_row(self):
+        with patch.object(self.work.gateway.connection.orders, "get_order_history", side_effect=self.partial_history):
+            run = self.run_analysis()
+        self.assertEqual(run["status"], "partial")
+        self.assertEqual({call[2] for call in MixedOrdersSDK.calls if call[1] == "case-orders"},
+                         {"EMPTY", "ONE", "TWO", "OLD", "LEGACY"})
+        scope = self.store.step(MRN, SCOPE_KEY)["payload"]
+        self.assertTrue(scope["complete"])
+        self.assertFalse(scope["history_complete"])
+        self.assertTrue(self.analysis.cataract_status(self.values)["ready"])
+        self.assertEqual({row["case_no"] for row in self.analysis.results(self.values)["orders"]}, {"ONE", "LEGACY"})
+        index = self.store.step(MRN, "orders-history:*")
+        self.assertFalse(index["assessment"]["complete"])
+        self.assertEqual(index["assessment"]["issues"][0]["code"], "ORDER_REF_MRN_MISMATCH")
+        self.assertEqual({order["mrn"] for order in index["payload"]}, {MRN})
+
+    def test_partial_history_keeps_confirmed_orders_visible_and_resume_only_backfills_missing_case(self):
+        MixedOrdersSDK.fail_case = "ONE"
+        with patch.object(self.work.gateway.connection.orders, "get_order_history", side_effect=self.partial_history):
+            first = self.run_analysis()
+            self.assertFalse(self.analysis.cataract_status(self.values)["ready"])
+            orders = self.analysis.results(self.values)["orders"]
+            self.assertEqual({row["case_no"] for row in orders}, {"ONE", "LEGACY"})
+            order = next(row for row in orders if row["case_no"] == "ONE")
+            self.work.review.history.scope({"cohort_id": self.cohort["id"], "mrn": MRN,
+                                            "resource": "order_report", "reference": order["id"]})
+            MixedOrdersSDK.calls.clear()
+            self.run_analysis(resume=first["id"])
+        self.assertEqual([call[2] for call in MixedOrdersSDK.calls if call[1] == "case-orders"], ["ONE"])
+        self.assertTrue(self.analysis.cataract_status(self.values)["ready"])
+
+    def test_partial_case_index_cannot_mark_eye_scope_complete(self):
+        original = self.work.gateway.connection.orders.get_case_orders
+
+        def query(case):
+            orders = original(case)
+            return (OrderIndex(orders, issues=[ParseError("synthetic", code="TEST_PARSE").info])
+                    if case.case_no == "LEGACY" else orders)
+
+        with patch.object(self.work.gateway.connection.orders, "get_case_orders", side_effect=query):
+            first = self.run_analysis()
+        self.assertEqual(first["status"], "partial")
+        self.assertFalse(self.store.step(MRN, SCOPE_KEY)["payload"]["complete"])
+        self.assertFalse(self.analysis.cataract_status(self.values)["ready"])
+        MixedOrdersSDK.calls.clear()
+        self.assertEqual(self.run_analysis(resume=first["id"])["status"], "completed")
+        self.assertEqual([call[2] for call in MixedOrdersSDK.calls if call[1] == "case-orders"], ["LEGACY"])
+        self.assertTrue(self.analysis.cataract_status(self.values)["ready"])
+
+    def test_partial_history_cannot_complete_an_eye_scope_with_unreadable_encounters(self):
+        original = self.work.gateway.connection.records.get_visit_cases
+        for day, kind in ((None, "O"), (today() - timedelta(days=1), "A")):
+            with self.subTest(day=day, kind=kind):
+                cases = [*original(MRN), VisitCase(MRN, day, kind, "UNREADABLE", "70", "眼科")]
+                with (patch.object(self.work.gateway.connection.records, "get_visit_cases", return_value=cases),
+                      patch.object(self.work.gateway.connection.orders, "get_order_history", side_effect=self.partial_history)):
+                    self.run_analysis(refresh=True)
+                self.assertFalse(self.store.step(MRN, SCOPE_KEY)["payload"]["complete"])
+                self.assertFalse(self.analysis.cataract_status(self.values)["ready"])
 
     def test_fresh_cataract_uses_one_history_query_and_only_backfills_old_eye_cases(self):
         run = self.run_analysis()

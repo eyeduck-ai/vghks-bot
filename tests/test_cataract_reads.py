@@ -152,6 +152,11 @@ class CataractReadTests(unittest.TestCase):
         subprocess.run(['node', 'tests/cataract_read_ui.js'], cwd=root, check=True,
                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=10)
 
+    def test_selected_report_switching_keeps_header_controls_connected_after_render_failures(self):
+        root = Path(__file__).resolve().parents[1]
+        subprocess.run(['node', 'tests/cataract_render_ui.js'], cwd=root, check=True,
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=10)
+
 
 if __name__ == '__main__':
     unittest.main()
