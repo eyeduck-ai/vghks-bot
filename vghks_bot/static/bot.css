@@ -49,13 +49,25 @@ dialog.approval-dialog{padding:0;max-height:90dvh}
 .review-detail .tag-jumps button{max-width:260px;overflow:hidden;text-overflow:ellipsis}
 
 /* Fixed navigation hierarchy and a compact setup-to-results handoff. */
-.sidebar .nav-system-title{font-size:14px;font-weight:700;padding:8px 10px;color:var(--ink)}
+.sidebar :is(.nav, .nav-group-title) {
+  font-size: 12px;
+  font-weight: 400;
+}
+.sidebar :is(.nav-system-title, .system-link) {
+  font-size: 13px;
+  font-weight: 650;
+}
+.sidebar :is(.nav-system-title, .system-link):not(.active) { color: var(--ink); }
+.sidebar .nav-group-title { color: #4f6356; }
+:root[data-density] .sidebar :is(.nav, .nav-group-title, .nav-system-title) {
+  min-height: 33px;
+  padding: 7px 10px;
+  line-height: 19px;
+}
 .sidebar .system-nav nav{padding:0;margin:0;border:0;gap:2px}
-.sidebar .advanced-nav{border-left:1px solid #bacbb2;margin:5px 0 7px 10px;padding-left:8px}
-.sidebar .nav-group-title{font-size:11px;font-weight:600;color:var(--muted);padding:4px 9px 6px}
-.sidebar .advanced-nav .nav{padding-left:10px}
+.sidebar .advanced-nav{min-width:0}
+.sidebar .nav-children{display:grid;gap:2px;border-left:1px solid #b7c9ad;margin:0 0 5px 17px;padding:3px 0 3px 8px}
 .sidebar .other-systems{display:grid;border-top:1px solid #ccd7c5;padding-top:10px;margin-top:7px;gap:3px}
-.sidebar .system-link{font-size:13px}
 .sidebar-bottom{border-top:1px solid #ccd7c5;padding-top:12px}
 .tool-heading{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .tool-heading h1{font-size:21px;line-height:1.4}
@@ -148,10 +160,6 @@ button.icon-button{display:inline-flex;align-items:center;justify-content:center
 .review-icon{width:36px;height:36px;flex:0 0 36px;object-fit:contain}
 button.review-icon-button.icon-button{width:40px;min-width:40px;min-height:40px;flex-basis:40px;padding:1px!important}
 @media(pointer:coarse){button.review-icon-button.icon-button{width:44px;min-width:44px;min-height:44px;flex-basis:44px;padding:3px!important}}
-.sidebar .advanced-nav{border:0;margin:0;padding:0}
-.sidebar .nav-group-title{font:inherit;font-size:13px;font-weight:500;color:var(--ink);padding:7px 10px;min-height:33px;line-height:19px}
-.sidebar .nav-children{display:grid;gap:2px;border-left:1px solid #b7c9ad;margin:0 0 5px 17px;padding:3px 0 3px 8px}
-.sidebar .nav-children .nav{font-size:12px;padding-left:10px}
 .tool-heading-actions{margin-left:auto;display:flex;gap:5px;flex-shrink:0}
 .tool-heading>#toolRunSummary{min-width:0;flex:1;font-size:11px}
 .tool-heading-disclosure{position:relative}
@@ -210,9 +218,8 @@ dialog.saved-sets-dialog{width:min(540px,94vw);padding:20px 22px}
 @media(max-width:900px){.tool-heading>#toolRunSummary{order:3;flex-basis:100%}.review-settings-row{gap:10px}.review-page .review-layout{height:calc(100dvh - 310px)}}
 @media(max-width:780px){
  .sidebar .system-nav{display:block}.sidebar .system-nav nav{display:flex;flex-wrap:wrap;align-items:start}
- .sidebar .advanced-nav{display:flex;flex-wrap:wrap;flex-basis:100%;margin:3px 0;padding:4px 0 4px 10px;gap:2px}
- .sidebar .nav-group-title{flex-basis:100%;padding:0 5px 3px}.sidebar .other-systems{display:flex;flex-wrap:wrap}
- .sidebar .nav-system-title{padding:3px 10px 6px}.sidebar-bottom{padding-top:8px}
+ .sidebar .advanced-nav{flex-basis:100%}.sidebar .other-systems{display:flex;flex-wrap:wrap}
+ .sidebar-bottom{padding-top:8px}
  :root[data-density=compact] main{padding:14px}.tool-source .source-toolbar>*{width:auto}
  .tool-source .inline-form{width:100%;flex-wrap:wrap}.tool-source .inline-form>label{flex:1;min-width:120px}
  .review-page .review-layout{height:auto}.review-page .review-patient-panel{height:280px;max-height:40dvh;min-height:140px;flex:none}
@@ -228,11 +235,13 @@ button.panel-toggle.icon-button:hover{background:#dce8d7;border-color:#c4d4bd}
  :root[data-density] .sidebar{padding:12px;overflow-y:auto}
  :root[data-density] .sidebar-header{margin-bottom:14px}
  :root[data-density] .sidebar nav{gap:1px}
- :root[data-density] .sidebar .nav{min-height:29px;padding:4px 10px;line-height:20px}
- :root[data-density] .sidebar .nav-system-title{font-size:13px;line-height:19px;padding:4px 10px}
+ :root[data-density] .sidebar :is(.nav, .nav-group-title, .nav-system-title) {
+  min-height: 29px;
+  padding-block: 4px;
+  line-height: 20px;
+ }
  :root[data-density] .sidebar .system-nav{margin-bottom:3px}
  :root[data-density] .sidebar .surgery-nav{margin-top:4px;padding-top:4px}
- :root[data-density] .sidebar .nav-group-title{min-height:25px;line-height:19px;padding:3px 10px}
  :root[data-density] .sidebar .nav-children{gap:0;margin:0 0 3px 17px;padding:1px 0 1px 7px}
  :root[data-density] .sidebar .other-systems{gap:1px;margin-top:4px;padding-top:4px}
  :root[data-density] .sidebar-bottom{gap:1px;padding-top:5px}
@@ -241,9 +250,11 @@ button.panel-toggle.icon-button:hover{background:#dce8d7;border-color:#c4d4bd}
 @media(min-width:781px) and (max-height:650px){
  :root[data-density] .sidebar{padding:8px 12px}
  :root[data-density] .sidebar-header{margin-bottom:10px}
- :root[data-density] .sidebar .nav{min-height:25px;padding:2.5px 10px;line-height:18px}
- :root[data-density] .sidebar .nav-system-title{padding:2px 10px}
- :root[data-density] .sidebar .nav-group-title{min-height:22px;padding:1px 10px}
+ :root[data-density] .sidebar :is(.nav, .nav-group-title, .nav-system-title) {
+  min-height: 25px;
+  padding-block: 2.5px;
+  line-height: 18px;
+ }
  :root[data-density] .sidebar .system-nav{margin-bottom:1px}
  :root[data-density] .sidebar .surgery-nav{margin-top:3px;padding-top:3px}
  :root[data-density] .sidebar .other-systems{margin-top:3px;padding-top:3px}
