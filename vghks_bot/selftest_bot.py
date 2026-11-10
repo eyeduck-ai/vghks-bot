@@ -443,7 +443,7 @@ def self_test(report_path: Path) -> int:
         with tempfile.TemporaryDirectory() as directory:
             check_sdk_binary(Path(directory))
         result["checks"].append("native SDK DBR PDF through ClinicalTransport and compatible adapter, cataract attachment cache, offline restart without repeat download")
-        assert "測試姓名" in decode_response("測試姓名 女".encode("cp950"))
+        assert decode_response(b"\x8e\xf5" + "測試姓名 女".encode("cp950")) == "\ue3a4測試姓名 女"
         assert search("# Arrange", ["P: # Arrange CATA"])
         try:
             search("(a+)+$", ["a" * 60000 + "!"], timeout=.6)

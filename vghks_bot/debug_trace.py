@@ -41,7 +41,6 @@ class TraceRecorder(DiagnosticRecorder):
 
     def __init__(self, *args, **kwargs):
         self.http_local = threading.local()
-        self.response_encoding = "auto"
         self.redactor = Redactor()
         self.contains_medical_response = False
         self._recent = deque(maxlen=8)
@@ -239,7 +238,7 @@ class TraceRecorder(DiagnosticRecorder):
             return
         try:
             result, written = save_response(self.directory, frame["id"], snapshot, self.redactor,
-                                           self.response_encoding, EVIDENCE_LIMIT - frame["evidence_bytes"])
+                                           EVIDENCE_LIMIT - frame["evidence_bytes"])
             result.update(supporting_readiness_response=supporting, navigation=snapshot["navigation"],
                           source_operation_id=snapshot.get("source_operation_id", frame["id"]))
             frame["responses"][snapshot["request_id"]] = result
@@ -248,7 +247,7 @@ class TraceRecorder(DiagnosticRecorder):
                 frame["files"][file["name"]] = file
             self.contains_medical_response = self.contains_medical_response or bool(result["files"])
             self._write_for(frame, "response_evidence", {"operation_id": frame["id"], **result,
-                "response": response_shape(snapshot, self.response_encoding, self.redactor)})
+                "response": response_shape(snapshot, self.redactor)})
         except (OSError, ValueError, UnicodeError):
             frame["capture_error"] = "RAW_EVIDENCE_SAVE_FAILED"
 
@@ -384,7 +383,6 @@ class TraceRecorder(DiagnosticRecorder):
                     "contains_medical_values": any(file["name"].endswith((".bin", ".html")) for file in files.values()),
                     "source_encoding": "utf-8", "complete": not (frame["dropped_events"] or frame.get("capture_error")
                         or any(response["truncated"] for response in responses)),
-                    "response_encoding": self.response_encoding,
                     "dropped_events": frame["dropped_events"], "omitted_buffer_responses": frame["omitted_responses"],
                     "capture_error": frame.get("capture_error", "")}}
 

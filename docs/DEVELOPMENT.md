@@ -2,7 +2,7 @@
 
 ## 環境與目錄
 
-使用 Windows x64、Python 3.11、Git 與 Node.js 24。依賴固定於 `requirements-build.lock.txt`，SDK 0.24.2／`0f601303fc18b3ea6d53c55b17032cfa45b3f405` 與共用核心 1.3.0／`3e4babe8bbb799d103372732bd2e45bc1405fb83` 也固定於 `pyproject.toml`；不可只按版本號判定安裝來源。
+使用 Windows x64、Python 3.11、Git 與 Node.js 24。依賴固定於 `requirements-build.lock.txt`，SDK 0.24.3／`f934c2a990f207e456a54e3c3f5d460800793395` 與共用核心 1.3.0／`3e4babe8bbb799d103372732bd2e45bc1405fb83` 也固定於 `pyproject.toml`；不可只按版本號判定安裝來源。
 
 ```powershell
 py -3.11 -m venv .venv
@@ -129,7 +129,7 @@ actionlint 固定為 1.7.12，下載壓縮檔及解出的工具均核對固定 S
 
 文字 `.html` 是採用編碼解碼後的 UTF-8；`.bin` 無遮罩時可保留原 bytes，遮罩時會改為 UTF-8 並標示，不能當成完整原始回應。來源可能含醫療資料，與資料庫一樣留在私人環境；時序不保存 URL 查詢值、原始請求或憑證值，原始 HTML 不執行。
 
-`TEXT_DECODE_INCOMPLETE` 另保留 HTTP／meta charset、設定編碼、實際 decoder 及替代字元證據。只記公開固定標記的 hex（例如來源明載 U+FFFD）或非法序列長度遮罩；不保存病人鄰近原始文字／offset。這些證據描述整份回應，不能直接推定是哪個病人欄位的來源損壞。搭配相同 SDK 版本的純解析函式可離線定位，不必重送登入或執行院方 JavaScript。
+`TEXT_DECODE_INCOMPLETE` 保留 HTTP／meta charset、SDK 選擇的編碼及替代字元證據。只記固定替代字元標記的 hex 或非法序列長度遮罩。這些證據描述整份回應。成功查詢的 SDK 互動摘要另可記錄已解析姓名或 SOAP 的私用區碼位及換算的 Windows CP950 對應，供核對院方字表。兩類摘要均省略原文、鄰近位元組與位置。搭配相同 SDK 版本的純解析函式可離線定位。
 
 每份回應上限 4 MiB，操作暫存最近八份／8 MiB、證據 16 MiB；每次 ZIP 最多 1,000 筆診斷／128 MiB 未壓縮證據。達上限、缺檔或舊版未保存時明確標示，不拿其他成功回應冒充證據。
 

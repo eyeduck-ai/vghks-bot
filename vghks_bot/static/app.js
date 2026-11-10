@@ -69,7 +69,7 @@ function addAccount(account) {
   accounts.set(account.id, account);
   const form = $("#accountTemplate").content.firstElementChild.cloneNode(true);
   form.dataset.id = account.id;
-  for (const key of ["label", "username", "start", "end", "response_encoding"]) form.elements[key].value = account[key] || "";
+  for (const key of ["label", "username", "start", "end"]) form.elements[key].value = account[key] || "";
   for (const input of $$("input[type=radio]", form)) {
     input.name = `mode-${account.id}`;
     input.checked = input.value === account.mode;
@@ -120,8 +120,7 @@ async function saveRows(forms, {credentialsOnly=false}={}) {
     id:form.dataset.id, label:form.elements.label.value, username:form.elements.username.value,
     password:form.elements.password.value,
     ...(!credentialsOnly ? {mode:$("input[type=radio]:checked", form).value,
-      start:form.elements.start.value, end:form.elements.end.value} : {}),
-    response_encoding:form.elements.response_encoding.value
+      start:form.elements.start.value, end:form.elements.end.value} : {})
   }));
   const saved = await api("/api/accounts/save", {accounts:values});
   for (const account of saved.accounts) {
@@ -418,7 +417,7 @@ function exportCSV() {
 
 $("#addAccount").addEventListener("click",() => {
   $("#accountsDetails").open = true;
-  const form = addAccount({id:crypto.randomUUID().replaceAll("-",""),label:"",username:"",mode:"single",start:config.today,end:config.today,response_encoding:"auto",password_set:false});
+  const form = addAccount({id:crypto.randomUUID().replaceAll("-",""),label:"",username:"",mode:"single",start:config.today,end:config.today,password_set:false});
   form.elements.username.focus();
 });
 $("#runSelected").addEventListener("click",() => action(async () => {

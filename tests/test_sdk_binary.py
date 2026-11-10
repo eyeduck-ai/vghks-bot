@@ -73,8 +73,8 @@ class SDKBinaryTests(unittest.TestCase):
             with self.subTest(mime=mime), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 with patch("vghks_bot.debug_evidence.decode_response", side_effect=AssertionError("binary decoded")):
-                    shape = response_shape(snapshot, "auto", Redactor())
-                    evidence, written = save_response(root, 1, snapshot, Redactor(), "auto", len(body))
+                    shape = response_shape(snapshot, Redactor())
+                    evidence, written = save_response(root, 1, snapshot, Redactor(), len(body))
                 self.assertEqual(shape["kind"], "binary")
                 self.assertEqual(shape["decoded_as"], "")
                 self.assertNotIn("html_shape", shape)
@@ -84,7 +84,7 @@ class SDKBinaryTests(unittest.TestCase):
                 self.assertFalse(evidence["redacted"] or evidence["truncated"])
                 self.assertEqual((root / evidence["files"][0]["name"]).read_bytes(), body)
                 self.assertFalse(list(root.glob("*.html")))
-                truncated, size = save_response(root, 2, snapshot, Redactor(), "auto", 8)
+                truncated, size = save_response(root, 2, snapshot, Redactor(), 8)
                 self.assertTrue(truncated["truncated"])
                 self.assertEqual(size, 8)
 

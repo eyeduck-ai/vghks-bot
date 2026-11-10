@@ -106,7 +106,6 @@ def credentials(username, password):
 class Settings:
     username: str = ""
     password: str = field(default="", repr=False)
-    response_encoding: str = "auto"
     categories: tuple[Tag, ...] = DEFAULT_TAGS
     min_delay_seconds: float = 0.05
     max_delay_seconds: float = 0.15
@@ -116,7 +115,7 @@ class Settings:
     allow_unverified_tls: bool = True
 
     def public(self) -> dict:
-        return {k: v for k, v in asdict(self).items() if k not in {"username", "password", "response_encoding"}}
+        return {k: v for k, v in asdict(self).items() if k not in {"username", "password"}}
 
     def update(self, values: dict) -> Settings:
         if not isinstance(values, dict) or set(values) - {f.name for f in fields(self)}:
@@ -124,8 +123,6 @@ class Settings:
         data = asdict(self)
         data.update(values)
         data["username"], data["password"] = credentials(data["username"], data["password"])
-        if data["response_encoding"] not in {"auto", "big5", "utf-8"}:
-            raise ValueError("不支援此文字編碼。")
         data["categories"] = tags_from(data["categories"])
         limits = {
             "min_delay_seconds": (0, 30), "max_delay_seconds": (0, 30),
@@ -159,7 +156,6 @@ class Account:
     mode: str = "single"
     start: str = field(default_factory=lambda: today().isoformat())
     end: str = field(default_factory=lambda: today().isoformat())
-    response_encoding: str = "auto"
 
     def persisted(self):
         return {k: v for k, v in asdict(self).items() if k != "password"}
@@ -183,8 +179,8 @@ class Account:
         if not isinstance(data["label"], str) or len(data["label"]) > 60:
             raise ValueError("帳號名稱最多 60 字。")
         data["label"] = data["label"].strip()
-        if data["mode"] not in {"single", "range"} or data["response_encoding"] not in {"auto", "big5", "utf-8"}:
-            raise ValueError("日期模式或文字編碼不正確。")
+        if data["mode"] not in {"single", "range"}:
+            raise ValueError("日期模式不正確。")
         if data["mode"] == "single":
             data["end"] = data["start"]
         start, end = parse_range(data, allow_future=True)

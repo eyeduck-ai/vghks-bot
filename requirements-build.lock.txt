@@ -1,5 +1,5 @@
 # Windows x64 / Python 3.11. Validated build dependency snapshot.
-vghks-sdk @ git+https://github.com/eyeduck-ai/vghks-sdk.git@0f601303fc18b3ea6d53c55b17032cfa45b3f405
+vghks-sdk @ git+https://github.com/eyeduck-ai/vghks-sdk.git@f934c2a990f207e456a54e3c3f5d460800793395
 setuptools==84.0.0
 wheel==0.48.0
 beautifulsoup4==4.15.0

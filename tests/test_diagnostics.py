@@ -101,7 +101,7 @@ class DiagnosticTests(unittest.TestCase):
 
         expected = {
             "source": "remote", "http_charset": "other", "meta_charset": "big5",
-            "configured_encoding": "auto", "decoded_with": "cp950", "decoder_replacement": True,
+            "decoded_with": "cp950", "decoder_replacement": True,
             "source_markers": ["html_numeric_entity"],
             "source_byte_samples": [{"marker": "html_numeric_entity", "hex": b"&#65533;".hex()}],
             "masked_byte_samples": ["XX"], "byte_sample_policy": "fixed_markers_only", "scope": "response",
@@ -113,6 +113,42 @@ class DiagnosticTests(unittest.TestCase):
             self.assertEqual(warning["query"]["encoding_evidence"], expected)
         cached = self.work.diagnostics.query({"task_id": cached_id})
         self.assertEqual(cached["saved_attempts"][0]["query"]["encoding_evidence"], {"source": "cache"})
+
+    def test_opd_private_use_notice_keeps_result_and_exports_only_codes(self):
+        base = "https://synthetic.invalid/PRQWeb"
+        transport = ClinicalTransport(policy=RequestPolicy(), attachment_base_url=base)
+        self.addCleanup(transport.close)
+        response = SimpleNamespace(
+            content=(b"<meta charset=big5><script>aryOpdSec[0]='70';aryOpdRoom[0]='02';aryOpdDoc[0]='TEST';"
+                     b"if(aryOpdSec[0]=='70'){new KSCase('','1','SECRET-MRN','SECRET-NAME\x8e\xf5','F','68');}</script>"),
+            headers={"Content-Type": "text/html; charset=big5"}, request=SimpleNamespace(method="POST"),
+            url=base + "/QueryOPDPatList.do",
+        )
+
+        def list_patients(card, day):
+            return parse_opd_patients(transport.text(response), visit_date=day, doctor_card=card)
+
+        day = today().isoformat()
+        params = {"account_ids": [self.key], "ranges": {self.key: {"start": day, "end": day}}}
+        with patch.object(self.work.gateway.connection.opd, "get_doctor_patients", side_effect=list_patients):
+            run_id = self.work.browse(params)["run_ids"][0]
+            self.assertTrue(self.work.idle.wait(8))
+        task = self.work.snapshot(run_id)
+        self.assertEqual(task["status"], "completed")
+        self.assertEqual(task["counts"]["registrations"], 1)
+        self.assertEqual(task["counts"]["errors"], 0)
+        rows = self.work.store.library.cached_list("TEST", day)["rows"]
+        self.assertEqual(rows[0]["name"], "SECRET-NAME\ue3a4")
+
+        with zipfile.ZipFile(io.BytesIO(self.work.diagnostics.export({"task_id": run_id}))) as archive:
+            exported = archive.read("debug.json")
+        self.assertNotIn(b"SECRET-", exported)
+        event, = [row for row in json.loads(exported)["sdk_events"] if row["service"] == "opd"]
+        self.assertEqual(event["status"], "ok")
+        self.assertEqual(event["assessment"]["text_encoding"], {
+            "private_use_characters": [{"code_point": "U+E3A4", "windows_cp950": "8E F5"}],
+            "replacement_character": False, "http_charset": "big5", "meta_charset": "big5", "decoded_with": "cp950",
+        })
 
     def test_cataract_index_failure_identifies_single_query_and_preserves_completed_data_on_resume(self):
         with (patch.object(self.work.gateway.connection.orders, "get_order_history", side_effect=self.unsupported_orders),

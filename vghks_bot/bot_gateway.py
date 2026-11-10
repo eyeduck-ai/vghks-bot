@@ -18,10 +18,13 @@ from vghks_sdk.parsing.prq import parse_patient_identity, require_patient_contex
 from .clinical_identity import verified_visit_cases
 from .connection_state import failure_state, readiness_error, require_ready, stored_error_info
 from .diagnostics import failure_details, operation_query_context
+from .encoding import observe_prq_decoding, text_encoding_notice
 from .jobs import BusyError
 from .patient_lookup import get_demographics
 from .scanner import Cancelled, safe_failure
 from .settings import timestamp
+
+_PRQ_TEXT_OPERATIONS = {("opd", "get_doctor_patients"): "opd", ("records", "get_soap"): "soap"}
 
 
 class AcquisitionDeferred(Exception):
@@ -180,14 +183,17 @@ class AccountGateway:
                 self.recovery_count += generation - self.auth_generation
             self.auth_generation = generation
 
-    def record_result(self, service, method, value):
+    def record_result(self, service, method, value, *, decoding_evidence=None):
         from .sdk_orders import assess_order_index
 
         self.observe_auth(value if service == "auth" and method == "check" else None)
         data = assess_order_index(value)
         status = "partial" if data.complete is False else "empty" if data.availability == "EMPTY" else "ok"
         self.local.assessment = to_jsonable(data)
-        self.record_event(service, method, status, assessment=self.local.assessment)
+        assessment = self.local.assessment
+        if self.event and (notice := text_encoding_notice(value, decoding_evidence or {})):
+            assessment = {**assessment, "text_encoding": notice}
+        self.record_event(service, method, status, assessment=assessment)
         if status == "partial" and self.diagnostic:
             previous = getattr(self.local, "diagnostic_emitted", False)
             try:
@@ -345,7 +351,6 @@ class AccountGateway:
         runtime = getattr(self.manager, "_runtime", None)
         if runtime is not None and self.recorder_factory:
             self.recorder = self.recorder_factory()
-            self.recorder.response_encoding = settings.response_encoding
             self.recorder.set_context(getattr(self.local, "trace_context", {}))
             runtime.diagnostics = runtime.transport.diagnostics = self.recorder
         self.connection = self.manager.__enter__()
@@ -436,7 +441,8 @@ class AccountGateway:
             "auth", "opd", "records", "patients", "orders", "surgery", "reviews", "earnings")})
 
     def invoke(self, service, method, *args, **kwargs):
-        with self.serial(), self.trace_query(service, method, args):
+        operation = _PRQ_TEXT_OPERATIONS.get((service, method))
+        with self.serial(), self.trace_query(service, method, args), observe_prq_decoding(operation) as decoding:
             self.require_online()
             if service == "patients" and method == "get_demographics":
                 self.local.diagnostic_emitted = False
@@ -466,7 +472,7 @@ class AccountGateway:
                         self.context = args[0]
                     elif service in {"patients", "auth", "opd", "surgery", "reviews", "earnings"}:
                         self.context = None
-                    self.record_result(service, method, value)
+                    self.record_result(service, method, value, decoding_evidence=decoding)
                     return value
                 except SDKError as exc:
                     self.context = None

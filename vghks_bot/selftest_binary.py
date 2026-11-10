@@ -31,7 +31,7 @@ class BinaryScenario:
                                     prq_base_url="https://synthetic.invalid/PRQWeb", request_policy=policy)
         session = requests.Session()
         session.request = self.request
-        transport = ClinicalTransport(policy=policy, session=session, response_encoding=settings.response_encoding)
+        transport = ClinicalTransport(policy=policy, session=session)
         sdk = configure_orders(VghksSDK(settings=configuration, transport=transport,
                                        credentials=PortalCredentials("SYNTHETIC", "SYNTHETIC")))
         auth = sdk._runtime.auth

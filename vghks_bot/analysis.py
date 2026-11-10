@@ -317,7 +317,7 @@ class Analysis:
             for member in cohort["members"]:
                 account = self.app._account(member.get("account_id"))
                 settings[account.id] = replace(self.app.settings, username=account.username,
-                                              password=account.password, response_encoding=account.response_encoding)
+                                              password=account.password)
             run_id = uuid.uuid4().hex
             state = ScanState(today(), today(), id=run_id, kind="analysis", account=cohort["name"],
                               account_label="", account_id="", status="queued", stage="queued",

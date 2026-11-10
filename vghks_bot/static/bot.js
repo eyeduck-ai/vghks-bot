@@ -708,6 +708,18 @@ async function showDiagnostics(values){
  content.append(btn("匯出 DEBUG JSON",()=>{const url=URL.createObjectURL(new Blob([text],{type:"application/json;charset=utf-8"})),a=node("a");a.href=url;a.download="VGHKS-debug-"+(values.mrn||values.task_id||values.session_id)+".json";document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);}));
  const bundle=node("a","下載完整 DEBUG ZIP","diagnostic-download");bundle.href=window.LocalSession.resourceURL("/api/accounts/"+account+"/reviews/diagnostics/export?"+new URLSearchParams(values));bundle.download="VGHKS-debug.zip";content.append(bundle);
  if(result.task)content.append(node("p",[result.task.analysis_name||result.task.name,labels[result.task.status]||result.task.status,result.task.message].filter(Boolean).join(" · "),"diagnostic-task"));
+ const encodingRows=(result.sdk_events||[]).flatMap(event=>{
+  const notice=event.assessment?.text_encoding;
+  if(!notice)return [];
+  const source=event.service+"."+event.method;
+  const codec=[notice.decoded_with,notice.http_charset&&"HTTP "+notice.http_charset,
+   notice.meta_charset&&"HTML "+notice.meta_charset].filter(Boolean).join(" · ")||"未記錄";
+  const rows=(notice.private_use_characters||[]).map(char=>[source,codec,char.code_point,char.windows_cp950||"—"]);
+  if(notice.replacement_character)rows.push([source,codec,"U+FFFD（替代字元）","—"]);
+  return rows;
+ });
+ if(encodingRows.length)content.append(node("h3","文字編碼提示"),node("p","Windows CP950 欄由碼位換算。請用院方字表核對造字的正字。","caption"),
+  table(["SDK 來源","解碼與宣告","Unicode 碼位","Windows CP950 對應"],encodingRows));
  if(result.failures?.length){
   content.append(node("h3",`失敗原因（${result.failures.length} 次讀取）`));
   if(result.task?.status==="completed")content.append(node("p","任務已完成；下列為保留的歷次錯誤，不表示目前仍有未完成資料。","caption"));

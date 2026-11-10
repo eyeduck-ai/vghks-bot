@@ -41,8 +41,7 @@ class SessionScenario:
             request_policy=RequestPolicy(min_delay_seconds=0, max_delay_seconds=0, max_attempts=1))
         session = requests.Session()
         session.request = self.request
-        transport = ClinicalTransport(policy=configuration.request_policy, verify=True, session=session,
-                                      response_encoding=settings.response_encoding)
+        transport = ClinicalTransport(policy=configuration.request_policy, verify=True, session=session)
         sdk = VghksSDK(settings=configuration, transport=transport,
                        credentials=PortalCredentials("SYNTHETIC", "SECRET_PASSWORD"))
         auth = sdk._runtime.auth

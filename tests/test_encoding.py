@@ -45,23 +45,37 @@ class EncodingTests(unittest.TestCase):
         self.assertIn("更新門診清單", warning["message"])
         self.assertNotIn("合成", warning["message"])
 
-    def test_utf8_big5_headers_meta_and_overrides(self):
+    def test_utf8_big5_headers_and_meta(self):
         for header in ("","text/html; charset=iso-8859-1","text/html; charset=utf-8","text/html; charset=big5"):
             with self.subTest(header=header):
                 self.assertEqual(decode_response("姓名 女 68歲".encode("cp950"),header),"姓名 女 68歲")
                 self.assertEqual(decode_response("姓名 女 68歲".encode(),header),"姓名 女 68歲")
         self.assertEqual(decode_response("姓名".encode("utf-8-sig")),"姓名")
-        self.assertEqual(decode_response("姓名".encode("cp950"),encoding="big5"),"姓名")
-        self.assertEqual(decode_response("姓名".encode(),encoding="utf-8"),"姓名")
+
+    def test_big5_user_defined_character_keeps_the_following_patient_name_intact(self):
+        raw = (
+            b"<script>aryOpdSec[0]='70';aryOpdRoom[0]='02';aryOpdDoc[0]='DOC1F';"
+            b"if(aryOpdSec[0]=='70'){new KSCase('','1','TEST001','\x8e\xf5"
+            + "甲乙','女','68歲');}</script>".encode("cp950")
+        )
+        for content_type in ("text/html; charset=big5", "text/html; charset=utf-8", "text/html"):
+            with self.subTest(content_type=content_type):
+                decoded = decode_response(raw, content_type)
+                patient, = parse_opd_patients(decoded, visit_date=date(2026, 9, 19), doctor_card="DOC1")
+                self.assertEqual((patient.name, patient.sex, patient.age), ("\ue3a4甲乙", "女", "68歲"))
 
     def test_unrecoverable_replacement_is_not_fabricated(self):
         self.assertEqual(decode_response("���J�q�@�@".encode()),"���J�q�@�@")
 
-    def test_sdk_uses_transport_without_network(self):
-        with create_sdk(Settings(username="DOC1",password="synthetic")) as sdk:
-            self.assertIsInstance(sdk._runtime.transport,ClinicalTransport)
-            response = SimpleNamespace(content="女".encode("cp950"),headers={"Content-Type":"text/html"})
-            self.assertEqual(sdk._runtime.transport.text(response),"女")
+    def test_sdk_uses_one_decoder_for_all_accounts(self):
+        expected = "\ue3a4甲乙"
+        for username in ("DOC1", "DOC2"):
+            settings = Settings(username=username, password="synthetic")
+            with self.subTest(username=username), create_sdk(settings) as sdk:
+                self.assertIsInstance(sdk._runtime.transport, ClinicalTransport)
+                for raw in (b"\x8e\xf5" + "甲乙".encode("cp950"), expected.encode()):
+                    response = SimpleNamespace(content=raw, headers={"Content-Type": "text/html; charset=big5"})
+                    self.assertEqual(sdk._runtime.transport.text(response), expected)
 
 
 class DecodeEvidenceTests(unittest.TestCase):
@@ -95,7 +109,6 @@ class DecodeEvidenceTests(unittest.TestCase):
                 _, evidence = self.observe(content, "text/html; charset=BIG5")
                 self.assertEqual(evidence["http_charset"], "big5")
                 self.assertEqual(evidence["meta_charset"], "utf-8")
-                self.assertEqual(evidence["configured_encoding"], "auto")
                 self.assertEqual(evidence["decoded_with"], "utf-8")
                 self.assertFalse(evidence["decoder_replacement"])
                 self.assertEqual(evidence["source_markers"], [marker])
@@ -104,13 +117,11 @@ class DecodeEvidenceTests(unittest.TestCase):
                 self.assertNotIn(b"SYNTHETIC-NAME".hex(), json.dumps(evidence))
 
     def test_malformed_bytes_are_masked_and_unknown_labels_are_suppressed(self):
-        self.transport.response_encoding = "utf-8"
         invalid = b"\xe2\x80"
-        content = b'<meta charset="SECRET-META">SYNTHETIC-NAME' + (invalid + b"/TOKEN-MRN") * 5
+        content = b'\xef\xbb\xbf<meta charset="SECRET-META">SYNTHETIC-NAME' + (invalid + b"/TOKEN-MRN") * 5
         _, evidence = self.observe(content, "text/html; charset=SECRET-HEADER")
         self.assertEqual((evidence["http_charset"], evidence["meta_charset"]), ("other", "other"))
-        self.assertEqual(evidence["decoded_with"], "utf-8")
-        self.assertEqual(evidence["configured_encoding"], "utf-8")
+        self.assertEqual(evidence["decoded_with"], "utf-8-sig")
         self.assertTrue(evidence["decoder_replacement"])
         self.assertEqual(evidence["masked_byte_samples"], ["XXXX"] * 3)
         self.assertEqual(evidence["source_byte_samples"], [])
@@ -119,14 +130,21 @@ class DecodeEvidenceTests(unittest.TestCase):
             self.assertNotIn(sensitive, serialized)
 
     def test_bom_and_decoder_replacement_can_coexist_with_original_marker(self):
-        self.transport.response_encoding = "big5"
         text, evidence = self.observe(b"\xef\xbb\xbf\xef\xbf\xbd\xff", "text/html", operation="soap")
         self.assertEqual(text, "\ufffd\ufffd")
-        self.assertEqual(evidence["configured_encoding"], "big5")
         self.assertEqual(evidence["decoded_with"], "utf-8-sig")
         self.assertTrue(evidence["decoder_replacement"])
         self.assertEqual(evidence["masked_byte_samples"], ["XX"])
         self.assertEqual(evidence["source_byte_samples"], [{"marker": "utf8_literal", "hex": "efbfbd"}])
+
+    def test_big5_user_defined_pairs_are_excluded_from_invalid_byte_masks(self):
+        raw = bytes.fromhex("FA40 8E40 8140 C840 C6A1 8E7F 81")
+        text, evidence = self.observe(raw, "text/html; charset=big5")
+        self.assertEqual(text, "\ue000\ue311\ueeb8\uf7ac\u30fe\ufffd\x7f\ufffd")
+        self.assertEqual(evidence["decoded_with"], "cp950")
+        self.assertTrue(evidence["decoder_replacement"])
+        self.assertEqual(evidence["masked_byte_samples"], ["XX", "XX"])
+        self.assertEqual(evidence["source_byte_samples"], [])
 
     def test_scope_excludes_the_opd_landing_other_endpoints_and_other_origins(self):
         content = b"&#65533;"

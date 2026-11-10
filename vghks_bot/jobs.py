@@ -220,10 +220,10 @@ class Application:
         jobs = []
         try:
             for account, start, end, rows, force in prepared:
-                settings = replace(self.settings, username=account.username, password=account.password, response_encoding=account.response_encoding)
+                settings = replace(self.settings, username=account.username, password=account.password)
                 state = ScanState(start, end, account=account.username, id=uuid.uuid4().hex,
                     account_id=account.id, account_label=account.label, mode=account.mode,
-                    kind="list" if rows is None else "fetch", response_encoding=account.response_encoding,
+                    kind="list" if rows is None else "fetch",
                     categories=settings.public()["categories"], status="queued", stage="queued", message="等待處理…")
                 state.journal = self.store.create(state.snapshot(detail=False))
                 jobs.append((state, settings, {"workflow": True, "rows": rows, "force": force}))
@@ -393,10 +393,10 @@ class Application:
             try:
                 for account in accounts:
                     start, end = parse_range(account.persisted())
-                    settings = replace(self.settings, username=account.username, password=account.password, response_encoding=account.response_encoding)
+                    settings = replace(self.settings, username=account.username, password=account.password)
                     state = ScanState(start, end, account=account.username, id=uuid.uuid4().hex,
                         account_id=account.id, account_label=account.label, mode=account.mode,
-                        response_encoding=account.response_encoding, categories=settings.public()["categories"],
+                        categories=settings.public()["categories"],
                         status="queued", stage="queued", message="等待查詢…")
                     state.journal = self.store.create(state.snapshot(detail=False))
                     jobs.append((state, settings, None))
@@ -419,7 +419,7 @@ class Application:
             start, end = parse_range(source)
             state = ScanState(start, end, account=source["account"], id=uuid.uuid4().hex,
                 account_id=source.get("account_id", ""), account_label=source.get("account_label", ""),
-                response_encoding=source.get("response_encoding", "auto"), source_id=run_id,
+                source_id=run_id,
                 categories=self.settings.public()["categories"], status="queued", stage="queued", message="等待重新分類…")
             state.journal = self.store.create(state.snapshot(detail=False))
             self.states[state.data["id"]] = state

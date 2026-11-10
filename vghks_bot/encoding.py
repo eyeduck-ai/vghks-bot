@@ -8,13 +8,24 @@ from contextvars import ContextVar
 from dataclasses import replace
 from urllib.parse import urlsplit
 
+from vghks_sdk import (
+    OutpatientPatient,
+    PatientBasicInfo,
+    PatientDemographics,
+    RegistrationRecord,
+    SoapRecord,
+)
+from vghks_sdk.core.response_text import (
+    declared_charsets,
+    decode_cp950,
+    decode_response_text,
+    private_use_characters,
+)
 from vghks_sdk.core.transport import SafeSessionTransport
 
 _report_attachment_scope = ContextVar("report_attachment_scope", default=False)
 _prq_decode_scope = ContextVar("prq_decode_scope", default=None)
 _EVIDENCE_ENDPOINTS = {"opd": ("POST", "/QueryOPDPatList.do"), "soap": ("GET", "/QueryBillingSOAP.do")}
-_HTTP_CHARSET = re.compile(r"charset\s*=\s*[\"'\s]*([a-zA-Z0-9_-]+)", re.I)
-_META_CHARSET = re.compile(rb'<meta\b[^>]*\bcharset\s*=\s*["\x27\s]*([a-zA-Z0-9_-]+)', re.I)
 _CHARSET_LABELS = {
     "utf-8", "utf8", "big5", "big-5", "cp950", "ms950", "big5-hkscs", "big5hkscs",
     "utf-16", "utf-16le", "utf-16be", "iso-8859-1", "windows-1252", "us-ascii",
@@ -44,7 +55,14 @@ def report_attachment_downloads():
 def observe_prq_decoding(operation):
     """Collect only safe diagnostics for one known PRQ read operation."""
     evidence = {}
+    if operation is None:
+        yield evidence
+        return
     method, path = _EVIDENCE_ENDPOINTS[operation]
+    active = _prq_decode_scope.get()
+    if active is not None and active[:2] == (method, path):
+        yield active[2]
+        return
     token = _prq_decode_scope.set((method, path, evidence))
     try:
         yield evidence
@@ -52,40 +70,29 @@ def observe_prq_decoding(operation):
         _prq_decode_scope.reset(token)
 
 
-def _declared_charsets(content, content_type):
-    meta = _META_CHARSET.search(content[:16384])
-    http = _HTTP_CHARSET.search(content_type)
-    return (http.group(1).lower() if http else None,
-            meta.group(1).decode("ascii").lower() if meta else None)
+def decode_response(content: bytes, content_type: str = "") -> str:
+    return decode_response_text(content, content_type)[0]
 
 
-def decode_response(content: bytes, content_type: str = "", encoding: str = "auto") -> str:
-    return _decode_response(content, content_type, encoding)[0]
-
-
-def _decode_response(content, content_type, encoding):
-    if content.startswith(b"\xef\xbb\xbf"):
-        return content.decode("utf-8-sig", errors="replace"), "utf-8-sig"
-    if encoding != "auto":
-        codec = "cp950" if encoding == "big5" else "utf-8"
-        return content.decode(codec, errors="replace"), codec
-    try:
-        return content.decode("utf-8"), "utf-8"
-    except UnicodeDecodeError:
-        pass
-    http, meta = _declared_charsets(content, content_type)
-    if (meta or http) in {"utf-8", "utf8"}:
-        try:
-            return content.decode("cp950"), "cp950"
-        except UnicodeDecodeError:
-            utf8 = content.decode("utf-8", errors="replace")
-            big5 = content.decode("cp950", errors="replace")
-            if utf8.count("\ufffd") <= big5.count("\ufffd"):
-                return utf8, "utf-8"
-            return big5, "cp950"
-    # PRQ legacy pages are Big5/CP950. One damaged byte elsewhere in a page
-    # must not cause all names and demographics to be decoded as UTF-8.
-    return content.decode("cp950", errors="replace"), "cp950"
+def text_encoding_notice(value, evidence):
+    """Describe only parsed clinical text fields and safe response metadata."""
+    if isinstance(value, SoapRecord):
+        fields = (value.full_text,)
+    elif isinstance(value, (PatientBasicInfo, PatientDemographics)):
+        fields = (value.name,)
+    elif isinstance(value, (list, tuple)):
+        fields = tuple(row.name for row in value if isinstance(row, (OutpatientPatient, RegistrationRecord)))
+    else:
+        return {}
+    texts = tuple(text for text in fields if isinstance(text, str))
+    samples = private_use_characters(*texts)
+    replacement = any("\ufffd" in text for text in texts)
+    if not samples and not replacement:
+        return {}
+    return {
+        "private_use_characters": samples, "replacement_character": replacement,
+        **{key: evidence[key] for key in ("http_charset", "meta_charset", "decoded_with") if key in evidence},
+    }
 
 
 def _masked_decode_errors(content, codec):
@@ -98,7 +105,10 @@ def _masked_decode_errors(content, codec):
     # mask represents the width of each of at most three invalid sequences.
     for _ in range(3):
         try:
-            content.decode(codec)
+            if codec == "cp950":
+                decode_cp950(content)
+            else:
+                content.decode(codec)
         except UnicodeDecodeError as error:
             masks.append("XX" * min(error.end - error.start, 4))
             content = content[error.end:]
@@ -107,8 +117,8 @@ def _masked_decode_errors(content, codec):
     return masks
 
 
-def _decode_evidence(content, content_type, encoding, text, codec):
-    http, meta = _declared_charsets(content, content_type)
+def _decode_evidence(content, content_type, text, codec):
+    http, meta = declared_charsets(content, content_type)
     masks = _masked_decode_errors(content, codec) if "\ufffd" in text else []
     markers = []
     # These markers concern the entire response. They cannot be attributed to
@@ -131,7 +141,6 @@ def _decode_evidence(content, content_type, encoding, text, codec):
     return {
         "http_charset": http if http is None or http in _CHARSET_LABELS else "other",
         "meta_charset": meta if meta is None or meta in _CHARSET_LABELS else "other",
-        "configured_encoding": encoding if encoding in {"auto", "big5", "utf-8"} else "other",
         "decoded_with": codec,
         "decoder_replacement": bool(masks),
         "source_markers": markers,
@@ -143,9 +152,8 @@ def _decode_evidence(content, content_type, encoding, text, codec):
 
 
 class ClinicalTransport(SafeSessionTransport):
-    def __init__(self, *, response_encoding="auto", attachment_base_url="", **kwargs):
+    def __init__(self, *, attachment_base_url="", **kwargs):
         super().__init__(**kwargs)
-        self.response_encoding = response_encoding
         base = urlsplit(attachment_base_url)
         self.attachment_origin = (base.scheme.lower(), base.netloc.lower()) if base.netloc else None
         self.prq_path = base.path.rstrip("/")
@@ -183,12 +191,12 @@ class ClinicalTransport(SafeSessionTransport):
     def text(self, response):
         content = response.content or b""
         content_type = response.headers.get("Content-Type", "")
-        text, codec = _decode_response(content, content_type, self.response_encoding)
+        text, codec = decode_response_text(content, content_type, encoding_hint=getattr(response, "encoding", None))
         scope = _prq_decode_scope.get()
         if scope is not None:
             method, path, evidence = scope
             if getattr(getattr(response, "request", None), "method", "") == method:
                 target = urlsplit(getattr(response, "url", "") or "")
                 if (target.scheme.lower(), target.netloc.lower()) == self.attachment_origin and target.path == self.prq_path + path:
-                    evidence.update(_decode_evidence(content, content_type, self.response_encoding, text, codec))
+                    evidence.update(_decode_evidence(content, content_type, text, codec))
         return text

@@ -138,14 +138,14 @@ def response_snapshot(request_id, response, elapsed_seconds, limit=RESPONSE_LIMI
             "truncated": len(raw) > limit}
 
 
-def response_shape(snapshot, encoding, redactor=None):
+def response_shape(snapshot, redactor=None):
     raw = snapshot.get("_raw", b"")
     if binary_asset_media_type(raw):
         sample = SimpleNamespace(content=raw, headers={"Content-Type": snapshot.get("headers", {}).get("content-type", "")})
         result = dict(_response_structure(sample))
         result.update(byte_length=snapshot["response_bytes"], shape_truncated=snapshot["truncated"])
         return result
-    source = decode_response(snapshot.get("_raw", b""), snapshot.get("headers", {}).get("content-type", ""), encoding)
+    source = decode_response(snapshot.get("_raw", b""), snapshot.get("headers", {}).get("content-type", ""))
     if redactor:
         source = redactor.text(source)
     sample = SimpleNamespace(content=source.encode("utf-8"), headers={"Content-Type": "text/html; charset=utf-8"}
@@ -162,7 +162,7 @@ def file_reference(path):
     return {"name": path.name, "sha256": hashlib.sha256(content).hexdigest(), "size_bytes": len(content)}
 
 
-def save_response(directory, operation_id, snapshot, redactor, encoding, remaining):
+def save_response(directory, operation_id, snapshot, redactor, remaining):
     raw = snapshot.get("_raw", b"")
     binary_type = binary_asset_media_type(raw)
     changed = False
@@ -171,7 +171,7 @@ def save_response(directory, operation_id, snapshot, redactor, encoding, remaini
         # regex rewriting inside a PDF/JPEG stream. Evidence stays local.
         values = (("bin", raw),)
     else:
-        source = decode_response(raw, snapshot.get("headers", {}).get("content-type", ""), encoding)
+        source = decode_response(raw, snapshot.get("headers", {}).get("content-type", ""))
         sanitized = redactor.text(source)
         changed = sanitized != source
         content = sanitized.encode("utf-8")
