@@ -195,13 +195,14 @@ function progressClockCleanup(){
 }
 
 function compareSetup({embedded=false}={}){
-  const s=environment();s.messages=[];
+  const s=environment();s.messages=[];s.sizes=[];
   if(embedded)s.window.parent={postMessage:(value,origin)=>s.messages.push({value,origin})};
   s.load("vghks_bot/static/utility-dock.js");
   const download=(url,name)=>{const link=s.document.createElement("a");link.className="attachment-control";link.href=url;link.download=name+".pdf";return link;};
   s.context.ClinicalUI={comparisonName:item=>item.date,pdfURL:url=>url,fileName:name=>name+".pdf",downloadLink:download,
     assetTools:({url,name})=>{const tools=s.document.createElement("span");tools.append(download(url,name));return tools;}};
   s.load("vghks_bot/static/local-session.js");
+  s.context.ResizeObserver=class{constructor(callback){this.callback=callback;this.targets=new Set();s.sizes.push(this);}observe(target){this.targets.add(target);}unobserve(target){this.targets.delete(target);}};
   s.load("vghks_bot/static/file-compare.js");
   const ui=s.window.FileCompare;s.window.UtilityDock.context(accountA);ui.context(accountA,"SYN001","合成病人");
   const item=(digit,overrides={})=>({account:accountA,mrn:"SYN001",digest:digit.repeat(64),mime:"application/pdf",name:"合成附件 "+digit,date:"2026-10-27",...overrides});
@@ -245,6 +246,33 @@ function comparisonZoomReset(){
   imagePane.querySelectorAll(".file-compare-pane-actions button")[2].dispatchEvent({type:"click"});assert.equal(inner.messages.at(-1).value.delta,-.25);
   host.querySelector(".file-compare-inline-tabs").children[0].dispatchEvent({type:"click"});assert.equal(inlinePane.querySelector("iframe"),inlinePDF,"switching inline tabs recreated the PDF");
   emit([{...one,zoom:3}],{account:accountB});assert.equal(inlineReset.textContent,"125%","foreign account state changed inline zoom");assert.equal(inner.requests.length,0);
+}
+
+function comparisonFitModes(){
+ const s=compareSetup(),{ui,item}=s;ui.add(item("1",{mime:"image/png"}));ui.add(item("2"));ui.open();
+ const panes=s.document.getElementById("fileComparePanes"),pane=panes.children[0],image=pane.querySelector("img"),scroll=image.parentElement,pdf=panes.children[1].querySelector("iframe"),source=image.src;
+ const observer=s.sizes[0],fit=mode=>pane.querySelectorAll(".file-compare-fit").find(button=>button.dataset.fit===mode),percent=pane.querySelector(".file-compare-zoom");
+ assert.equal(fit("height").disabled,true);Object.assign(image,{naturalWidth:1000,naturalHeight:2000});Object.assign(scroll,{clientWidth:400,clientHeight:600});image.dispatchEvent({type:"load"});
+ assert.equal(image.style.width,"400px");assert.equal(percent.textContent,"40%");assert.equal(fit("height").disabled,false);
+ scroll.scrollTop=171;fit("height").dispatchEvent({type:"click"});assert.equal(image.style.width,"300px");assert.equal(percent.textContent,"30%");assert.equal(scroll.scrollTop,0);
+ assert.equal(fit("height").getAttribute("aria-pressed"),"true");scroll.clientHeight=800;observer.callback([{target:scroll}]);assert.equal(image.style.width,"400px");
+ pane.querySelectorAll(".file-compare-pane-actions button")[4].dispatchEvent({type:"click"});assert.equal(image.style.width,"500px");assert.equal(fit("height").getAttribute("aria-pressed"),"false");
+ scroll.scrollTop=121;scroll.clientHeight=400;observer.callback([{target:scroll}]);assert.equal(image.style.width,"500px");assert.equal(scroll.scrollTop,121);
+ percent.dispatchEvent({type:"click"});assert.equal(image.style.width,"1000px","100% did not restore the original image dimensions");
+ fit("width").dispatchEvent({type:"click"});scroll.clientWidth=600;observer.callback([{target:scroll}]);assert.equal(image.style.width,"600px");
+ const states=[],frame={contentWindow:{postMessage:value=>states.push(value)}},event={origin:s.context.location.origin,source:null,data:{type:"bot:compare-zoom",account:accountA,mrn:"SYN001",digest:item("1").digest,fit:"height"}};
+ ui.receive(event,frame,accountA);assert.equal(image.style.width,"600px","an untrusted frame changed the fitting mode");
+ event.source=frame.contentWindow;ui.receive(event,frame,accountA);assert.equal(image.style.width,"200px");assert.equal(states.at(-1).items[0].fit,"height");
+ const inner=compareSetup({embedded:true}),host=inner.element("div");inner.ui.renderInline(host);
+ const emit=()=>inner.window.dispatchEvent({type:"message",origin:inner.context.location.origin,source:inner.window.parent,data:states.at(-1)});emit();
+ const inlinePane=host.querySelector(".file-compare-pane"),inlineImage=inlinePane.querySelector("img"),inlineScroll=inlineImage.parentElement;
+ Object.assign(inlineImage,{naturalWidth:1000,naturalHeight:2000});Object.assign(inlineScroll,{clientWidth:800,clientHeight:600});inlineImage.dispatchEvent({type:"load"});assert.equal(inlineImage.style.width,"300px");
+ inlineScroll.scrollTop=150;inlinePane.querySelectorAll(".file-compare-fit")[0].dispatchEvent({type:"click"});assert.equal(inlineScroll.scrollTop,0);assert.equal(inner.messages.at(-1).value.fit,"width");
+ event.data=inner.messages.at(-1).value;ui.receive(event,frame,accountA);emit();assert.equal(inlineImage.style.width,"800px");assert.equal(image.style.width,"600px");
+ inlinePane.querySelectorAll(".file-compare-pane-actions button")[4].dispatchEvent({type:"click"});assert.equal(inner.messages.at(-1).value.scale,.8);
+ event.data=inner.messages.at(-1).value;ui.receive(event,frame,accountA);emit();assert.equal(inlineImage.style.width,"1000px");assert.equal(image.style.width,"1000px","embedded zoom used the modal's viewport dimensions");
+ assert.equal(image.src,source);assert.equal(pane.querySelector("img"),image);assert.equal(pdf.style.width,"100%");assert.equal(observer.targets.size,1);
+ ui.remove(item("1").digest);assert.equal(observer.targets.size,0,"removed image retained a resize observer");inner.ui.clear();assert.equal(inner.sizes[0].targets.size,0);
 }
 
 function comparisonSwitchFocus(){
@@ -363,4 +391,4 @@ async function confirmationSafety(){
   assert.equal(s.requests.length,0,"cross-document updates unexpectedly fetched an attachment");
 }
 
-(async()=>{await clocksWhilePending();dockPlacement();progressClockCleanup();comparisonZoomReset();comparisonSwitchFocus();await scanPreviewLifecycle();await confirmationSafety();process.stdout.write("Utility control clocks, dock placement, confirmations and selection isolation checks passed\nModal footer, native PDF zoom guidance and persistent image zoom reset checks passed\n");})().catch(error=>{console.error(error);process.exitCode=1;});
+(async()=>{await clocksWhilePending();dockPlacement();progressClockCleanup();comparisonZoomReset();comparisonFitModes();comparisonSwitchFocus();await scanPreviewLifecycle();await confirmationSafety();process.stdout.write("Utility control clocks, dock placement, confirmations and selection isolation checks passed\nModal footer, native PDF zoom guidance and persistent image zoom reset checks passed\n");})().catch(error=>{console.error(error);process.exitCode=1;});

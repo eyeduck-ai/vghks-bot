@@ -573,8 +573,12 @@ window.CataractUI = (() => {
     let restored = false;
     viewport.tabIndex = 0;viewport.setAttribute("role", "region");viewport.setAttribute("aria-label", "醫囑圖片預覽，可捲動查看");
     const file = el("img");file.title = file.alt = title;
-    const fitScale = () => file.naturalWidth && file.naturalHeight && viewport.clientWidth && viewport.clientHeight
-      ? Math.min(1, viewport.clientWidth / file.naturalWidth, viewport.clientHeight / file.naturalHeight) : null;
+    const fitScale = () => {
+      if (!file.naturalWidth || !file.naturalHeight || !viewport.clientWidth || !viewport.clientHeight) return null;
+      if (view.fit === "width") return viewport.clientWidth / file.naturalWidth;
+      if (view.fit === "height") return viewport.clientHeight / file.naturalHeight;
+      return Math.min(1, viewport.clientWidth / file.naturalWidth, viewport.clientHeight / file.naturalHeight);
+    };
     function apply() {
       const fit = fitScale();
       if (!box.isConnected || fit === null) return;
@@ -583,7 +587,8 @@ window.CataractUI = (() => {
       const percent = Math.round(view.zoom * 100) || +(view.zoom * 100).toPrecision(2);
       reset.textContent = percent + "%";
       reset.setAttribute("aria-label", `目前縮放 ${percent}%，回到最適比例`);
-      for (const control of [less, reset, more]) control.disabled = false;
+      for (const control of [less, reset, more, ...fitButtons]) control.disabled = false;
+      for (const control of fitButtons) control.setAttribute("aria-pressed", String(view.fit === control.dataset.fit));
       if (!restored) {viewport.scrollLeft = view.left;viewport.scrollTop = view.top;restored = true;}
     }
     function step(direction) {
@@ -599,12 +604,16 @@ window.CataractUI = (() => {
     more.setAttribute("aria-label", "放大圖片");more.title = "放大圖片";
     const reset = button("…", () => {view.fit = true;view.left = view.top = 0;viewport.scrollLeft = viewport.scrollTop = 0;apply();});
     reset.className = "cataract-image-fit";reset.title = "回到最適比例";reset.setAttribute("aria-label", "回到最適比例");
-    for (const control of [less, reset, more]) control.disabled = true;
-    controls.append(less, reset, more);tools.append(el("span", "圖片縮放", "small muted"), controls);
+    const fitButtons = [["width", "最適寬度"], ["height", "最適高度"]].map(([mode, label]) => {
+      const control = button(label, () => {view.fit = mode;view.left = view.top = 0;viewport.scrollLeft = viewport.scrollTop = 0;apply();});
+      control.dataset.fit = mode;control.setAttribute("aria-pressed", String(view.fit === mode));return control;
+    });
+    for (const control of [less, reset, more, ...fitButtons]) control.disabled = true;
+    controls.append(less, reset, more, ...fitButtons);tools.append(el("span", "圖片縮放", "small muted"), controls);
     viewport.append(file);box.append(tools, viewport);box.refit = apply;
     viewport.addEventListener("scroll", () => {view.left = viewport.scrollLeft;view.top = viewport.scrollTop;}, {passive:true});
     file.addEventListener("load", apply);
-    file.addEventListener("error", () => {reset.textContent = "載入失敗";for (const control of [less, reset, more]) control.disabled = true;});
+    file.addEventListener("error", () => {reset.textContent = "載入失敗";for (const control of [less, reset, more, ...fitButtons]) control.disabled = true;});
     file.src = url;
     if (!imageResizeObserver && typeof ResizeObserver === "function") {
       // Observe the stable layout once; detached images are never retained.

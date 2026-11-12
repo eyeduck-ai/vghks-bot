@@ -479,7 +479,7 @@ body.review-result-compact .review-page .review-layout{flex:1;height:auto;max-he
 .history-asset img{display:block;max-width:100%;max-height:65vh;margin:auto;object-fit:contain}
 .history-asset a{display:inline-block;margin-top:8px}
 #dateForm{align-items:center;gap:6px;padding:7px 9px;margin-bottom:8px}
-#dateForm>.choice-field>legend{margin-bottom:1px;font-size:10px;line-height:1.2}
+#dateForm>.date-mode-control>legend{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;margin:0;padding:0}
 #dateForm .choice-options{padding:2px}
 #dateForm .choice-options span{min-height:27px;padding:4px 9px}
 #dateForm>label{display:flex;align-items:center;gap:5px;min-width:0;flex:none;font-size:11px;white-space:nowrap}

@@ -102,6 +102,8 @@ async function imageFitTests(){
  const load=async (width,height)=>{const file=viewport.firstElementChild;Object.assign(file,{naturalWidth:width,naturalHeight:height});await file.emit("load");return file;};
  assert.equal(sizeObserver.target,viewport);
  assert.equal(percentage().textContent,"…");assert.equal(step("＋").disabled,true);
+ let fitWidth=step("最適寬度"),fitHeight=step("最適高度");
+ assert.equal(fitWidth.disabled,true);assert.equal(fitHeight.disabled,true);
  const original=await load(740,1900),initialWidth=parseFloat(original.style.width);
  assert.equal(percentage().textContent,"26%");assert.equal(step("＋").disabled,false);
  assert.ok(initialWidth<=982&&initialWidth*1900/740<=499,"fit cropped the portrait image vertically");
@@ -120,6 +122,16 @@ async function imageFitTests(){
  assert.equal(s.context.document.activeElement,reset,"fitting replaced the focused reset button");
  await step("−").emit("click");assert.ok(parseFloat(reopened.style.width)<148,"zoom out from a fit below 25% enlarged the image");
  assert.equal(viewport.firstElementChild,reopened);
+ fitWidth=step("最適寬度");fitHeight=step("最適高度");
+ resize(982,760);await fitWidth.emit("click");assert.equal(reopened.style.width,"982px");
+ assert.equal(fitWidth["aria-pressed"],"true");assert.equal(fitHeight["aria-pressed"],"false");
+ resize(600,760);assert.equal(reopened.style.width,"600px","width fitting did not follow the viewport");
+ viewport.scrollTop=171;await fitHeight.emit("click");assert.equal(reopened.style.width,"296px");assert.equal(viewport.scrollTop,0);
+ resize(600,950);assert.equal(reopened.style.width,"370px","height fitting did not follow the viewport");
+ await tiles[1].emit("click");await load(120,90);await tiles[0].emit("click");const fitted=await load(740,1900);
+ assert.equal(fitted.style.width,"370px");assert.equal(step("最適高度")["aria-pressed"],"true","attachment switching forgot its fitting mode");
+ await step("＋").emit("click");assert.equal(fitted.style.width,"555px");assert.equal(step("最適高度")["aria-pressed"],"false");
+ resize(400,600);assert.equal(fitted.style.width,"555px","resizing discarded manual zoom after height fitting");
  g.dispose();assert.equal(sizeObserver.disconnected,true);
 }
 async function thumbnailTests(){

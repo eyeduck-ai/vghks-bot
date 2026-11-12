@@ -71,6 +71,13 @@ async function imageZoomTests(){
  const other=$(".cataract-image-preview").querySelector("img");Object.assign(other,{naturalWidth:1000,naturalHeight:2000});await other.emit("load");assert.equal($(".cataract-image-fit").textContent,"30%","another patient inherited image zoom");
  $("#analysisPatient").value="TEST001";ui.render(data("TEST001"));const previous=$(".cataract-image-preview").querySelector("img");Object.assign(previous,{naturalWidth:1000,naturalHeight:2000});await previous.emit("load");assert.equal($(".cataract-image-fit").textContent,"50%");
  assert.equal(s.sources.length,4,"zoom and reset navigated the existing image");
+ const controls=$(".cataract-image-zoom"),fitWidth=controls.children[3],fitHeight=controls.children[4],currentViewport=$(".cataract-image-viewport");
+ Object.assign(currentViewport,{clientWidth:500,clientHeight:600});fitWidth.run();assert.equal(previous.style.width,"500px");
+ assert.equal(fitWidth["aria-pressed"],"true");currentViewport.clientWidth=700;for(const run of s.messages.get("resize"))run();assert.equal(previous.style.width,"700px");
+ fitHeight.run();assert.equal(previous.style.width,"300px");currentViewport.clientHeight=800;for(const run of s.messages.get("resize"))run();assert.equal(previous.style.width,"400px");
+ controls.children[2].run();assert.equal(previous.style.width,"500px");assert.equal(fitHeight["aria-pressed"],"false");
+ currentViewport.clientHeight=400;for(const run of s.messages.get("resize"))run();assert.equal(previous.style.width,"500px","fitting controls discarded subsequent manual zoom");
+ assert.equal(s.sources.length,4,"fitting reloaded the cataract image");
 }
 async function main(){
  for(const atomic of [false,true]){

@@ -21,6 +21,20 @@ window.FileCompare = (() => {
     el.addEventListener("click", fn);
     return el;
   };
+  const imageResize = typeof ResizeObserver === "function" ? new ResizeObserver(changes => {
+    for (const {target} of changes) refreshImage(target.parentElement);
+  }) : null;
+  if (!imageResize) window.addEventListener("resize", () => {
+    for (const current of document.querySelectorAll(".file-compare-pane")) refreshImage(current);
+  });
+  function releasePanes(host) {
+    for (const current of host?.querySelectorAll(".file-compare-pane") || [])
+      imageResize?.unobserve?.(current.querySelector(".file-compare-scroll"));
+  }
+  function clearPanes(host) {releasePanes(host);host?.replaceChildren();}
+  function removePane(current) {
+    imageResize?.unobserve?.(current.querySelector(".file-compare-scroll"));current.remove();
+  }
   function valid(value) {
     return value && /^[a-f0-9]{32}$/.test(value.account) && /^\S{1,32}$/.test(value.mrn) &&
       /^[a-f0-9]{64}$/.test(value.digest) && ["application/pdf", "image/png", "image/jpeg", "image/gif"].includes(value.mime);
@@ -51,7 +65,7 @@ window.FileCompare = (() => {
     activeIndex = 0;
     numericKey = "";
     document.getElementById("fileCompareNumeric")?.replaceChildren();
-    document.getElementById("fileComparePanes")?.replaceChildren();
+    clearPanes(document.getElementById("fileComparePanes"));
     document.getElementById("fileCompareTabs")?.replaceChildren();
     document.getElementById("fileCompareDialog")?.close();
     render();
@@ -83,7 +97,7 @@ window.FileCompare = (() => {
     if (account !== value.account || mrn !== value.mrn) throw new Error("病人或帳號已切換，請從目前畫面重新選取檔案。");
     if (items.some(item => item.digest === value.digest)) {announce("此檔案已在比較清單中。"); return false;}
     if (items.length >= limit) {announce("比較清單最多可加入 6 份檔案。"); throw new Error("比較清單最多可加入 6 份檔案。");}
-    items.push({...value, zoom:1, selectionOrder:Math.max(0, ...items.map(item => item.selectionOrder)) + 1});
+    items.push({...value, zoom:1, fit:"width", selectionOrder:Math.max(0, ...items.map(item => item.selectionOrder)) + 1});
     selectionRevision++;
     activeIndex = items.length - 1;
     render();
@@ -93,8 +107,8 @@ window.FileCompare = (() => {
   function sendState(frame, error = "") {
     frame?.contentWindow?.postMessage({type:"bot:compare-state", account, mrn, count:items.length,
       digests:items.map(item => item.digest),
-      items:items.map(({digest, mime, name, source, date, zoom, fileIndex, fileCount, selectionOrder, reportId}) =>
-        ({digest, mime, name, source, date, zoom, fileIndex, fileCount, selectionOrder, reportId})),
+      items:items.map(({digest, mime, name, source, date, zoom, fit, fileIndex, fileCount, selectionOrder, reportId}) =>
+        ({digest, mime, name, source, date, zoom, fit, fileIndex, fileCount, selectionOrder, reportId})),
       limit, error}, location.origin);
   }
   function receive(event, expectedFrame, activeAccount) {
@@ -122,7 +136,11 @@ window.FileCompare = (() => {
     } else if (event.data?.type === "bot:compare-zoom") {
       if (event.data.account !== activeAccount || event.data.mrn !== mrn) return;
       if (event.data.reset === true) zoom(event.data.digest, 0, true);
-      else if ([-.25, .25].includes(event.data.delta)) zoom(event.data.digest, event.data.delta);
+      else if (["width", "height"].includes(event.data.fit)) zoom(event.data.digest, 0, false, event.data.fit);
+      else if ([-.25, .25].includes(event.data.delta)) {
+        const scale = Number.isFinite(event.data.scale) && event.data.scale > 0 ? event.data.scale : null;
+        zoom(event.data.digest, event.data.delta, false, "", scale);
+      }
     }
   }
   function removeDigest(digest) {
@@ -290,21 +308,61 @@ window.FileCompare = (() => {
     if (!items.length) document.getElementById("fileCompareDialog")?.close();
     render();
   }
-  function zoom(digest, delta, reset = false) {
+  function zoom(digest, delta, reset = false, fit = "", sourceScale = null) {
     const item = (embedded ? remoteItems : items).find(row => row.digest === digest);
     // The native PDF viewer owns document zoom; resizing its iframe does not.
     if (!item || item.mime === "application/pdf") return;
+    const host = embedded ? inlineHost : document.getElementById("fileComparePanes");
+    const current = [...(host?.querySelectorAll(".file-compare-pane") || [])].find(node => node.dataset.digest === digest);
+    const scale = sourceScale ?? (Number(current?.querySelector(".file-compare-scroll > :first-child")?.dataset.zoom) || item.zoom);
+    if (reset || fit) {
+      const scroll = current?.querySelector(".file-compare-scroll");
+      if (scroll) scroll.scrollLeft = scroll.scrollTop = 0;
+    }
     if (embedded) {
-      window.parent.postMessage({type:"bot:compare-zoom", account, mrn, digest, ...(reset ? {reset:true} : {delta})}, location.origin);
+      window.parent.postMessage({type:"bot:compare-zoom", account, mrn, digest,
+        ...(reset ? {reset:true} : fit ? {fit} : {delta, scale})}, location.origin);
       return;
     }
-    item.zoom = reset ? 1 : Math.max(.5, Math.min(3, item.zoom + delta));render();
+    item.fit = fit;
+    if (reset) item.zoom = 1;
+    else if (!fit) {
+      const small = scale < .25 || scale === .25 && delta < 0;
+      const next = small ? delta < 0 ? scale * .8 : Math.min(.25, scale * 1.25)
+        : (delta > 0 ? Math.floor(scale * 4 + 1e-9) + 1 : Math.ceil(scale * 4 - 1e-9) - 1) / 4;
+      item.zoom = Math.max(Math.min(.01, scale / 2), Math.min(4, next));
+    }
+    render();
+  }
+  function applyImageZoom(current, item) {
+    const file = current.querySelector(".file-compare-scroll > :first-child"), scroll = current.querySelector(".file-compare-scroll");
+    if (!file || !scroll) return;
+    const ready = !!(file.naturalWidth && file.naturalHeight && scroll.clientWidth && scroll.clientHeight);
+    let scale = item.fit ? 1 : item.zoom;
+    if (ready && item.fit === "width") scale = scroll.clientWidth / file.naturalWidth;
+    if (ready && item.fit === "height") scale = scroll.clientHeight / file.naturalHeight;
+    file.style.width = ready ? Math.floor(file.naturalWidth * scale * 100) / 100 + "px" : scale * 100 + "%";
+    file.style.height = "auto";file.dataset.zoom = String(scale);
+    const reset = current.querySelector(".file-compare-zoom");
+    const percent = Math.round(scale * 100) || +(scale * 100).toPrecision(2);
+    reset.textContent = percent + "%";
+    reset.setAttribute("aria-label", `目前縮放 ${percent}%，重設縮放為 100%`);
+    for (const control of current.querySelectorAll(".file-compare-scale-step")) control.disabled = !ready;
+    for (const control of current.querySelectorAll(".file-compare-fit")) {
+      control.disabled = !ready;control.setAttribute("aria-pressed", String(item.fit === control.dataset.fit));
+    }
+  }
+  function refreshImage(current) {
+    if (!current) return;
+    const item = (current.dataset.inline === "true" ? remoteItems : items).find(row => row.digest === current.dataset.digest);
+    if (item && item.mime !== "application/pdf") applyImageZoom(current, item);
   }
   function pane(item, index, inline = false) {
     const collection = inline ? remoteItems : items;
     const pdf = item.mime === "application/pdf";
     const wrap = make("section", undefined, "file-compare-pane");
     wrap.dataset.digest = item.digest;
+    wrap.dataset.inline = String(inline);
     wrap.dataset.active = String(index === (inline ? inlineActive : activeIndex));
     const columns = collection.length <= 2 ? collection.length : collection.length === 4 ? 2 : 3;
     wrap.style.setProperty("--pane-span", String(collection.length === 5 && index >= 3 ? 3 : 6 / columns));
@@ -327,7 +385,12 @@ window.FileCompare = (() => {
       resetZoom.className = "file-compare-zoom";
       resetZoom.setAttribute("aria-label", "重設縮放為 100%");resetZoom.title = "點擊重設為 100%";
       smaller.setAttribute("aria-label", "縮小檔案");larger.setAttribute("aria-label", "放大檔案");
+      smaller.className = larger.className = "file-compare-scale-step";
       buttons.append(smaller, resetZoom, larger);
+      for (const [mode, label] of [["width", "最適寬度"], ["height", "最適高度"]]) {
+        const fit = button(label, () => zoom(item.digest, 0, false, mode));
+        fit.className = "file-compare-fit";fit.dataset.fit = mode;buttons.append(fit);
+      }
     }
     const removeFile = button("×", () => inline ? removeDigest(item.digest) : remove(itemIndex()));
     removeFile.setAttribute("aria-label", `移除 ${label}`);removeFile.className = "file-compare-remove";removeFile.title = "移除檔案";
@@ -350,6 +413,10 @@ window.FileCompare = (() => {
     wrap.append(header);
     if (pdf) wrap.append(make("p", "PDF 縮放請使用檢閱器內的比例調整。", "file-compare-pdf-hint"));
     wrap.append(scroll);
+    if (!pdf) {
+      documentNode.addEventListener("load", () => refreshImage(wrap));
+      imageResize?.observe(scroll);
+    }
     return wrap;
   }
   function updatePane(current, item, index, collection, active) {
@@ -370,9 +437,8 @@ window.FileCompare = (() => {
     if (download.download !== ClinicalUI.fileName(downloadName, item.mime))
       download.replaceWith(ClinicalUI.downloadLink(download.href, downloadName, item.mime, true));
     const pdf = item.mime === "application/pdf";
-    file.style.width = pdf ? "100%" : (item.zoom * 100) + "%";
-    file.style.height = pdf ? "100%" : "auto";
-    if (!pdf) current.querySelector(".file-compare-zoom").textContent = Math.round(item.zoom * 100) + "%";
+    if (pdf) {file.style.width = "100%";file.style.height = "100%";}
+    else applyImageZoom(current, item);
   }
   function updateSwitches(host, collection, active, activate) {
     const focused = host.ownerDocument.activeElement;
@@ -399,9 +465,10 @@ window.FileCompare = (() => {
   }
   function renderInline(host = inlineHost) {
     if (!embedded || !host) return;
+    if (inlineHost && inlineHost !== host) releasePanes(inlineHost);
     inlineHost = host;
     if (!remoteItems.length) {
-      host.replaceChildren();
+      clearPanes(host);
       host.append(make("p", "尚未選取檔案。請到「數值與醫囑」點開報告，再勾選附件加入比較。", "empty-result"));
       return;
     }
@@ -410,6 +477,7 @@ window.FileCompare = (() => {
     inlineActiveDigest = remoteItems[inlineActive].digest;
     let tabs = host.querySelector(".file-compare-inline-tabs"), panes = host.querySelector(".file-compare-inline-panes");
     if (!tabs || !panes) {
+      releasePanes(host);
       tabs = make("div", undefined, "file-compare-inline-tabs");panes = make("div", undefined, "file-compare-inline-panes");
       tabs.setAttribute("role", "group");
       tabs.setAttribute("aria-label", "比較檔案切換");
@@ -420,7 +488,7 @@ window.FileCompare = (() => {
       renderInline();
     });
     const desired = new Set(remoteItems.map(item => item.digest));
-    for (const existing of [...panes.children]) if (!desired.has(existing.dataset.digest)) existing.remove();
+    for (const existing of [...panes.children]) if (!desired.has(existing.dataset.digest)) removePane(existing);
     for (const [index, item] of remoteItems.entries()) {
       let current = [...panes.children].find(node => node.dataset.digest === item.digest);
       if (!current) {current = pane(item, index, true);panes.append(current);}
@@ -440,17 +508,17 @@ window.FileCompare = (() => {
     const tabs = document.getElementById("fileCompareTabs"), panes = document.getElementById("fileComparePanes");
     changed();
     window.UtilityDock?.sync();
+    const desired = new Set(items.map(item => item.digest));
+    for (const existing of [...panes.children]) if (!desired.has(existing.dataset.digest)) removePane(existing);
     if (!document.getElementById("fileCompareDialog").open) {
       tabs.replaceChildren();
-      if (!items.length) panes.replaceChildren();
+      if (!items.length) clearPanes(panes);
       sendState(linkedFrame); return;
     }
     updateSwitches(tabs, items, activeIndex, digest => {
       const index = items.findIndex(item => item.digest === digest);
       if (index >= 0) {activeIndex = index; render();}
     });
-    const desired = new Set(items.map(item => item.digest));
-    for (const existing of [...panes.children]) if (!desired.has(existing.dataset.digest)) existing.remove();
     for (const [index, item] of items.entries()) {
       let current = [...panes.children].find(element => element.dataset.digest === item.digest);
       if (!current) {current = pane(item, index); panes.append(current);}
@@ -463,7 +531,8 @@ window.FileCompare = (() => {
     if (event.data.account !== account || event.data.mrn !== mrn) return;
     remoteItems = (Array.isArray(event.data.items) ? event.data.items : []).slice(0, limit)
       .filter(item => valid({...item, account, mrn}))
-      .map(item => ({...item, account, zoom:Math.max(.5, Math.min(3, Number(item.zoom) || 1))}));
+      .map(item => ({...item, account, zoom:Math.max(.000001, Math.min(4, Number(item.zoom) || 1)),
+        fit:["width", "height"].includes(item.fit) ? item.fit : ""}));
     remoteCount = remoteItems.length;
     remoteDigests = new Set(remoteItems.map(item => item.digest));
     renderInline();
@@ -471,6 +540,6 @@ window.FileCompare = (() => {
     if (event.data.error) announce(event.data.error);
   });
   document.addEventListener("DOMContentLoaded", mount);
-  function clear(){selectionRevision++;items=[];remoteItems=[];remoteDigests.clear();remoteCount=0;numericKey="";document.getElementById("fileCompareDialog")?.close();render();if(embedded)changed();}
+  function clear(){selectionRevision++;items=[];remoteItems=[];remoteDigests.clear();remoteCount=0;numericKey="";document.getElementById("fileCompareDialog")?.close();render();if(embedded){renderInline();changed();}}
   return {add, context, count, has, remove:removeDigest, open, receive, renderInline, clear, requestClear, patient:()=>mrn};
 })();

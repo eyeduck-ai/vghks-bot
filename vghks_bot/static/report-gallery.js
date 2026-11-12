@@ -102,13 +102,15 @@ window.ReportGallery=(()=>{
   function restorePosition(position){viewport.scrollLeft=position.left||0;viewport.scrollTop=position.top||0;}
   function fitScale(){
    if(!file?.naturalWidth||!file.naturalHeight||!viewport.clientWidth||!viewport.clientHeight)return null;
+   if(imageFit==="width")return viewport.clientWidth/file.naturalWidth;
+   if(imageFit==="height")return viewport.clientHeight/file.naturalHeight;
    return Math.min(1,viewport.clientWidth/file.naturalWidth,viewport.clientHeight/file.naturalHeight);
   }
   function updateZoomControl(){
    if(!zoomControl)return;
    const percent=Math.round(zoom*100),reset=pdfStage?"重設為 100%":"回到最適比例";
    const waiting=!pdfStage&&!file?.dataset.imageSized;
-   for(const step of zoomSteps)step.disabled=waiting;
+   for(const step of zoomSteps){step.disabled=waiting;if(step.dataset.fit)step.setAttribute("aria-pressed",String(imageFit===step.dataset.fit));}
    zoomControl.textContent=waiting?"…":(percent||+(zoom*100).toPrecision(2))+"%";
    zoomControl.title=reset;
    zoomControl.setAttribute("aria-label",zoomControl.textContent==="…"?reset:"目前縮放 "+zoomControl.textContent+"，"+reset);
@@ -155,8 +157,13 @@ window.ReportGallery=(()=>{
     };
     zoomControl=button("",reset);zoomControl.classList.add("report-gallery-zoom");
     const less=button("−",()=>resize(-1)),more=button("＋",()=>resize(1));less.setAttribute("aria-label","縮小附件");more.setAttribute("aria-label","放大附件");
-    zoomSteps=[less,more];updateZoomControl();
+    zoomSteps=[less,more];
     const group=element("div",undefined,"report-gallery-zoom-group");group.setAttribute("role","group");group.setAttribute("aria-label","附件縮放");group.append(less,zoomControl,more);tools.append(group);
+    if(asset.mime?.startsWith("image/"))for(const [mode,label] of [["width","最適寬度"],["height","最適高度"]]){
+     const fit=button(label,()=>{imageFit=mode;restorePosition({});applyZoom();savePosition();});fit.dataset.fit=mode;
+     fit.classList.add("report-gallery-fit");zoomSteps.push(fit);group.append(fit);
+    }
+    updateZoomControl();
    }
   }
   function show(){
