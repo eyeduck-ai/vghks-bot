@@ -15,6 +15,7 @@ from vghks_sdk import __version__ as sdk_version
 from . import __version__
 from .clinical_identity import classify_opd_registration
 from .connection_state import should_pause
+from .encoding import patient_name_display_profile
 from .library import current_cache, registration_id
 from .scanner import Cancelled, ScanState, create_sdk, run_scan, safe_failure
 from .settings import Account, Settings, parse_mrns, parse_range, today
@@ -83,6 +84,7 @@ class Application:
                 "settings": self.settings.public(), "accounts": [a.public() for a in self.accounts.values()],
                 "data_dir": str(self.store.directory), "warnings": self.store.warnings,
                 "version": __version__, "sdk_version": sdk_version,
+                "patient_name_profile": patient_name_display_profile(),
                 "library": self.store.library.stats(),
             }
 

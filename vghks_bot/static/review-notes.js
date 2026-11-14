@@ -153,7 +153,7 @@ window.ReviewNotesUI=(()=>{
  }
  function noteTable(patients){
   const entries=patients.map(patient=>[
-   patient.sequence_no||"未提供",patient.name||"姓名未提供",patient.mrn,
+   patient.sequence_no||"未提供",(window.ClinicalUI?.patientName?.(patient.name)??patient.name)||"姓名未提供",patient.mrn,
    node("span",patient.text,"review-print-text")
   ]);
   return table(["掛號序號","姓名","病歷號","備註"],entries);

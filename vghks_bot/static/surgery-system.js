@@ -48,10 +48,10 @@ window.SurgerySystem = (() => {
   }
   function procedures(row){return (row.procedures||[]).map(p=>[p.position,p.code,p.name].filter(v=>v!==null&&v!==undefined&&String(v).trim()).join(" · ")).join("；")||row.procedure||"—";}
   function details(row){
-    $("#dataTitle").textContent="手術排程 · "+(row.name||row.patient_mrn||"院方紀錄");
+    $("#dataTitle").textContent="手術排程 · "+((window.ClinicalUI?.patientName?.(row.name)??row.name)||row.patient_mrn||"院方紀錄");
     $("#dataContent").replaceChildren(table(["欄位","內容"],[
       ["查詢醫師卡號",data.result.doctor_card],["取得時間",time(data.result.fetched_at)],
-      ["姓名",row.name||"院方未提供"],["性別",row.patient_sex||"—"],["病歷號",row.patient_mrn||"—"],
+      ["姓名",(window.ClinicalUI?.patientName?.(row.name)??row.name)||"院方未提供"],["性別",row.patient_sex||"—"],["病歷號",row.patient_mrn||"—"],
       ["刀日",row.date||row.raw_date||"待確認"],["排程時間",scheduleTime(row)],
       ["病房",row.ward||"—"],["科別",row.department||"—"],["類別",row.category||"—"],
       ["術式",procedures(row)],["刀房",row.room||"—"],["麻醉",row.anesthesia||"—"],
@@ -78,7 +78,7 @@ window.SurgerySystem = (() => {
       const procedure=node("span",r.procedure||"—","schedule-procedure"),physician=node("span",r.doctor_name||r.doctor_card||"—"),detail=btn("查看排程",()=>details(r));
       physician.title=[r.doctor_name,r.doctor_card].filter(Boolean).join(" · ");setIcon(detail,"calendar","查看排程 "+(r.patient_mrn||r.case_no||r.row_id));
       if(r.note)procedure.append(node("small",r.note,"schedule-warning"));
-      return [r.date||r.raw_date||"待確認",scheduleTime(r),r.name||"—",r.patient_mrn||"—",r.ward||"—",r.department||"—",procedure,r.room||"—",r.anesthesia||"—",r.category||"—",physician,detail];
+      return [r.date||r.raw_date||"待確認",scheduleTime(r),(window.ClinicalUI?.patientName?.(r.name)??r.name)||"—",r.patient_mrn||"—",r.ward||"—",r.department||"—",procedure,r.room||"—",r.anesthesia||"—",r.category||"—",physician,detail];
     })));
     return box;
   }

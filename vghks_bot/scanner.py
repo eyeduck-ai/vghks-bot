@@ -132,7 +132,7 @@ def create_sdk(settings: Settings):
     connections.apply_all(session)
     transport = ClinicalTransport(policy=policy, verify=sdk_settings.requests_verify,
         session=session, connections=connections,
-        attachment_base_url=sdk_settings.prq_base_url)
+        attachment_base_url=sdk_settings.prq_base_url, webmaas_base_url=sdk_settings.webmaas_base_url)
     return configure_orders(VghksSDK(
         settings=sdk_settings, transport=transport,
         credentials=PortalCredentials(settings.username, settings.password),

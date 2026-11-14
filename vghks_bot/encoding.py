@@ -6,9 +6,11 @@ import threading
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import replace
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
+import vghks_sdk
 from vghks_sdk import (
+    ApplicationSessionExpiredError,
     OutpatientPatient,
     PatientBasicInfo,
     PatientDemographics,
@@ -72,6 +74,14 @@ def observe_prq_decoding(operation):
 
 def decode_response(content: bytes, content_type: str = "") -> str:
     return decode_response_text(content, content_type)[0]
+
+
+def patient_name_display_profile():
+    """Forward the SDK-owned hospital character table; never guess a local fallback."""
+    provider = getattr(vghks_sdk, "patient_name_profile", None)
+    if provider is None:
+        return {"source": "vghks", "version": "", "mapping": {}}
+    return provider(source="vghks")
 
 
 def text_encoding_notice(value, evidence):
@@ -152,13 +162,16 @@ def _decode_evidence(content, content_type, text, codec):
 
 
 class ClinicalTransport(SafeSessionTransport):
-    def __init__(self, *, attachment_base_url="", **kwargs):
+    def __init__(self, *, attachment_base_url="", webmaas_base_url="", **kwargs):
         super().__init__(**kwargs)
         base = urlsplit(attachment_base_url)
         self.attachment_origin = (base.scheme.lower(), base.netloc.lower()) if base.netloc else None
         self.prq_path = base.path.rstrip("/")
         self.attachment_paths = {base.path.rstrip("/") + "/Page/JSP/" + name
                                  for name in ("showPACSPic.jsp", "showPDF.jsp")} if base.netloc else set()
+        webmaas = urlsplit(webmaas_base_url)
+        self.webmaas_origin = (webmaas.scheme.lower(), webmaas.netloc.lower()) if webmaas.netloc else None
+        self.webmaas_ajax_path = webmaas.path.rstrip("/") + "/ajax/AJAXAction.do"
         self.request_dispatch_lock = threading.RLock()
         # Both transports own their request policy, but share the existing
         # authenticated session and TLS choices. Only this outer object closes it.
@@ -187,6 +200,33 @@ class ClinicalTransport(SafeSessionTransport):
             if not self.closed:
                 self.closed = True
                 super().close()
+
+    def json(self, response):
+        payload = super().json(response)
+        request = getattr(response, "request", None)
+        source = urlsplit(getattr(request, "url", "") or "")
+        target = urlsplit(getattr(response, "url", "") or "")
+        # CHECK_PAT can return an HTTP 200 login-error envelope. Classify only
+        # this recorded protocol shape, before the SDK treats it as a patient.
+        # The SDK remains responsible for its bounded WebMAAS SSO recovery.
+        if (self.webmaas_origin is not None
+                and getattr(request, "method", "") == "POST"
+                and (source.scheme.lower(), source.netloc.lower()) == self.webmaas_origin
+                and (target.scheme.lower(), target.netloc.lower()) == self.webmaas_origin
+                and source.path == target.path == self.webmaas_ajax_path
+                and parse_qs(source.query).get("querymethod") == ["CHECK_PAT"]
+                and isinstance(payload, dict) and payload.get("returnCode") == "9999"
+                and "patno" not in payload and "patname" not in payload
+                and payload.get("returnStatus") is False
+                and isinstance(payload.get("returnMessage"), str)
+                and "沒有正確登錄或是連線逾時。" in payload["returnMessage"]):
+            raise ApplicationSessionExpiredError(
+                "WebMAAS CHECK_PAT returned its explicit login timeout envelope",
+                code="WEBMAAS_SESSION_TIMEOUT", app="webmaas",
+                operation="webmaas.demographics", endpoint_path=self.webmaas_ajax_path,
+                http_status=getattr(response, "status_code", None),
+            )
+        return payload
 
     def text(self, response):
         content = response.content or b""

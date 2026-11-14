@@ -29,7 +29,7 @@ from vghks_sdk.models.review import ReviewCase, ReviewCasePart, ReviewCaseRef
 from .bot import BotApplication
 from .bot_server import BotServer
 from .bounded_search import search
-from .encoding import decode_response
+from .encoding import decode_response, patient_name_display_profile
 from .selftest_portable import check_portable_credentials
 from .selftest_soap import synthetic_soap
 from .settings import Settings, today
@@ -444,6 +444,10 @@ def self_test(report_path: Path) -> int:
             check_sdk_binary(Path(directory))
         result["checks"].append("native SDK DBR PDF through ClinicalTransport and compatible adapter, cataract attachment cache, offline restart without repeat download")
         assert decode_response(b"\x8e\xf5" + "測試姓名 女".encode("cp950")) == "\ue3a4測試姓名 女"
+        profile = patient_name_display_profile()
+        for original, displayed in (("\ue3a4", "凃"), ("\uea81", "眞"), ("\ue03e", "綉")):
+            assert profile["mapping"].get(original) == displayed, "SDK patient-name display profile missing"
+        result["checks"].append("SDK-owned patient-name display profile includes all confirmed characters without changing raw decoding")
         assert search("# Arrange", ["P: # Arrange CATA"])
         try:
             search("(a+)+$", ["a" * 60000 + "!"], timeout=.6)

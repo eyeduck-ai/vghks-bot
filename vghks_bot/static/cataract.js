@@ -46,7 +46,7 @@ window.CataractUI = (() => {
   }
 
   function patientIdentity(member) {
-    const heading = el("h2", member.name || "姓名未提供", "cataract-identity");
+    const heading = el("h2", (window.ClinicalUI?.patientName?.(member.name) ?? member.name) || "姓名未提供", "cataract-identity");
     heading.append(ClinicalUI.mrnBadge(member.mrn, message => notify(message)), ClinicalUI.ageBadge(member));
     return heading;
   }
@@ -200,7 +200,7 @@ window.CataractUI = (() => {
     const list = $("#cataractPatients");
     const selected = currentCohort?.members.find(member => member.mrn === $("#analysisPatient").value), identity = $("#analysisSelectedPatient");
     identity.hidden = !patientView() || activeView();
-    identity.textContent = selected ? ($("#analysisView").value === "surgery" ? "定位：" : "") + [selected.name || "姓名未提供", selected.mrn].join(" · ") : "";
+    identity.textContent = selected ? ($("#analysisView").value === "surgery" ? "定位：" : "") + [(window.ClinicalUI?.patientName?.(selected.name) ?? selected.name) || "姓名未提供", selected.mrn].join(" · ") : "";
     if (list.hidden) return;
     const previousScroll = list.scrollTop;
     const focused = list.contains(document.activeElement) ? document.activeElement.dataset : null;
@@ -224,7 +224,7 @@ window.CataractUI = (() => {
       bar.setAttribute("aria-label", "本集合已保存病人");
       bar.setAttribute("aria-valuetext", `${saved} / ${members.length} 位已保存`);
       const current = members.find(member => member.mrn === queue.active_mrn);
-      const detail = paused ? "已暫停" : current ? `正在處理 ${current.name || current.mrn}` : "等待下一位";
+      const detail = paused ? "已暫停" : current ? `正在處理 ${(window.ClinicalUI?.patientName?.(current.name) ?? current.name) || current.mrn}` : "等待下一位";
       const state = el("small", detail);state.title = detail;
       summary.append(caption, bar, state);controls.append(summary);
       const toggle = button("", () => action(() => enqueue(paused ? "resume" : "pause")), "quiet-button");
@@ -256,7 +256,7 @@ window.CataractUI = (() => {
       }), "cataract-patient");
       item.setAttribute("aria-current", String($("#analysisPatient").value === member.mrn));
       item.dataset.patientMrn = member.mrn;
-      const name = member.name || "姓名未提供";
+      const name = (window.ClinicalUI?.patientName?.(member.name) ?? member.name) || "姓名未提供";
       item.title = [name, member.mrn, cataract ? label : ""].filter(Boolean).join(" · ");
       item.setAttribute("aria-label", item.title);
       const identity = el("strong", name);identity.title = name;
@@ -760,7 +760,7 @@ window.CataractUI = (() => {
     if (event.origin !== location.origin || event.source !== parent ||
         event.data?.type !== "bot:workspace-resumed" || !activeView()) return;
     const member = currentCohort?.members.find(item => item.mrn === $("#analysisPatient").value);
-    if (member) window.FileCompare.context(embeddedAccount, member.mrn, member.name || "");
+    if (member) window.FileCompare.context(embeddedAccount, member.mrn, (window.ClinicalUI?.patientName?.(member.name) ?? member.name) || "");
     const scroll = event.data.scroll;
     action(async () => {
       await loadAnalysisResult();

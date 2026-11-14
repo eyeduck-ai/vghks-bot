@@ -1,5 +1,25 @@
 "use strict";
 window.ClinicalUI = (() => {
+  let patientNames = {source: "", version: "", mapping: Object.freeze(Object.create(null))};
+  function configurePatientNames(profile) {
+    const mapping = Object.create(null), supplied = profile?.mapping;
+    const privateUse = point => point >= 0xe000 && point <= 0xf8ff || point >= 0xf0000 && point <= 0xffffd || point >= 0x100000 && point <= 0x10fffd;
+    if (supplied && typeof supplied === "object" && !Array.isArray(supplied)) {
+      for (const [key, value] of Object.entries(supplied)) {
+        if (Array.from(key).length === 1 && privateUse(key.codePointAt(0)) && typeof value === "string" && Array.from(value).length === 1)
+          mapping[key] = value;
+      }
+    }
+    patientNames = Object.freeze({source: typeof profile?.source === "string" ? profile.source : "",
+      version: typeof profile?.version === "string" ? profile.version : "", mapping: Object.freeze(mapping)});
+  }
+  function patientName(value, {source = "vghks"} = {}) {
+    const text = String(value ?? "");
+    // The SDK supplies confirmed mappings. Rendering must not change stored
+    // names or raw clinical text, and absent/other sources stay untouched.
+    return source === "vghks" && patientNames.source === source
+      ? Array.from(text, character => patientNames.mapping[character] ?? character).join("") : text;
+  }
   const clocks = new Set();
   let clockTimer = null;
   const clockNow = () => typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
@@ -273,5 +293,5 @@ window.ClinicalUI = (() => {
     return area;
   }
   window.addEventListener("filecomparechange", syncComparison);
-  return {loading, elapsed, pdfURL, copyButton, mrnBadge, patientAge, ageBadge, fileName, downloadLink, saveBlob, reportText, textDownload, assetTools, comparisonChoice, comparisonName, pacsControl};
+  return {configurePatientNames, patientName, loading, elapsed, pdfURL, copyButton, mrnBadge, patientAge, ageBadge, fileName, downloadLink, saveBlob, reportText, textDownload, assetTools, comparisonChoice, comparisonName, pacsControl};
 })();

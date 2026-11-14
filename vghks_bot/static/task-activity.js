@@ -79,7 +79,7 @@ window.TaskActivityUI=(()=>{
    desc.append(origin);
   }
   desc.append(node("strong",title(task),"activity-title"),node("span",`${labels[task.status]||task.status} · ${time(task.created_at)}`,"caption"));
-  if(task.mrn&&!child)desc.append(node("span",[task.patient_name,task.mrn].filter(Boolean).join(" · "),"caption"));
+  if(task.mrn&&!child)desc.append(node("span",[window.ClinicalUI?.patientName?.(task.patient_name)??task.patient_name,task.mrn].filter(Boolean).join(" · "),"caption"));
   if(group&&task.kind==="review"){
    const bits=[`${task.member_count??task.members?.length??0} 位病人`,`${group.allChildren.length} 項延伸查詢`,`備註 ${task.note_count||0} 位`];
    const running=group.allChildren.filter(item=>inProgress.has(item.status)).length;
@@ -87,7 +87,7 @@ window.TaskActivityUI=(()=>{
    desc.append(node("span",bits.join(" · "),"caption activity-counts"));
   }
   if(group?.matchedMembers.length){
-   const matches=group.matchedMembers,caption=node("span","符合病人："+matches.slice(0,4).map(member=>[member.name,member.mrn].filter(Boolean).join(" / ")).join("、")+(matches.length>4?` 等 ${matches.length} 位`:""),"caption");desc.append(caption);
+   const matches=group.matchedMembers,caption=node("span","符合病人："+matches.slice(0,4).map(member=>[window.ClinicalUI?.patientName?.(member.name)??member.name,member.mrn].filter(Boolean).join(" / ")).join("、")+(matches.length>4?` 等 ${matches.length} 位`:""),"caption");desc.append(caption);
   }
   if(!task.session)desc.append(JobProgress.create(task));
   row.append(desc,actions(task));return row;
@@ -125,7 +125,7 @@ window.TaskActivityUI=(()=>{
     for(const [mrn,children] of [...patients].sort((a,b)=>(order.get(a[0])??Infinity)-(order.get(b[0])??Infinity)||a[0].localeCompare(b[0]))){
      const member=task.members?.find(item=>item.mrn===mrn),summary=node("summary",undefined,"activity-patient-heading");
      summary.dataset.activityFocus=patientKey(task,mrn);
-     summary.append(node("strong",member?.name||"姓名未提供"),node("span",mrn,"mrn"),node("span",`${children.length} 項查詢`,"caption"));
+     summary.append(node("strong",(window.ClinicalUI?.patientName?.(member?.name)??member?.name)||"姓名未提供"),node("span",mrn,"mrn"),node("span",`${children.length} 項查詢`,"caption"));
      const patient=disclosure(patientKey(task,mrn),summary,group.autoOpen,content=>{for(const child of children)content.append(taskRow(child,group.system,{child:true}));});
      patient.classList.add("activity-patient");body.append(patient);
     }

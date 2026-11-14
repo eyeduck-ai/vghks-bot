@@ -231,7 +231,7 @@ window.ToolWorkspace=(()=>{
     const sequence=++savedSequence,selectedAccount=account,revision=generation,query=$("#toolSavedQuery").value.trim(),area=$("#toolSavedSets");
     const groups=query?(await api("/sets/search",{q:query})).sets:(work?.sets||[]);
     if(sequence!==savedSequence||selectedAccount!==account||revision!==generation)return;
-    area.replaceChildren(...groups.map(value=>{const button=btn(value.name,async()=>{const selected=++generation;starting=false;lookup.reset();lookupErrors.clear();await choose(value);if(selected===generation)$("#toolSavedDialog").close();},"saved-set-option"),preview=value.members_preview||value.members||[];button.replaceChildren(node("strong",value.name),node("span",count(value)+" 位 · "+preview.slice(0,3).map(patient=>patient.name||patient.mrn).join("、"),"caption"));return button;}));
+    area.replaceChildren(...groups.map(value=>{const button=btn(value.name,async()=>{const selected=++generation;starting=false;lookup.reset();lookupErrors.clear();await choose(value);if(selected===generation)$("#toolSavedDialog").close();},"saved-set-option"),preview=value.members_preview||value.members||[];button.replaceChildren(node("strong",value.name),node("span",count(value)+" 位 · "+preview.slice(0,3).map(patient=>(window.ClinicalUI?.patientName?.(patient.name)??patient.name)||patient.mrn).join("、"),"caption"));return button;}));
     if(!groups.length)area.append(node("p","沒有符合的已保存清單","empty"));
   }
   const lookup=window.PatientTokens.create({

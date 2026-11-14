@@ -91,9 +91,9 @@ def failure_message(error):
     if info.code == "AUTH_NOT_AUTHENTICATED":
         return "尚未建立院內登入，請先重新連線再續跑。"
     if info.code == "WEBMAAS_SESSION_TIMEOUT":
-        reason = ("SDK 重建 WebMAAS 查詢連線後仍收到逾時頁面" if info.attempt == 2 else
-                  "院方回報 WebMAAS 查詢連線逾時")
-        return reason + "，查詢已暫停；請稍後續跑，必要時重新連線。"
+        reason = ("SDK 重建 WebMAAS 查詢連線後仍收到登入失效或逾時回應" if info.attempt == 2 else
+                  "院方回報 WebMAAS 查詢登入失效或逾時")
+        return reason + "，查詢已暫停；尚不能判定病歷號不存在，請重新連線後續跑。"
     if info.code == "WEBMAAS_SSO_RECOVERY_FAILED":
         return "SDK 未能恢復 WebMAAS 查詢連線，查詢已暫停；請查看 DEBUG，再重新連線後續跑。"
     if (info.code == "AUTH_READINESS_INCOMPLETE" and root.code in {
