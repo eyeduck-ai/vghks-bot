@@ -350,8 +350,24 @@ class Earnings:
         kind = values.get("format", "json")
         if kind not in {"csv", "json"}:
             raise ValueError("匯出格式不正確。")
-        content = export_csv(versions) if kind == "csv" else json.dumps({"exported_at": timestamp(), "reports": versions}, ensure_ascii=False, indent=2)
-        return {"filename": "VGHKS-earnings."+kind, "mime": "text/csv;charset=utf-8" if kind == "csv" else "application/json", "content": content}
+        exported_at, files = timestamp(), []
+        for report_kind, name in REPORTS.items():
+            rows = [version for version in versions if version["kind"] == report_kind]
+            if not rows:
+                continue
+            months = {month_value(row.get("month", "")) or month_value(row["period"]) for row in rows}
+            known_months = sorted(month.replace("-", "") for month in months if month)
+            period = known_months[0] if known_months else "期別未辨識"
+            if len(known_months) > 1:
+                period += "-"+known_months[-1]
+            if known_months and "" in months:
+                period += "_含未辨識期別"
+            content = export_csv(rows) if kind == "csv" else json.dumps(
+                {"exported_at": exported_at, "reports": rows}, ensure_ascii=False, indent=2)
+            files.append({"kind": report_kind, "filename": f"VGHKS-{name}_{period}.{kind}",
+                          "mime": "text/csv;charset=utf-8" if kind == "csv" else "application/json",
+                          "content": content})
+        return {"files": files}
 
     def delete(self, values):
         with self.app.lock, self.app.review.lock:

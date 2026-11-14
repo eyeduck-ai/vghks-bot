@@ -877,14 +877,14 @@ function syncDetailsTests(){
 async function earningsViewTests(){
  const s=surface(),c=s.context,$=s.$,calls=[],detail=deferred(),exported=deferred();
  let scoped=false,hasArchive=true,confirm=true;
- c.epoch=0;c.work.online=true;
+ c.epoch=0;c.work.online=true;c.AbortController=AbortController;
  c.Option=function(label,value){const option=s.node("option",label);option.value=value;return option;};
  c.JobProgress.visible=()=>true;c.check=()=>s.node("input");
  c.table=(_headers,rows)=>{const element=s.node("table");for(const row of rows)for(const cell of row)if(typeof cell==="object")element.append(cell);return element;};
  c.confirmDelete=()=>typeof confirm==="boolean"?Promise.resolve(confirm):confirm.promise;
  c.dialog=id=>{$("#"+id).open=true;};$("#dataDialog").close=()=>{$("#dataDialog").open=false;};
- c.api=async(path,body)=>{
-  calls.push({path,body});
+ c.api=async(path,body,options)=>{
+  calls.push({path,body,options});
   if(path.endsWith("/overview")){
    const view=body.view||(scoped?"active":"archive");
    const reports=view==="archive"&&!hasArchive?[]:[{id:view,kind:"performance",month:view==="archive"?"2026-10":"2026-11",period:"PERIOD",version_count:1}];
@@ -910,8 +910,10 @@ async function earningsViewTests(){
  await selection();$("#earningsKind").value="payroll";$("#earningsMonth").value="2026-10";
  const staleDetail=$("#earningsReports").querySelector("button").run(),staleExport=$("#earningsExportJson").emit("click");
  assert.ok(calls.filter(call=>/\/(detail|export)$/.test(call.path)).every(call=>call.body.view==="archive"));
- await choose("active");detail.resolve({});exported.resolve({});await Promise.all([staleDetail,staleExport]);
+ const exportSignal=calls.find(call=>call.path.endsWith("/export")).options.signal;assert.equal(exportSignal.aborted,false);
+ await choose("active");assert.equal(exportSignal.aborted,true,"changing salary view did not cancel its pending export");detail.resolve({});exported.resolve({});await Promise.all([staleDetail,staleExport]);
  assert.equal($("#earningsKind").value,"");assert.equal($("#earningsMonth").value,"");assert.equal($("#earningsExportJson").disabled,true);
+ assert.equal($("#earningsExportDownloads").children.length,0,"an old salary view restored export links");assert.equal($("#earningsExportStatus").textContent,"");assert.equal($("#earningsExportPanel").hidden,true);
  assert.equal($("#earningsDetail").firstElementChild.textContent,"選擇已保存報表檢閱內容。");
 
  await choose("archive");await selection();
