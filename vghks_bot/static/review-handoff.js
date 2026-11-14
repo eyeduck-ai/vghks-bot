@@ -37,7 +37,7 @@ window.ReviewHandoff=(()=>{
   if(!currentReview||!unique.length)throw new Error("請先勾選本次檢閱的病人。");
   context={account,task_id:currentReview,mrns:unique.map(patient=>String(patient.mrn).trim()),individual};
   const patient=unique[0];
-  $("#handoffPatient").textContent=individual?(patient.name||"姓名未提供")+" · "+patient.mrn:`本次檢閱已勾選 ${unique.length} 位病人`;
+  $("#handoffPatient").textContent=individual?((window.ClinicalUI?.patientName?.(patient.name)??patient.name)||"姓名未提供")+" · "+patient.mrn:`本次檢閱已勾選 ${unique.length} 位病人`;
   const source=$("#handoffSource");
   source.replaceChildren(new Option("本次檢閱的全部 SOAP",""),...(individual?patient.records||[]:[]).map(record=>
    new Option([record.date,record.section,record.case_no].filter(Boolean).join(" · "),record.id)));

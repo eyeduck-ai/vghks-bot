@@ -65,7 +65,7 @@ let knownPatientRows = new Set();
 
 function visiblePatients() {
   const query = $("#listSearch").value.trim().toLocaleLowerCase();
-  return (listing?.days.flatMap(day => day.rows) || []).filter(row => !query || [row.name,row.mrn,row.sequence_no,row.sex,row.age,row.section_code,row.room,row.day].join(" ").toLocaleLowerCase().includes(query));
+  return (listing?.days.flatMap(day => day.rows) || []).filter(row => !query || [row.name,window.ClinicalUI?.patientName?.(row.name)??row.name,row.mrn,row.sequence_no,row.sex,row.age,row.section_code,row.room,row.day].join(" ").toLocaleLowerCase().includes(query));
 }
 
 function renderPatientList() {
@@ -73,13 +73,13 @@ function renderPatientList() {
   const nodes = rows.map(row => {
     const tr = el("tr"), selectCell = el("td"), checkbox = el("input");
     checkbox.type = "checkbox"; checkbox.checked = selectedPatients.has(rowKey(row)); checkbox.disabled = !row.eligible;
-    checkbox.setAttribute("aria-label", `選取 ${row.name || row.mrn} ${row.day} 掛號序號 ${row.sequence_no || "未提供"}`);
+    checkbox.setAttribute("aria-label", `選取 ${(window.ClinicalUI?.patientName?.(row.name)??row.name) || row.mrn} ${row.day} 掛號序號 ${row.sequence_no || "未提供"}`);
     checkbox.addEventListener("change", () => {
       if (checkbox.checked) selectedPatients.add(rowKey(row)); else selectedPatients.delete(rowKey(row));
       updatePatientSelection();
     });
     selectCell.append(checkbox);
-    const patient = el("td"); patient.append(el("strong", row.name || "姓名未提供"), el("span", row.mrn, "muted small"));
+    const patient = el("td"); patient.append(el("strong", (window.ClinicalUI?.patientName?.(row.name)??row.name) || "姓名未提供"), el("span", row.mrn, "muted small"));
     if(row.manual_tags?.length)patient.append(patientTagBadges(row.manual_tags,"手動"));
     const saved = el("td");
     if (row.record_ids.length) saved.append(button(`${row.status} · ${row.record_ids.length} 筆`, () => action(() => openSavedRecord(row.record_ids[0])), "quiet-button"));
@@ -186,7 +186,7 @@ function corpusCard(record, tag = "") {
   $(".card-footer button", card).replaceWith(button("段落與 SOAP ↗", () => action(() => openSavedRecord(record.id))));
   const label = el("label", undefined, "check-label record-select"), input = el("input");
   input.type = "checkbox"; input.checked = selectedRecords.has(record.id);
-  input.setAttribute("aria-label", `勾選病歷 ${record.name || record.mrn} ${record.date} ${record.case_no || ""}`);
+  input.setAttribute("aria-label", `勾選病歷 ${(window.ClinicalUI?.patientName?.(record.name)??record.name) || record.mrn} ${record.date} ${record.case_no || ""}`);
   input.addEventListener("change", () => {
     if (input.checked) selectedRecords.add(record.id); else selectedRecords.delete(record.id);
     $$("input[data-record-id]").filter(node => node.dataset.recordId === record.id).forEach(node => { node.checked = input.checked; });
@@ -211,7 +211,7 @@ function renderLibrary() {
     for (const [mrn, records] of groups) {
       const group = el("details", undefined, "patient-group"); group.open = groups.size < 8;
       const tags = [...new Set(records.flatMap(r => [...r.matches.map(m => m.category_name),...(r.manual_tags||[]).map(t=>t.name+"（手動）")]))];
-      group.append(el("summary", `${records[0].name || mrn} · ${mrn} · ${records.length} 次就診${tags.length ? ` · ${tags.join("、")}` : " · 無 tag"}`));
+      group.append(el("summary", `${(window.ClinicalUI?.patientName?.(records[0].name)??records[0].name) || mrn} · ${mrn} · ${records.length} 次就診${tags.length ? ` · ${tags.join("、")}` : " · 無 tag"}`));
       const grid = el("div", undefined, "patient-grid"); grid.append(...records.map(r => corpusCard(r))); group.append(grid); nodes.push(group);
     }
   } else if (mode === "tag") {
@@ -358,6 +358,6 @@ $("#libraryJSON").addEventListener("click", () => { if (libraryData) download(`V
 $("#libraryCSV").addEventListener("click", () => {
   if (!libraryData) return;
   const rows = [["來源帳號","門診日期","就診號","病歷號","姓名","性別","年齡","自動 tag","手動 tag","關鍵字","SOAP"]];
-  for (const r of libraryData.records) rows.push([r.accounts.join(" / "),r.date,r.case_no,r.mrn,r.name,r.sex,r.age,[...new Set(r.matches.map(m=>m.category_name))].join(" / "),(r.manual_tags||[]).map(t=>t.name).join(" / "),[...new Set(r.matches.map(m=>m.keyword))].join(" / "),r.soap]);
+  for (const r of libraryData.records) rows.push([r.accounts.join(" / "),r.date,r.case_no,r.mrn,window.ClinicalUI?.patientName?.(r.name)??r.name,r.sex,r.age,[...new Set(r.matches.map(m=>m.category_name))].join(" / "),(r.manual_tags||[]).map(t=>t.name).join(" / "),[...new Set(r.matches.map(m=>m.keyword))].join(" / "),r.soap]);
   download(`VGHKS-library-${config.today}.csv`, "\ufeff"+rows.map(row=>row.map(csvCell).join(",")).join("\r\n"), "text/csv;charset=utf-8");
 });

@@ -120,7 +120,7 @@ function selectCohort() {
   currentCohort = analysisState.cohorts.find(c=>c.id===$("#cohortSelect").value) || null;
   $("#cohortName").value=currentCohort?.name || "";
   const previous = $("#analysisPatient").value;
-  $("#analysisPatient").replaceChildren(...(currentCohort?.members||[]).map(m=>new Option((m.name||"未提供姓名")+" · "+m.mrn,m.mrn)));
+  $("#analysisPatient").replaceChildren(...(currentCohort?.members||[]).map(m=>new Option(((window.ClinicalUI?.patientName?.(m.name)??m.name)||"未提供姓名")+" · "+m.mrn,m.mrn)));
   if (currentCohort?.members.some(m=>m.mrn===previous)) $("#analysisPatient").value=previous;
   $("#cohortSummary").textContent=(currentCohort?.members.length||0)+" 位病人 · 抓取帳號";
   $("#cohortMembers").replaceChildren(...(currentCohort?.members||[]).map(member=>{
@@ -137,7 +137,7 @@ function selectCohort() {
     if(member.origin==="tags")sources.push("tag 群組");
     if(member.source_registrations?.length)sources.push("掛號 "+member.source_registrations.length+" 筆");
     if(member.source_records?.length)sources.push("SOAP "+member.source_records.length+" 筆");
-    tr.append(el("td",member.name||"姓名待資料核對"),el("td",member.mrn),el("td",sources.join(" · ")||"門診清單"),cell,remove);
+    tr.append(el("td",(window.ClinicalUI?.patientName?.(member.name)??member.name)||"姓名待資料核對"),el("td",member.mrn),el("td",sources.join(" · ")||"門診清單"),cell,remove);
     return tr;
   }));
   for(const id of ["saveCohort","deleteCohort","startAnalysis","reloadAnalysis"]) $("#"+id).disabled=!currentCohort;
@@ -313,7 +313,7 @@ async function loadAnalysisResult({force = false, refreshStatus = true} = {}) {
   const member=compareMember();
   const identity=member?.account_id+":"+member?.mrn;
   if(identity!==scanPatient){window.ScanBrowser?.reset();scanPatient=identity;}
-  if(member?.account_id)window.FileCompare?.context(member.account_id,member.mrn,member.name||"");
+  if(member?.account_id)window.FileCompare?.context(member.account_id,member.mrn,(window.ClinicalUI?.patientName?.(member.name)??member.name)||"");
   const scanButton=$("#analysisScans");scanButton.hidden=module!=="cataract"||!embeddedAccount;
   scanButton.disabled=!member||member.account_id!==embeddedAccount;
   scanButton.title=scanButton.disabled?"請將病人抓取帳號設為目前登入帳號":"查看此病人的歷年掃描病歷";
@@ -359,7 +359,7 @@ async function loadSurgery() {
   const offered=new Set(data.candidates.filter(row=>row.kind!=="fu").map(row=>row.fields.mrn));
   for(const member of currentCohort.members.filter(member=>!offered.has(member.mrn))){
     const empty=el("section",undefined,"surgery-candidate");empty.dataset.patientMrn=member.mrn;
-    empty.append(el("h3",(member.name||member.mrn)+" · "+member.mrn),el("p","未找到可解析的手術項目。可新增手動項目並填寫刀日、眼別與術式。","small muted"));
+    empty.append(el("h3",((window.ClinicalUI?.patientName?.(member.name)??member.name)||member.mrn)+" · "+member.mrn),el("p","未找到可解析的手術項目。可新增手動項目並填寫刀日、眼別與術式。","small muted"));
     const add=button("新增手動刀表項目",()=>action(async()=>{
       await ap("surgery/drafts",{cohort_id:cohortId,mrn:member.mrn});await loadSurgery();
     }));add.disabled=!!config?.read_only;empty.append(add);$("#surgeryCandidates").append(empty);
@@ -374,7 +374,7 @@ function fuCard(row,labels) {
   const card=el("article",undefined,"surgery-candidate"),selectLabel=el("label",undefined,"check-label"),selected=el("input"),inputs={};
   selected.type="checkbox";selected.checked=true;
   selected.addEventListener("change",()=>$("#sheetPreview").replaceChildren());
-  selectLabel.append(selected,el("span","FU 追蹤 · "+(row.fields.name||row.fields.mrn)+" · "+row.fields.mrn));card.append(selectLabel);
+  selectLabel.append(selected,el("span","FU 追蹤 · "+((window.ClinicalUI?.patientName?.(row.fields.name)??row.fields.name)||row.fields.mrn)+" · "+row.fields.mrn));card.append(selectLabel);
   card.append(el("p","院區預設採用此帳號設定，可在預覽前修改；既有 FU 保留原內容。其餘資料可於 FU 分頁填寫。","small muted"));
   if(row.source_stale||row.stale)card.append(el("p","來源 SOAP 已更新或刪除；請重新檢閱並轉送目前版本。","preview-conflict"));
   const grid=el("div",undefined,"surgery-edit-grid");
@@ -447,7 +447,7 @@ function surgeryCard(row,labels) {
   selected.type="checkbox";selected.checked=!row.cancelled_hint;
   const invalidatePreview=()=>$("#sheetPreview").replaceChildren();
   selected.addEventListener("change",invalidatePreview);
-  selectLabel.append(selected,el("span",(row.fields.name||row.fields.mrn)+" · "+row.fields.mrn));card.append(selectLabel);
+  selectLabel.append(selected,el("span",((window.ClinicalUI?.patientName?.(row.fields.name)??row.fields.name)||row.fields.mrn)+" · "+row.fields.mrn));card.append(selectLabel);
   if(row.hospital_default)card.append(el("p","新增院區預設採用此帳號設定，可手動修改。既有排程要改院區，請勾選下方「套用目的地／改期」。","small muted"));
   if(row.source_type==="manual"||row.manual)card.append(el("p","手動刀表草稿：請核對並填妥必要欄位，再產生差異預覽。","small muted"));
   if(row.source_stale||row.stale)card.append(el("p","來源 SOAP 已更新或刪除；請重新檢閱並轉送目前版本。","preview-conflict"));
@@ -542,7 +542,7 @@ function previewNode(value) {
   for(const structure of value.structures||[])container.append(el("div",structure,"sheet-structure"));
   for(const item of value.items) {
     if(item.status==="conflict") {
-      const box=el("div",undefined,"preview-conflict");box.append(el("strong",item.fields.name+" · "+item.reason));
+      const box=el("div",undefined,"preview-conflict");box.append(el("strong",(window.ClinicalUI?.patientName?.(item.fields.name)??item.fields.name)+" · "+item.reason));
       const editor=surgeryEditors.get(item.id);
       if(editor?.target&&Array.isArray(item.options)){
         editor.target.replaceChildren(new Option("請選擇對應手術",""),
@@ -554,7 +554,7 @@ function previewNode(value) {
     }
     const details=el("details");details.open=true;
     const names={insert:"新增",move:"改期搬移",update:"更新",keep:"保留既有資料"};
-    details.append(el("summary",(names[item.action]||"更新")+" · "+item.fields.name+" · "+item.fields.mrn+" · "+(item.position||"原列不在現行刀表")));
+    details.append(el("summary",(names[item.action]||"更新")+" · "+(window.ClinicalUI?.patientName?.(item.fields.name)??item.fields.name)+" · "+item.fields.mrn+" · "+(item.position||"原列不在現行刀表")));
     if(item.reason)details.append(el("p",item.reason,"small muted"));
     if(!item.changes.length&&!item.reason)details.append(el("p","欄位內容相同","small muted"));
     else {

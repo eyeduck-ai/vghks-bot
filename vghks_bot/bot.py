@@ -18,6 +18,7 @@ from .bot_store import Registry
 from .database_format import manifest
 from .diagnostics import Diagnostics
 from .earnings import Earnings
+from .encoding import patient_name_display_profile
 from .jobs import Application, BusyError
 from .review import Review
 from .scanned_records import ScanArchive
@@ -274,6 +275,7 @@ class BotApplication:
 
     def bootstrap(self):
         return {"version": __version__, "csrf": self.csrf_token, "today": today().isoformat(),
+                "patient_name_profile": patient_name_display_profile(),
                 "accounts": self.public_accounts(), "last_account": self.registry.preference("last_account"),
                 "concurrency": self.gate.maximum, "data_dir": str(self.source_directory),
                 "database": self.database, "read_only": self.read_only, "context": self.context_token,

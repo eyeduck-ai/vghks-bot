@@ -41,7 +41,8 @@ class SessionScenario:
             request_policy=RequestPolicy(min_delay_seconds=0, max_delay_seconds=0, max_attempts=1))
         session = requests.Session()
         session.request = self.request
-        transport = ClinicalTransport(policy=configuration.request_policy, verify=True, session=session)
+        transport = ClinicalTransport(policy=configuration.request_policy, verify=True, session=session,
+                                      webmaas_base_url=configuration.webmaas_base_url)
         sdk = VghksSDK(settings=configuration, transport=transport,
                        credentials=PortalCredentials("SYNTHETIC", "SECRET_PASSWORD"))
         auth = sdk._runtime.auth
@@ -95,6 +96,7 @@ class SessionScenario:
         else:
             body = form("QUY15W001" if "/QUY/" in url else "RSV11W001")
         response._content = body.encode("utf-8")
+        response.request = requests.Request(method, url, params=kwargs.get("params"), data=kwargs.get("data")).prepare()
         return response
 
 

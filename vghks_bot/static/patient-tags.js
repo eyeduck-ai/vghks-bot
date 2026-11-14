@@ -63,7 +63,7 @@ async function loadTagGroups(reset=false) {
     const tr=el("tr"),check=el("input"),selection=el("td"),name=el("td"),automatic=el("td"),manual=el("td"),actions=el("td");
     check.type="checkbox";check.checked=tagSelected.has(patient.mrn);check.setAttribute("aria-label","選取群組病人 "+patient.mrn);
     check.addEventListener("change",()=>{if(check.checked)tagSelected.add(patient.mrn);else tagSelected.delete(patient.mrn);renderTagSelection();});
-    selection.append(check);name.append(el("strong",patient.name||"姓名未提供"),el("span",patient.mrn,"small muted"));
+    selection.append(check);name.append(el("strong",(window.ClinicalUI?.patientName?.(patient.name)??patient.name)||"姓名未提供"),el("span",patient.mrn,"small muted"));
     automatic.append(patient.auto_tags.length?patientTagBadges(patient.auto_tags,"自動"):el("span","—","muted"));
     manual.append(patient.manual_tags.length?patientTagBadges(patient.manual_tags,"手動"):el("span","—","muted"));
     actions.append(button("編輯 tag",()=>action(()=>openPatientTags([patient.mrn],$("#tagGroupFilter").value))));

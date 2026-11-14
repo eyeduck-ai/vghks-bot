@@ -93,10 +93,11 @@ window.ScanBrowser = (() => {
     context = options;
     categoryFilter = "eye";
     searchText = "";
-    window.FileCompare?.context(options.account, options.mrn, options.patient_name);
+    const displayName = (window.ClinicalUI?.patientName?.(options.patient_name) ?? options.patient_name) || "姓名未提供";
+    window.FileCompare?.context(options.account, options.mrn, displayName);
     syncCompare();
     document.getElementById("scanBrowserTitle").textContent = options.resource === "case_scans" ? "該次掃描病歷" : "歷年掃描病歷";
-    document.getElementById("scanBrowserPatient").textContent = (options.patient_name || "姓名未提供") + " · 病歷號 " + options.mrn;
+    document.getElementById("scanBrowserPatient").textContent = displayName + " · 病歷號 " + options.mrn;
     dialog().setAttribute("aria-describedby", "scanBrowserPatient");
     content().replaceChildren(make("p", "正在讀取已存掃描資料…"));
     if (!dialog().open) dialog().showModal();

@@ -278,7 +278,7 @@ function renderRun() {
 function filteredRecords() {
   if (!current) return [];
   const search = $("#search").value.trim().toLocaleLowerCase();
-  return current.records.filter(r => !search || [r.name,r.mrn,r.sex,r.age,r.date,r.soap].join(" ").toLocaleLowerCase().includes(search));
+  return current.records.filter(r => !search || [r.name,window.ClinicalUI?.patientName?.(r.name)??r.name,r.mrn,r.sex,r.age,r.date,r.soap].join(" ").toLocaleLowerCase().includes(search));
 }
 function renderResults() {
   if (!current) return;
@@ -322,7 +322,7 @@ function surgeryFields(values) {
 }
 function patientCard(record, category) {
   const card = el("article",undefined,"patient-card");
-  const head = el("div",undefined,"patient-head"); head.append(el("strong",record.name || "姓名未提供"),el("span",record.date));
+  const head = el("div",undefined,"patient-head"); head.append(el("strong",(window.ClinicalUI?.patientName?.(record.name)??record.name) || "姓名未提供"),el("span",record.date));
   card.append(head,el("p",[record.mrn,record.sex,record.age,record.section].filter(Boolean).join(" · "),"patient-meta"));
   if(record.manual_tags?.length)card.append(patientTagBadges(record.manual_tags,"手動"));
   const matches = record.matches.filter(m => !category || m.category === category);
@@ -344,7 +344,7 @@ function openRecord(record) {
 }
 function renderRecord(record) {
   const manual=$("#recordManualTags");if(manual)manual.replaceChildren(patientTagBadges(record.manual_tags||[],"手動"));
-  $("#recordTitle").textContent = record.name || "病歷內容";
+  $("#recordTitle").textContent = (window.ClinicalUI?.patientName?.(record.name)??record.name) || "病歷內容";
   $("#recordMeta").textContent = [record.mrn,record.sex,record.age,record.date,record.section,record.doctor].filter(Boolean).join(" · ");
   $("#recordExcerpts").replaceChildren(...record.matches.map(match => {
     const block = el("section"); block.append(el("h3",`${match.category_name} · ${match.keyword}`));
@@ -409,7 +409,7 @@ function exportCSV() {
     if (!matches.length && $("#recordScope").value !== "all") continue;
     for (const match of matches.length ? matches : [{}]) {
       const s = match.surgery || {};
-      rows.push([current.account,record.date,record.mrn,record.name,record.sex,record.age,match.category_name,match.keyword,s.procedure,s.laterality,s.iol,s.target,s.date_iso || s.scheduled_date,s.tel,match.excerpt,record.soap]);
+      rows.push([current.account,record.date,record.mrn,window.ClinicalUI?.patientName?.(record.name)??record.name,record.sex,record.age,match.category_name,match.keyword,s.procedure,s.laterality,s.iol,s.target,s.date_iso || s.scheduled_date,s.tel,match.excerpt,record.soap]);
     }
   }
   download(`VGHKS-${current.account}-${current.start}-${current.id.slice(0,8)}.csv`,"\ufeff"+rows.map(row=>row.map(csvCell).join(",")).join("\r\n"),"text/csv;charset=utf-8");
@@ -467,6 +467,7 @@ async function initialize() {
   const token = location.hash.slice(1);
   if (/^[A-Za-z0-9_-]{43}$/.test(token)) { window.LocalSession.accept(await api("/api/session",{token})); window.history.replaceState(null,"",location.pathname); }
   config = await api("/api/bootstrap");
+  window.ClinicalUI?.configurePatientNames?.(config.patient_name_profile);
   $("#version").textContent = `v${config.version}`;
   config.accounts.forEach(addAccount);
   await initializeWorkspace();

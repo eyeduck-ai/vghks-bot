@@ -8,7 +8,7 @@ window.ReviewHistoryUI=(()=>{
  const scans=new Set(["scans","case_scans"]);
  const orderLists=new Set(["orders","case_orders"]);
  const openScans=next=>window.ScanBrowser.open({...next,account,
-  patient_name:reviewPatientIdentity(next.mrn,next.review_task_id).name,
+  patient_name:window.ClinicalUI?.patientName?.(reviewPatientIdentity(next.mrn,next.review_task_id).name)??reviewPatientIdentity(next.mrn,next.review_task_id).name,
   request:api,allowFetch:()=>!!work?.online&&!root.read_only});
  const same=(a,b)=>a&&b&&a.review_task_id===b.review_task_id&&a.cohort_id===b.cohort_id&&a.mrn===b.mrn&&a.resource===b.resource&&a.reference===b.reference;
  function clearView(){reportView?.gallery.dispose();frame?.navigation.remove();frame=orderView=reportView=null;}
@@ -27,7 +27,7 @@ window.ReviewHistoryUI=(()=>{
   if(!same(context,next)){clearView();orderQuery="";orderSort="name";orderDirection="ascending";orderCategory=next.resource==="orders"?"ophthalmic":"all";orderPage=visitPage=0;}
   context=next;taskId="";signature=renderSignature="";loadingStarted=Date.now();const request=++sequence;
   extensionTask="";
-  window.FileCompare?.context(account,next.mrn,reviewPatientIdentity(next.mrn,next.review_task_id).name);
+  window.FileCompare?.context(account,next.mrn,window.ClinicalUI?.patientName?.(reviewPatientIdentity(next.mrn,next.review_task_id).name)??reviewPatientIdentity(next.mrn,next.review_task_id).name);
   dialog("dataDialog");modal().dataset.view="history";$("#dataTitle").textContent=titles[next.resource];
   modal().classList.toggle("report-view-dialog",next.resource==="order_report");window.UtilityDock?.sync();
   modal().classList.toggle("order-list-dialog",orderLists.has(next.resource));
