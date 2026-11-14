@@ -267,7 +267,7 @@ class EarningsArchiveTests(unittest.TestCase):
         self.assertEqual([r["id"] for r in archive["reports"]], [legacy["id"]])
         self.assertEqual(archive["catalogs"], [])
         self.assertEqual(earnings.detail({"id": legacy["id"], "view": "archive"})["report"]["id"], legacy["id"])
-        self.assertIn("Synthetic legacy", earnings.export({"ids": [legacy["id"]], "view": "archive"})["content"])
+        self.assertIn("Synthetic legacy", earnings.export({"ids": [legacy["id"]], "view": "archive"})["files"][0]["content"])
 
     def test_queued_query_prevents_replacing_credentials(self):
         self.configure()
@@ -323,19 +323,19 @@ class EarningsArchiveTests(unittest.TestCase):
         rows = self.work.earnings.overview()["reports"]
         ids = [r["id"] for r in rows]
         exported = self.work.earnings.export({"ids": ids, "format": "json"})
-        self.assertEqual(len(json.loads(exported["content"])["reports"]), 6)
-        text = self.work.earnings.export({"ids": ids, "format": "csv"})["content"]
-        self.assertTrue(text.startswith("\ufeff"))
-        cells = list(csv.reader(io.StringIO(text)))
-        self.assertTrue(any(r[11] == "'=SUM(A1:A2)" for r in cells[1:]))
-        self.assertTrue(any(r[12] == "-200" for r in cells[1:]))
+        self.assertEqual(sum(len(json.loads(file["content"])["reports"]) for file in exported["files"]), 6)
+        files = self.work.earnings.export({"ids": ids, "format": "csv"})["files"]
+        self.assertTrue(all(file["content"].startswith("\ufeff") for file in files))
+        cells = [row for file in files for row in list(csv.reader(io.StringIO(file["content"])))[1:]]
+        self.assertTrue(any(r[11] == "'=SUM(A1:A2)" for r in cells))
+        self.assertTrue(any(r[12] == "-200" for r in cells))
         self.assertEqual(BotSyntheticSDK.calls, before)
 
     def test_credentials_portable_and_context_secrets_never_saved_or_exported(self):
         self.configure()
         self.capture()
         data = self.work.earnings.overview()
-        public = json.dumps(data)+json.dumps(self.db.all("task"))+self.work.earnings.export({"ids": [r["id"] for r in data["reports"]]})["content"]
+        public = json.dumps(data)+json.dumps(self.db.all("task"))+json.dumps(self.work.earnings.export({"ids": [r["id"] for r in data["reports"]]}))
         for secret in ("A123456789", "synthetic-salary-secret", "never-persist-this-token", "sensitive-context"):
             self.assertNotIn(secret, public)
         self.assertEqual(self.work.earnings.public_credentials(), {"configured": True, "remembered": True})
@@ -350,6 +350,99 @@ class EarningsArchiveTests(unittest.TestCase):
         self.work = self.app.workspace(self.key)
         self.assertEqual(self.work.earnings.credentials().password, "synthetic-salary-secret")
         self.assertEqual(len(self.work.earnings.overview()["reports"]), 4)
+
+    def test_exports_split_report_types_for_json_and_csv(self):
+        self.configure()
+        self.capture()
+        earnings = self.work.earnings
+        reports = earnings.overview()["reports"]
+        ids = [row["id"] for row in reports]
+        names = {"performance": "醫療績點明細", "payroll": "專勤工作獎金明細"}
+        for format in ("json", "csv"):
+            with self.subTest(format=format):
+                files = earnings.export({"ids": ids + ids[:1], "format": format})["files"]
+                self.assertEqual([file["kind"] for file in files], list(names))
+                for file in files:
+                    report_kind = file["kind"]
+                    self.assertEqual(file["filename"], f"VGHKS-{names[report_kind]}_202608-202609.{format}")
+                    expected = [row["latest"] for row in reports if row["kind"] == report_kind]
+                    if format == "json":
+                        self.assertEqual(file["mime"], "application/json")
+                        payload = json.loads(file["content"])
+                        self.assertTrue(payload["exported_at"])
+                        self.assertEqual([row["id"] for row in payload["reports"]], expected)
+                        self.assertTrue(all(row["kind"] == report_kind for row in payload["reports"]))
+                    else:
+                        self.assertEqual(file["mime"], "text/csv;charset=utf-8")
+                        self.assertTrue(file["content"].startswith("\ufeff"))
+                        rows = list(csv.reader(io.StringIO(file["content"])))[1:]
+                        self.assertEqual({row[0] for row in rows}, {report_kind})
+                        self.assertEqual({row[4] for row in rows}, set(expected))
+
+    def test_export_filenames_use_each_report_types_selected_periods(self):
+        self.configure()
+        self.capture()
+        earnings = self.work.earnings
+        reports = {(row["kind"], row["period"]): row for row in earnings.overview()["reports"]}
+        selected = [reports[("performance", "11508")], reports[("payroll", "11509")]]
+        for format in ("json", "csv"):
+            files = earnings.export({"ids": [row["id"] for row in selected], "format": format})["files"]
+            self.assertEqual([file["filename"] for file in files], [
+                f"VGHKS-醫療績點明細_202608.{format}",
+                f"VGHKS-專勤工作獎金明細_202609.{format}",
+            ])
+
+    def test_reselected_exports_only_contain_current_selection(self):
+        self.configure()
+        self.capture()
+        earnings = self.work.earnings
+        reports = earnings.overview()["reports"]
+        before = list(BotSyntheticSDK.calls)
+        for selected in (reports, reports[:1], reports[-1:]):
+            files = earnings.export({"ids": [row["id"] for row in selected]})["files"]
+            exported = [row for file in files for row in json.loads(file["content"])["reports"]]
+            self.assertEqual({row["report_id"] for row in exported}, {row["id"] for row in selected})
+            self.assertEqual({file["kind"] for file in files}, {row["kind"] for row in selected})
+        self.assertEqual(BotSyntheticSDK.calls, before)
+
+    def test_export_reads_saved_reports_without_waiting_for_crawler_or_writer_lock(self):
+        self.configure()
+        self.capture()
+        earnings = self.work.earnings
+        reports = earnings.overview()["reports"]
+        entered, release, exported = threading.Event(), threading.Event(), threading.Event()
+        original = self.work.gateway.connection.earnings.get_report
+        results, errors = [], []
+
+        def slow(context, period):
+            entered.set()
+            wait_event(release, label=self.id() + ": release report refresh", timeout=HOLD_TIMEOUT)
+            return original(context, period)
+
+        def export():
+            try:
+                results.append(earnings.export({"ids": [row["id"] for row in reports]}))
+            except Exception as exc:
+                errors.append(exc)
+            finally:
+                exported.set()
+
+        with patch.object(self.work.gateway.connection.earnings, "get_report", slow):
+            key = self.work.review.start({"kind": "earnings_capture", "all_available": True, "force": True})["task_id"]
+            thread = threading.Thread(target=export, name="earnings-export-during-refresh")
+            try:
+                wait_event(entered, label=self.id() + ": report refresh entered")
+                with earnings.lock, self.work.store.library.lock:
+                    thread.start()
+                    wait_event(exported, label=self.id() + ": local export completed", timeout=5, threads=[thread])
+                self.assertFalse(errors)
+                self.assertEqual(len(results[0]["files"]), 2)
+                self.assertFalse(release.is_set())
+            finally:
+                release.set()
+                if thread.ident is not None:
+                    join_threads([thread], label=self.id() + ": export thread joined")
+            self.assertEqual(wait_task(self.work, key)["status"], "completed")
 
     def test_bad_secondary_password_leaves_hospital_session_usable(self):
         self.configure(password="invalid")

@@ -90,7 +90,7 @@ def check_databases(path):
                 assert len(request(f"accounts/{key}/earnings/overview", {})[1]["reports"]) == 4
                 assert request(f"accounts/{key}/earnings/detail", {"id": report_id})[0] == 200
                 exported = request(f"accounts/{key}/earnings/export", {"ids": [report_id], "format": "csv"})
-                assert exported[0] == 200 and "可解析數值" in exported[1]["content"]
+                assert exported[0] == 200 and "可解析數值" in exported[1]["files"][0]["content"]
                 for route, values in [("tasks/start", {"kind": "approval_search"}), ("draft/save", {}),
                                       ("library/delete", {}), ("analysis/google/save", {}),
                                       ("earnings/credentials", {}), ("earnings/delete", {"ids": [report_id]}),

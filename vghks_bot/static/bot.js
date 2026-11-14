@@ -71,17 +71,17 @@ let cataractScroll=null;
 function say(message,error=false){const n=$(error?"#notice":"#toast");n.textContent=message;n.hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>n.hidden=true,error?9000:3500);}
 function applyReadonly(){window.SheetManagement?.readonly();window.DatabaseUI?.readonly();window.ReviewHandoff?.renderSelection();}
 async function act(callback,source=document.activeElement){$("#notice").hidden=true;const revision=epoch,control=source?.tagName==="BUTTON"?source:null;if(control?.dataset.busy)return;const wasDisabled=control?.disabled;if(control){control.dataset.busy="true";control.setAttribute("aria-busy","true");control.disabled=true;}try{return await callback();}catch(e){if(e.name!=="AbortError")say(e.message||"操作未完成",true);}finally{if(control){delete control.dataset.busy;control.removeAttribute("aria-busy");if(control.isConnected&&revision===epoch)control.disabled=!!wasDisabled;}}}
-async function request(path, body, scoped=true){
+async function request(path, body, scoped=true, options={}){
   const key=account, revision=epoch;
   if(scoped&&!key)throw new Error("請先選擇帳號。");
   const url=scoped?"/api/accounts/"+key+path:"/api"+path;
-  const response=await fetch(url,{method:body===undefined?"GET":"POST",credentials:"omit",cache:"no-store",redirect:"error",headers:{...window.LocalSession.headers(),...(body===undefined?{}:{"Content-Type":"application/json","X-CSRF-Token":root?.csrf||"","X-Database-Context":root?.context||""})},body:body===undefined?undefined:JSON.stringify(body)});
+  const response=await fetch(url,{method:body===undefined?"GET":"POST",credentials:"omit",cache:"no-store",redirect:"error",signal:options.signal,headers:{...window.LocalSession.headers(),...(body===undefined?{}:{"Content-Type":"application/json","X-CSRF-Token":root?.csrf||"","X-Database-Context":root?.context||""})},body:body===undefined?undefined:JSON.stringify(body)});
   const data=await response.json();
   if(scoped&&(key!==account||revision!==epoch))throw new DOMException("帳號已切換","AbortError");
   if(!response.ok)throw new Error(data.error||"操作未完成。");
   return data;
 }
-const api=(path,body)=>request(path,body,true), ra=(path,body)=>request(path,body,false);
+const api=(path,body,options)=>request(path,body,true,options), ra=(path,body)=>request(path,body,false);
 const time=value=>(value||"").slice(0,19).replace("T"," ");
 const info=()=>root.accounts.find(a=>a.id===account);
 function updateAccountHeader(){window.AccountSwitcher?.render(root,account);}
@@ -124,6 +124,7 @@ function loginFields(key="",reveal=true){
 }
 function showEntry(key="",reveal=true){
  window.AccountSwitcher?.close(false);
+ window.Earnings?.reset();
  window.JobProgress?.context("");window.LibraryDataUI?.reset();
  cataractScroll=null;
  clearTimeout(draftTimer);manualLookup.reset();manualErrors.clear();window.ReviewPaging?.reset();window.ToolWorkspace?.reset();window.SurgerySystem?.reset();window.SheetManagement?.reset();window.ReviewNotesUI?.reset();window.ReviewHandoff?.reset();epoch++;account="";$("#moduleFrame").removeAttribute("src");$("#cataractFrame").removeAttribute("src");for(const d of $$("dialog[open]"))d.close();$("#shell").hidden=true;$("#entry").hidden=false;loginFields(key,reveal);

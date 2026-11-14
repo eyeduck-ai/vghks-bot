@@ -1,7 +1,8 @@
 "use strict";
 window.Earnings = (()=>{
   let data=null,selected=new Set(),opened="",signature="",revision=0,detailRevision=0,scopeRevision=0,optionsTask="",catalogDialog=false,offset=0,view="";
-  const call=(path,body={})=>api("/earnings/"+path,body),names={performance:"醫療績點明細",payroll:"專勤工作獎金明細"};
+  let exportController=null,exportUrls=[];
+  const call=(path,body={},options)=>api("/earnings/"+path,body,options),names={performance:"醫療績點明細",payroll:"專勤工作獎金明細"};
   const active=()=>data?.view==="active";
   function syncActions(){
     const fetching=!active()||root.read_only||!work.online||data.tasks.some(task=>inProgress.has(task.status));
@@ -9,11 +10,17 @@ window.Earnings = (()=>{
     $("#earningsMonitorSettings").disabled=!active()||root.read_only||!data.monitor;
     $("#earningsCredentials").disabled=root.read_only;
     $("#earningsDelete").disabled=root.read_only||!selected.size;
-    $("#earningsExportCsv").disabled=$("#earningsExportJson").disabled=!selected.size;
+    $("#earningsExportCsv").disabled=$("#earningsExportJson").disabled=!!exportController||!selected.size;
   }
   const runAction=callback=>act(callback).finally(syncActions);
+  function clearExports(){
+    $("#earningsExportDownloads").replaceChildren();
+    for(const url of exportUrls)URL.revokeObjectURL(url);
+    exportUrls=[];$("#earningsExportStatus").textContent="";$("#earningsExportPanel").hidden=true;
+  }
   function resetReports(next=""){
     view=next;offset=0;data=null;selected.clear();opened=signature=optionsTask="";revision++;detailRevision++;scopeRevision++;catalogDialog=false;
+    exportController?.abort();exportController=null;clearExports();
     for(const id of ["earningsTasks","earningsReports","earningsDetail","earningsPager"])$("#"+id)?.replaceChildren();
     for(const id of ["earningsSummary","earningsMonitorStatus","earningsMonitorSchedule"])$("#"+id).textContent="";
     syncActions();$("#earningsSelectAll").disabled=true;
@@ -86,10 +93,31 @@ window.Earnings = (()=>{
   function monthPicker(){const body=node("form"),list=node("div",undefined,"earnings-months"),choices=[];for(const catalog of data.catalogs){list.append(node("h3",names[catalog.id]),node("p","期別取得 "+time(catalog.fetched_at),"caption"));for(const p of catalog.periods){const row=node("label",undefined,"check"),saved=p.saved,input=check(names[catalog.id]+" "+p.label,!saved,()=>{});row.append(input,node("span",p.label+(saved?" · 已保存":"")));list.append(row);choices.push({input,kind:catalog.id,period:p.value});}}const force=node("input"),label=node("label",undefined,"check");force.type="checkbox";label.append(force,node("span","更新已保存報表，內容變更時另存版本"));const save=node("button","保存勾選期別","primary");save.type="submit";body.append(list,label,save);body.addEventListener("submit",e=>{e.preventDefault();act(async()=>{await start({kind:"earnings_capture",reports:choices.filter(c=>c.input.checked).map(c=>({kind:c.kind,period:c.period})),force:force.checked});$("#dataDialog").close();});});$("#dataTitle").textContent="院方目前可取得期別";$("#dataContent").replaceChildren(body);catalogDialog=true;dialog("dataDialog");$("#dataDialog").addEventListener("close",()=>catalogDialog=false,{once:true});}
   async function detail(id,version){if(!data)return;const n=++detailRevision;opened=id;const value=await call("detail",{id,version,view});if(n!==detailRevision||opened!==id)return;const {report,version:v,versions}=value,container=$("#earningsDetail"),select=node("select"),label=node("label","內容版本");select.append(...versions.map(i=>new Option(time(i.fetched_at)+(i.id===report.latest?" · 最新":""),i.id)));select.value=v.id;select.addEventListener("change",()=>act(()=>detail(id,select.value)));label.append(select);container.replaceChildren(node("h2","院內期別 "+(report.label||report.period)+" · "+names[report.kind]),node("p","院內期別 "+report.period+" · 取得 "+time(v.fetched_at),"caption"),label);container.append(node("p","最後核對 "+time(report.fetched_at)+" · "+value.fetches.length+" 次抓取","caption"));const fetchHistory=node("details");fetchHistory.append(node("summary","抓取紀錄"),table(["時間","內容"],value.fetches.map(f=>[time(f.fetched_at),f.changed?"內容變更":"相同或首次保存"])));container.append(fetchHistory);for(const note of v.payload.notes)container.append(node("p",note,"caption"));for(const t of v.payload.tables){const wrap=node("div",undefined,"table-wrap"),tab=node("table",undefined,"earnings-table"),body=node("tbody");tab.setAttribute("aria-label","報表表格 "+(t.index+1));const rows=new Map();for(const c of t.cells){if(!rows.has(c.row))rows.set(c.row,node("tr"));const cell=node(c.header?"th":"td",c.raw);if(c.header)cell.scope=c.rowspan>1?"row":"col";cell.rowSpan=c.rowspan;cell.colSpan=c.colspan;if(c.number!==null){cell.dataset.number=c.number;cell.title="可解析數值："+c.number+(c.unit?" "+c.unit:"");}rows.get(c.row).append(cell);}for(const r of rows.values())body.append(r);tab.append(body);wrap.append(tab);container.append(node("h3",t.id||"表格 "+(t.index+1)),wrap);}const raw=node("details");raw.append(node("summary","原始報表文字"),node("pre",v.payload.text));container.append(raw);}
   async function download(format){
-    if(!data||!selected.size)return;
-    const scope=scopeRevision,out=await call("export",{ids:[...selected],format,view});
-    if(scope!==scopeRevision)return;
-    const url=URL.createObjectURL(new Blob([out.content],{type:out.mime})),a=node("a");a.href=url;a.download=out.filename;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
+    if(!data||!selected.size||exportController)return;
+    const scope=scopeRevision,ids=[...selected],controller=new AbortController();
+    exportController=controller;clearExports();syncActions();
+    $("#earningsExportPanel").hidden=false;
+    $("#earningsExportStatus").textContent=`正在準備 ${ids.length} 份報表的 ${format.toUpperCase()} 檔案…`;
+    let timedOut=false;
+    const timeout=setTimeout(()=>{timedOut=true;controller.abort();},60000);
+    try{
+      const out=await call("export",{ids,format,view},{signal:controller.signal});
+      if(scope!==scopeRevision||controller.signal.aborted)return;
+      for(const file of out.files){
+        const url=URL.createObjectURL(new Blob([file.content],{type:file.mime})),a=node("a",`下載 ${names[file.kind]} ${format.toUpperCase()}`);
+        exportUrls.push(url);a.href=url;a.download=file.filename;$("#earningsExportDownloads").append(a);
+      }
+      $("#earningsExportStatus").textContent=`已產生 ${out.files.length} 個 ${format.toUpperCase()} 檔案（${ids.length} 份報表），請分別點選下方連結下載。`;
+    }catch(error){
+      if(scope!==scopeRevision)return;
+      clearExports();$("#earningsExportPanel").hidden=false;
+      const message=timedOut?"匯出逾時，請重試。":error.message||"匯出未完成，請重試。";
+      $("#earningsExportStatus").textContent=message;
+      throw new Error(message);
+    }finally{
+      clearTimeout(timeout);
+      if(exportController===controller){exportController=null;syncActions();}
+    }
   }
   async function removeSelected(){
     if(!data||root.read_only||!selected.size)return;
