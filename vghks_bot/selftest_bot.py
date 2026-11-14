@@ -445,7 +445,7 @@ def self_test(report_path: Path) -> int:
         result["checks"].append("native SDK DBR PDF through ClinicalTransport and compatible adapter, cataract attachment cache, offline restart without repeat download")
         assert decode_response(b"\x8e\xf5" + "測試姓名 女".encode("cp950")) == "\ue3a4測試姓名 女"
         profile = patient_name_display_profile()
-        for original, displayed in (("\ue3a4", "凃"), ("\uea81", "眞"), ("\ue03e", "綉")):
+        for original, displayed in (("\ue3a4", "凃"), ("\uea81", "眞"), ("\ue03e", "綉"), ("\ue897", "恒")):
             assert profile["mapping"].get(original) == displayed, "SDK patient-name display profile missing"
         result["checks"].append("SDK-owned patient-name display profile includes all confirmed characters without changing raw decoding")
         assert search("# Arrange", ["P: # Arrange CATA"])

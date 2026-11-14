@@ -2,7 +2,7 @@
 
 ## 環境與目錄
 
-使用 Windows x64、Python 3.11、Git 與 Node.js 24。依賴固定於 `requirements-build.lock.txt`，SDK 0.24.4／`420fe3299aaa8e386f2216aba9273daedc8ecd19` 與共用核心 1.3.0／`3e4babe8bbb799d103372732bd2e45bc1405fb83` 也固定於 `pyproject.toml`；不可只按版本號判定安裝來源。
+使用 Windows x64、Python 3.11、Git 與 Node.js 24。依賴固定於 `requirements-build.lock.txt`，SDK 0.24.4／`a0416ae129b57dfc1a0ad1981318b610ef696101` 與共用核心 1.3.0／`3e4babe8bbb799d103372732bd2e45bc1405fb83` 也固定於 `pyproject.toml`；不可只按版本號判定安裝來源。
 
 ```powershell
 py -3.11 -m venv .venv
