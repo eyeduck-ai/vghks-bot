@@ -7,7 +7,7 @@ window.FileCompare = (() => {
   let account = "", mrn = "", patientName = "", items = [], activeIndex = 0, remoteCount = 0, feedbackTimer = 0, linkedFrame = null;
   let remoteDigests = new Set(), remoteItems = [], inlineHost = null, inlineActive = 0, inlineActiveDigest = "";
   let numericKey = "", clearing = null, selectionRevision = 0, compareTrigger = null;
-  let trayNode = null, trayGroupNode = null, feedbackNode = null;
+  let trayNode = null, trayGroupNode = null, feedbackNode = null, outpatient = true;
   const embedded = window.parent !== window;
   const make = (tag, label, cls) => {
     const el = document.createElement(tag);
@@ -75,13 +75,27 @@ window.FileCompare = (() => {
   }
   function count() {return embedded ? remoteCount : items.length;}
   function has(digest) {return embedded ? remoteDigests.has(digest) : items.some(item => item.digest === digest);}
+  function visibility(page) {
+    if (embedded) return;
+    const visible = ["patients", "tool", "review", "module", "library", "tags"].includes(page);
+    if (outpatient === visible) return;
+    outpatient = visible;
+    if (!visible) {
+      clearTimeout(feedbackTimer);
+      if (feedbackNode) feedbackNode.hidden = true;
+      // Navigation changes presentation only; keep the patient-scoped selection.
+      document.getElementById("fileCompareClearDialog")?.close("cancel");
+      document.getElementById("fileCompareDialog")?.close();
+    }
+    render();
+  }
   function announce(value) {
     if (embedded) {
       window.dispatchEvent(new CustomEvent("filecomparemessage", {detail:value}));
       return;
     }
     const feedback = feedbackNode;
-    if (!feedback) return;
+    if (!feedback || !outpatient) return;
     feedback.textContent = value;
     feedback.hidden = false;
     clearTimeout(feedbackTimer);
@@ -258,6 +272,7 @@ window.FileCompare = (() => {
   }
   function open(event) {
     if (embedded) {window.parent.postMessage({type:"bot:compare-open"}, location.origin); return;}
+    if (!outpatient) return;
     mount();
     if (!items.length) {announce("請先加入要比較的檔案。"); return;}
     const dialog = document.getElementById("fileCompareDialog");
@@ -499,9 +514,9 @@ window.FileCompare = (() => {
     if (embedded) return;
     mount();
     const tray = trayNode;
-    tray.hidden = !items.length;
+    tray.hidden = !outpatient || !items.length;
     tray.textContent = `查看比較 · ${items.length} / ${limit}`;
-    trayGroupNode.hidden = !items.length;
+    trayGroupNode.hidden = !outpatient || !items.length;
     document.getElementById("fileCompareClearAll").disabled = !items.length;
     document.getElementById("fileComparePatient").textContent = (patientName || "姓名未提供") + " · 病歷號 " + mrn;
     document.getElementById("fileCompareCount").textContent = `${items.length} / ${limit} 份`;
@@ -541,5 +556,5 @@ window.FileCompare = (() => {
   });
   document.addEventListener("DOMContentLoaded", mount);
   function clear(){selectionRevision++;items=[];remoteItems=[];remoteDigests.clear();remoteCount=0;numericKey="";document.getElementById("fileCompareDialog")?.close();render();if(embedded){renderInline();changed();}}
-  return {add, context, count, has, remove:removeDigest, open, receive, renderInline, clear, requestClear, patient:()=>mrn};
+  return {add, context, visibility, count, has, remove:removeDigest, open, receive, renderInline, clear, requestClear, patient:()=>mrn};
 })();

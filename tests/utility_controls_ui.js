@@ -24,6 +24,8 @@ function environment() {
     get isConnected(){return this===this.ownerDocument.body||!!this.parentElement?.isConnected;}
     get open(){return this._open;}
     set open(value){const changed=this._open!==!!value;this._open=!!value;if(changed)mutations.push({target:this,attributeName:"open"});}
+    get hidden(){return !!this._hidden;}
+    set hidden(value){const changed=!!this._hidden!==!!value;this._hidden=!!value;if(changed)mutations.push({target:this,attributeName:"hidden"});}
     _place(child,index,preserveFocus=false){
       const original=child.ownerDocument,focused=original?.activeElement;
       if(child.parentElement){const previous=child.parentElement;previous.children.splice(previous.children.indexOf(child),1);}
@@ -169,6 +171,34 @@ function dockPlacement(){
   assert.equal(inner.style["--utility-dock-height"],undefined,"old but connected iframe document retained its layout reservation");
   assert.equal(inner.classList.contains("utility-dock-host"),false);assert.equal(dock.parentElement,replacement);assert.equal(dock.children.find(value=>value.id==="selection"),comparison);
   inner.close();s.flush();assert.equal(dock.parentElement,replacement,"retired iframe mutation displaced the live dock");
+}
+
+function patientDockPlacement(){
+  const s=environment(),page=s.element("section");page.id="patientsPage";page.className="page";
+  const collection=s.element("div",page);collection.className="collection-bar";
+  const summary=s.element("strong",collection),actions=s.element("div",collection),launch=s.element("button",actions);
+  launch.textContent="病歷檢閱";
+  s.load("vghks_bot/static/utility-dock.js");const ui=s.window.UtilityDock;
+  const progress=s.element("aside"),comparison=s.element("div");
+  ui.attach("progress",progress,10);ui.attach("comparison",comparison,20);
+  const dock=s.document.getElementById("utilityDock");
+  assert.equal(dock.parentElement,collection,"patient progress did not share the shortcut surface");
+  assert.equal(collection.firstElementChild,dock,"progress must precede shortcuts even on the mobile block layout");
+  assert.equal(dock.classList.contains("utility-dock-inline"),true);
+  assert.equal(summary.parentElement,collection);assert.equal(launch.parentElement,actions);
+  page.hidden=true;s.flush();assert.equal(dock.parentElement,s.document.body,"navigation left utilities in a hidden patient page");
+  assert.equal(dock.classList.contains("utility-dock-inline"),false);
+  assert.equal(collection.classList.contains("utility-dock-host"),false);
+  assert.equal(collection.style["--utility-dock-height"],undefined);
+  page.hidden=false;s.flush();assert.equal(dock.parentElement,collection);
+  assert.equal(s.document.body.classList.contains("utility-dock-host"),false,"returning to inline status retained floating padding");
+  assert.equal(s.document.body.style["--utility-dock-height"],undefined);
+  const reader=s.element("dialog");reader.showModal();s.flush();assert.equal(dock.parentElement,reader);
+  assert.equal(dock.classList.contains("utility-dock-inline"),false);assert.equal(dock.classList.contains("utility-dock-modal"),true);
+  reader.close();s.flush();assert.equal(dock.parentElement,collection);assert.equal(collection.firstElementChild,dock);
+  const settings=s.element("dialog");settings.dataset.utilityDock="hide";settings.showModal();s.flush();assert.equal(dock.hidden,true);
+  settings.close();s.flush();assert.equal(dock.parentElement,collection);assert.equal(dock.hidden,false);
+  progress.hidden=comparison.hidden=true;ui.sync();assert.equal(dock.hidden,true);assert.equal(collection.classList.contains("utility-dock-host"),false);
 }
 
 function progressClockCleanup(){
@@ -391,4 +421,37 @@ async function confirmationSafety(){
   assert.equal(s.requests.length,0,"cross-document updates unexpectedly fetched an attachment");
 }
 
-(async()=>{await clocksWhilePending();dockPlacement();progressClockCleanup();comparisonZoomReset();comparisonFitModes();comparisonSwitchFocus();await scanPreviewLifecycle();await confirmationSafety();process.stdout.write("Utility control clocks, dock placement, confirmations and selection isolation checks passed\nModal footer, native PDF zoom guidance and persistent image zoom reset checks passed\n");})().catch(error=>{console.error(error);process.exitCode=1;});
+async function comparisonWorkspaceVisibility(){
+  const s=compareSetup(),{ui,item}=s;ui.add(item("1"));
+  const tray=s.document.getElementById("fileCompareTray"),group=s.document.getElementById("fileCompareTrayGroup"),feedback=s.document.getElementById("fileCompareFeedback");
+  const showPageSource=fs.readFileSync("vghks_bot/static/bot.js","utf8").match(/^function showPage\(name\).*$/m)[0];
+  Object.assign(s.context,{$$:()=>[],Choices:{sync(){}},updateReviewLayout(){},rememberAccountView(){},captureCataractScroll(){}});
+  vm.runInContext("let page='patients';"+showPageSource,s.context);
+  const navigate=name=>vm.runInContext("showPage("+JSON.stringify(name)+")",s.context);
+  assert.equal(group.hidden,false);assert.equal(feedback.hidden,false);
+  for(const destination of ["approvals","earnings","surgery","operatingRoom","sheetManagement","tasks"]){
+    navigate(destination);
+    assert.equal(group.hidden,true,destination+" retained the comparison shortcut");assert.equal(tray.hidden,true);
+    assert.equal(feedback.hidden,true,destination+" retained an outpatient notification");
+    assert.equal(ui.count(),1,destination+" cleared the retained queue");assert.equal(ui.has(item("1").digest),true);
+    const modal=s.element("dialog");modal.showModal();s.flush();
+    assert.equal(group.hidden,true,destination+" dialog reintroduced the comparison shortcut");
+    ui.open();assert.equal(s.document.getElementById("fileCompareDialog").open,false,"hidden context opened a stale comparison");
+    modal.close();s.flush();navigate("patients");assert.equal(group.hidden,false);assert.equal(tray.hidden,false);
+    assert.equal(feedback.hidden,true,"returning to outpatient resurrected an expired notification");
+  }
+  navigate("earnings");ui.add(item("2"));
+  assert.equal(ui.count(),2);assert.equal(group.hidden,true,"late attachment completion exposed the shortcut in another system");assert.equal(feedback.hidden,true);
+  for(const destination of ["patients","tool","review","module","library","tags"]){
+    navigate("approvals");navigate(destination);assert.equal(group.hidden,false,destination+" did not restore the outpatient shortcut");
+    assert.equal(ui.count(),2);assert.equal(ui.has(item("2").digest),true);
+  }
+  ui.open();const compare=s.document.getElementById("fileCompareDialog");assert.equal(compare.open,true);
+  navigate("surgery");assert.equal(compare.open,false,"system switch retained an open outpatient comparison");assert.equal(ui.count(),2);
+  navigate("review");const clearing=ui.requestClear();assert.equal(s.prompt().open,true);
+  navigate("earnings");assert.equal(s.prompt().open,false);assert.equal(await clearing,false);assert.equal(ui.count(),2,"system switch confirmed queue removal");
+  navigate("review");assert.equal(group.hidden,false);assert.equal(feedback.hidden,true);
+  assert.equal(s.requests.length,0,"presentation changes issued attachment or mutation requests");
+}
+
+(async()=>{await clocksWhilePending();dockPlacement();patientDockPlacement();progressClockCleanup();comparisonZoomReset();comparisonFitModes();comparisonSwitchFocus();await scanPreviewLifecycle();await confirmationSafety();await comparisonWorkspaceVisibility();process.stdout.write("Utility control clocks, dock placement, confirmations and selection isolation checks passed\nModal footer, native PDF zoom guidance and persistent image zoom reset checks passed\nComparison shortcut workspace visibility and retained selection checks passed\nPatient progress and shortcut surface lifecycle checks passed\n");})().catch(error=>{console.error(error);process.exitCode=1;});
