@@ -4,6 +4,11 @@ body.utility-dock-host #content{padding-bottom:calc(var(--utility-dock-height,0p
 dialog.utility-dock-host:not(.utility-dock-active)::after{content:"";display:block;flex:none;height:var(--utility-dock-height,0px)}
 .utility-dock.utility-dock-modal{position:static;inset:auto;display:flex;align-items:flex-start;justify-content:flex-end;flex-wrap:wrap;flex:none;gap:6px 10px;width:100%;max-width:none;max-height:none;box-sizing:border-box;padding:7px 12px;border-top:1px solid #d8e3dc;background:#f8faf9;pointer-events:auto}
 .utility-dock.utility-dock-modal[hidden]{display:none}
+.utility-dock.utility-dock-inline{position:static;inset:auto;order:-1;flex:1 0 100%;display:flex;align-items:flex-start;justify-content:flex-end;flex-wrap:wrap;gap:6px 10px;width:100%;max-height:none;padding:0 0 8px;border-bottom:1px solid var(--line,#dce3da);pointer-events:auto}
+.utility-dock.utility-dock-inline[hidden]{display:none}
+.utility-dock-inline>.floating-job-progress{flex:1 1 210px;max-width:none;margin:0;box-shadow:none;background:var(--paper,#fff)}
+.utility-dock-inline>.compare-tray-group{flex:0 1 auto;min-width:0;margin-left:auto;box-shadow:none}
+.utility-dock-inline>.compare-feedback{flex-basis:100%;margin:0;padding:4px 8px;font-size:11px}
 .utility-dock.utility-dock-modal>.floating-job-progress{flex:1 1 210px;max-width:520px;min-width:0;margin:0;box-shadow:none}
 .utility-dock-modal>.compare-tray-group{flex:0 1 auto;min-width:0;margin-left:auto;box-shadow:none}
 .utility-dock-modal .compare-tray-group .compare-tray,.utility-dock-modal .compare-clear{min-height:30px}

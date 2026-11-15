@@ -13,6 +13,7 @@ window.UtilityDock = (() => {
         let changed = false;
         for (const record of records) {
           const target = record.target;
+          if (record.attributeName === "hidden" && (target.id === "shell" || target.classList.contains("page"))) changed = true;
           if (target.tagName !== "DIALOG") continue;
           changed = true;
           if (record.attributeName !== "open") continue;
@@ -21,7 +22,7 @@ window.UtilityDock = (() => {
         }
         if (changed) sync();
       });
-      state.observer.observe(doc.body, {attributes:true,subtree:true,attributeFilter:["open","data-view"]});
+      state.observer.observe(doc.body, {attributes:true,subtree:true,attributeFilter:["open","data-view","hidden"]});
     }
   }
   function top(doc) {
@@ -39,7 +40,10 @@ window.UtilityDock = (() => {
       if (frame.hidden || !frame.getClientRects().length || frame.dataset.account !== owner) continue;
       try {const inner = top(frame.contentDocument);if (inner) return inner;} catch (_) { /* Cross-origin frames cannot host clinical controls. */ }
     }
-    return document.body;
+    // On the patient list, task status and shortcuts share one sticky surface.
+    // Normal flow keeps them apart even when actions wrap or progress expands.
+    const collection = document.querySelectorAll("#patientsPage .collection-bar")[0];
+    return collection?.getClientRects().length ? collection : document.body;
   }
   function reserve() {
     if (!dock || !previousHost) return;
@@ -68,7 +72,7 @@ window.UtilityDock = (() => {
     }
     const target = host();
     for (const reserved of reservations) {
-      if (reserved !== target && (!reserved.isConnected || (reserved.tagName === "DIALOG" && !reserved.open))) {
+      if (reserved !== target && (!reserved.isConnected || reserved.tagName !== "DIALOG" || !reserved.open)) {
         reserved.classList.remove("utility-dock-host", "utility-dock-active");reserved.style.removeProperty("--utility-dock-height");reservations.delete(reserved);
       }
     }
@@ -80,13 +84,15 @@ window.UtilityDock = (() => {
       if (previousHost && !previousHost.isConnected) {
         previousHost.classList.remove("utility-dock-host");previousHost.style.removeProperty("--utility-dock-height");reservations.delete(previousHost);
       }
-      if (target.moveBefore && dock.isConnected && target.ownerDocument === dock.ownerDocument) target.moveBefore(dock, null);
-      else target.append(dock);
+      const before = target.classList.contains("collection-bar") ? target.firstElementChild : null;
+      if (target.moveBefore && dock.isConnected && target.ownerDocument === dock.ownerDocument) target.moveBefore(dock, before);
+      else target.insertBefore(dock, before);
       previousHost = target;
     }
     // A modal footer remains in its native focus scope and consumes real layout
     // space. Fixed viewport positioning would still cover the report images.
     dock.classList.toggle("utility-dock-modal", target.tagName === "DIALOG");
+    dock.classList.toggle("utility-dock-inline", target.classList.contains("collection-bar"));
     dock.style.removeProperty("right");dock.style.removeProperty("bottom");dock.style.removeProperty("max-width");
     for (const {node,order} of slots.values()) {
       node.style.order = String(order);
