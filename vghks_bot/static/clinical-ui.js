@@ -245,45 +245,95 @@ window.ClinicalUI = (() => {
     return date + (multiple ? ` · 檔案 ${index}` : "");
   }
   const pacsRequests = new Map();
+  const pacsFeedback = new WeakMap();
   let pacsControlId = 0;
-  function pacsControl({request, scope, enabled = true, current = () => true, buttonText = "開啟本地 PACS", compact = false}) {
+  function pacsControl({request, scope, enabled = true, current = () => true, buttonText = "開啟本地 PACS", compact = false, batch = false}) {
     const area = document.createElement("div"), button = document.createElement("button"),
       message = document.createElement("span"), selection = document.createElement("div"),
-      label = document.createElement("label"), select = document.createElement("select");
-    area.className = "pacs-control";button.type = "button";button.className = "quiet attachment-control";
-    button.textContent = buttonText;button.disabled = !enabled;
-    button.title = "使用本機已啟動的院方 PACS 檢閱器開啟這筆醫囑";
+      label = document.createElement("label"), select = document.createElement("select"), icon = document.createElement("span");
+    const id = ++pacsControlId;
+    const title = batch ? "依序交接勾選醫囑的檢查至本地 PACS" : "使用本機已啟動的院方 PACS 檢閱器開啟這筆醫囑";
+    area.className = compact ? "pacs-control is-compact" : "pacs-control";
+    button.type = "button";button.className = batch ? "pacs-button" : "quiet attachment-control pacs-button";
+    button.textContent = buttonText;button.disabled = !enabled;button.title = title;
+    if (compact) {
+      icon.className = "pacs-state-icon";icon.setAttribute("aria-hidden", "true");button.append(icon);
+    }
     message.className = "caption pacs-message";message.setAttribute("role", "status");
-    select.id = "pacs-study-" + (++pacsControlId);select.name = "pacs_study";
+    message.id = "pacs-message-" + id;button.setAttribute("aria-describedby", message.id);
+    select.id = "pacs-study-" + id;select.name = "pacs_study";
     label.textContent = "PACS 檢查";label.htmlFor = select.id;
     selection.className = "pacs-selection";selection.append(label, select);selection.hidden = true;
     message.textContent = enabled || compact ? "" : "登入後可使用本機 PACS 檢閱器。";
     area.append(selection, button, message);
     const key = JSON.stringify(scope);
     const visible = () => area.isConnected !== false && current();
+    let pending = false, revision = 0, stateTimer, feedbackTimer, feedbackOwner;
+    function hideFeedback() {
+      clearTimeout(feedbackTimer);
+      message.classList.remove("is-visible");
+      if (pacsFeedback.get(feedbackOwner) === hideFeedback) pacsFeedback.delete(feedbackOwner);
+    }
+    function setState(state = "", text = "", feedback = false) {
+      clearTimeout(stateTimer);hideFeedback();
+      message.textContent = text;message.classList.toggle("error", state === "error");
+      if (!compact) return;
+      button.dataset.state = state;button.title = text || title;
+      icon.textContent = {busy:"…", sent:"✓", warning:"!", error:"!"}[state] || "";
+      if (state === "sent") stateTimer = setTimeout(() => {
+        delete button.dataset.state;icon.textContent = "";
+      }, 1600);
+      if (feedback) {
+        feedbackOwner = area.closest("dialog") || document;
+        pacsFeedback.get(feedbackOwner)?.();pacsFeedback.set(feedbackOwner, hideFeedback);
+        message.classList.add("is-visible");
+        feedbackTimer = setTimeout(hideFeedback, state === "sent" ? 5000 : 9000);
+      }
+    }
     function show(result) {
-      if (!visible()) return;
-      message.textContent = result.message || "PACS 交接未完成。";
-      message.classList.toggle("error", !["HANDOFF_SENT", "SELECTION_REQUIRED"].includes(result.status));
-      if (result.status === "SELECTION_REQUIRED") {
+      const choosing = result.status === "SELECTION_REQUIRED";
+      const state = result.status === "HANDOFF_SENT" ? "sent" :
+        ["PARTIAL", "OUTCOME_UNKNOWN", "SELECTION_REQUIRED"].includes(result.status) ? "warning" : "error";
+      setState(state, result.message || "PACS 交接未完成。", true);
+      if (choosing) {
         select.replaceChildren();
         for (const choice of result.choices || []) {
           const option = document.createElement("option");option.value = choice.id;option.textContent = choice.label;select.append(option);
         }
         selection.hidden = false;select.focus();
-      }
+      } else if (compact && state === "sent") selection.hidden = true;
     }
     async function follow(promise) {
-      button.disabled = true;area.setAttribute("aria-busy", "true");message.textContent = "正在準備並交接本地 PACS…";
-      try {show(await promise);}
-      catch (error) {if (visible()) {message.textContent = (error.message || "PACS 請求未完成。") + " 請先查看本地檢閱器；系統未自動重送。";message.classList.add("error");}}
-      finally {if (visible()) {button.disabled = !enabled;area.removeAttribute("aria-busy");}}
+      const started = revision, mayShow = () => visible() && started === revision;
+      let completed = false;
+      pending = true;button.disabled = true;button.setAttribute("aria-busy", "true");
+      setState("busy", "正在準備並交接本地 PACS…");
+      try {
+        const result = await promise;
+        if (mayShow() && result.status !== "CANCELLED") {show(result);completed = true;}
+      } catch (error) {
+        if (mayShow()) {
+          setState("error", (error.message || "PACS 請求未完成。") + " 請先查看本地檢閱器；系統未自動重送。", true);
+          completed = true;
+        }
+      } finally {
+        pending = false;button.disabled = !enabled;button.removeAttribute("aria-busy");
+        if (!completed) setState();
+      }
     }
+    area.refresh = ({enabled: available, reset}) => {
+      enabled = available;button.disabled = !enabled || pending;
+      if (reset) {
+        revision++;selection.hidden = true;
+        if (!pending) setState();
+      }
+    };
     button.addEventListener("click", () => {
       if (!enabled || !current() || pacsRequests.has(key)) return;
       // Only this user gesture may send a command. Rendering and polling only
       // observe an existing request; a lost response never triggers a retry.
-      const promise = Promise.resolve().then(() => current() ? request({...scope,
+      const started = revision;
+      const promise = Promise.resolve().then(() => current() && started === revision ? request({...scope,
         ...(!selection.hidden ? {launch_id: select.value} : {})}) : {status: "CANCELLED"});
       pacsRequests.set(key, promise);
       void follow(promise);

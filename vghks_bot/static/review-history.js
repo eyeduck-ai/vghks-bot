@@ -7,6 +7,7 @@ window.ReviewHistoryUI=(()=>{
  const panel=()=>$("#dataContent"),modal=()=>$("#dataDialog"),back=()=>$("#dataDialogBack");
  const scans=new Set(["scans","case_scans"]);
  const orderLists=new Set(["orders","case_orders"]);
+ const PACS_BATCH_LIMIT=20;
  const orderSelections=new Map();
  const openScans=next=>window.ScanBrowser.open({...next,account,archive:true,
   patient_name:window.ClinicalUI?.patientName?.(reviewPatientIdentity(next.mrn,next.review_task_id).name)??reviewPatientIdentity(next.mrn,next.review_task_id).name,
@@ -100,7 +101,7 @@ window.ReviewHistoryUI=(()=>{
  }
  function render(result,{loading=false}={}){
   if(!active())return;
-  const next=JSON.stringify([result.updated_at,result.data_revision,result.complete,result.issues,result.data,loading]);
+  const next=JSON.stringify([result.updated_at,result.data_revision,result.complete,result.issues,result.data,loading,!!root.read_only,!!work?.online]);
   if(next===renderSignature)return;
   renderSignature=next;
   panel().querySelector(".history-load-error")?.remove();
@@ -120,7 +121,7 @@ window.ReviewHistoryUI=(()=>{
    appendNumericTables(content,data.tables||[]);
    if(context.resource==="numeric")content.append(action("從歷次就診選擇更早報告",()=>jump("visits")));
   }else if(context.resource==="orders"||context.resource==="case_orders"){
-   if(!orderView){content.replaceChildren();orderView=renderOrders(content);}
+   if(!orderView||orderView.readOnly!==!!root.read_only){orderView?.dispose();content.replaceChildren();orderView=renderOrders(content);}
    orderView.update(data);
   }else if(context.resource==="visits"){content.replaceChildren();renderVisits(content,data);}
   else if(context.resource==="visit_soap"){
@@ -138,14 +139,21 @@ window.ReviewHistoryUI=(()=>{
   const scope={...context},sourceAccount=account,selectionKey=JSON.stringify([sourceAccount,scope.review_task_id,scope.cohort_id,scope.mrn,scope.resource,scope.reference]);
   const selected=orderSelections.get(selectionKey)||new Set(),checks=new Map();
   orderSelections.set(selectionKey,selected);
+  let pacsSelection=selected.size?JSON.stringify([...selected]):"";
+  const pacsCurrent=()=>active()&&account===sourceAccount&&same(context,scope)&&!!work?.online&&!root.read_only;
+  const canOpenPacs=()=>selected.size>0&&selected.size<=PACS_BATCH_LIMIT&&!!work?.online&&!root.read_only&&!exportRequest;
   const controls=node("div",undefined,"history-order-toolbar"),categories=node("div",undefined,"history-order-classification"),search=node("input"),results=node("div",undefined,"history-orders-scroll"),pager=node("div"),footer=node("div",undefined,"history-orders-footer");
-  const archive=node("div",undefined,"review-archive-toolbar"),count=node("span",undefined,"caption"),status=node("span",undefined,"caption review-archive-status");
-  const download=node("button","下載選取原檔 ZIP","history-action"),clear=node("button","清除選取","history-action quiet");
+  const archive=node("div",undefined,"review-archive-toolbar history-order-bulk"),count=node("span",undefined,"caption"),status=node("span",undefined,"caption review-archive-status");
+  const download=node("button","下載附件","history-action history-order-download primary"),clear=node("button","清除選取","history-action quiet");
+  const pacs=root.read_only?null:ClinicalUI.pacsControl({scope:{...scope,account:sourceAccount},compact:true,batch:true,enabled:canOpenPacs(),
+   current:pacsCurrent,request:values=>api("/reviews/pacs/open",{...values,order_keys:[...selected]})});
   const selectPage=node("input"),selectHeader=node("th",undefined,"history-order-select");
   selectPage.type="checkbox";selectPage.setAttribute("aria-label","全選本頁醫囑");
   selectHeader.setAttribute("scope","col");selectHeader.append(selectPage);
   download.type=clear.type="button";status.setAttribute("role","status");count.setAttribute("aria-live","polite");
-  archive.append(download,clear,count,status);
+  archive.append(download);
+  if(pacs)archive.append(pacs);
+  archive.append(clear,count,status);
   search.type="search";search.placeholder="搜尋醫囑名稱或日期";search.setAttribute("aria-label","搜尋醫囑名稱或日期");search.value=orderQuery;
   results.setAttribute("role","region");results.setAttribute("aria-label","醫囑清單");results.tabIndex=0;
   const grid=node("table",undefined,"history-order-table"),head=node("thead"),heading=node("tr"),body=node("tbody"),sortHeaders=new Map(),emptyState=empty("沒有符合的醫囑。");
@@ -166,12 +174,16 @@ window.ReviewHistoryUI=(()=>{
    selectPage.disabled=!checks.size||!!exportRequest;
    download.disabled=clear.disabled=!selected.size||!!exportRequest;
    if(exportRequest)download.setAttribute("aria-busy","true");else download.removeAttribute("aria-busy");
-   count.textContent=`已選 ${selected.size} 筆`;
+   const limitHint=pacs&&work?.online&&!root.read_only&&selected.size>PACS_BATCH_LIMIT?`（PACS 每次最多 ${PACS_BATCH_LIMIT} 筆）`:"";
+   count.textContent=`已選 ${selected.size} 筆${limitHint}`;
+   const nextPacsSelection=JSON.stringify([...selected]);
+   pacs?.refresh?.({enabled:canOpenPacs(),reset:nextPacsSelection!==pacsSelection});
+   pacsSelection=nextPacsSelection;
   }
   function setSelected(ids,checked){
    if(exportRequest)return;
    if(checked&&selected.size+ids.filter(id=>!selected.has(id)).length>window.ReviewArchive.limit){
-    announce(`一次最多可下載 ${window.ReviewArchive.limit} 筆。`,true);
+    announce(`一次最多可選取 ${window.ReviewArchive.limit} 筆。`,true);
    }else{
     for(const id of ids)if(checked)selected.add(id);else selected.delete(id);
     announce("");
@@ -223,7 +235,7 @@ window.ReviewHistoryUI=(()=>{
     const line=node("tr"),actions=node("div",undefined,"history-order-actions");
     const inspect=action("查看內容",()=>jump("order_report",row.id));inspect.classList.add("attachment-control");actions.append(inspect);
     if(!root.read_only)actions.append(ClinicalUI.pacsControl({scope:{...scope,resource:"order_report",reference:row.id,account:sourceAccount},buttonText:"本地 PACS",compact:true,enabled:!!work?.online,
-     current:()=>active()&&account===sourceAccount&&same(context,scope)&&!!work?.online&&!root.read_only,
+     current:pacsCurrent,
      request:values=>api("/reviews/pacs/open",values)}));
     const select=node("td",undefined,"history-order-select"),checkbox=node("input");
     checkbox.type="checkbox";checkbox.setAttribute("aria-label",["選取",row.name||"未命名醫囑",row.order_date,row.case_no].filter(Boolean).join(" "));
@@ -243,7 +255,7 @@ window.ReviewHistoryUI=(()=>{
   search.addEventListener("input",()=>{orderQuery=search.value;orderPage=0;draw(true);});
   controls.append(search,categories);footer.append(pager);
   content.append(controls,archive,results,footer);
-  const view={update(next){
+  const view={readOnly:!!root.read_only,update(next){
    rows=next;const currentIds=new Set(rows.map(row=>row.id));
    for(const id of selected)if(!currentIds.has(id))selected.delete(id);
    draw();

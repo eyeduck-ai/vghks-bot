@@ -51,6 +51,7 @@ from .storage import StorageError
 RESOURCES = {"numeric", "orders", "visits", "case_numeric", "case_orders", "order_report", "visit_soap",
              "scans", "case_scans", "scan_asset"}
 CASE_RESOURCES = {"case_numeric", "case_orders", "visit_soap", "case_scans"}
+ORDER_LIST_RESOURCES = ("orders", "case_orders")
 NAMES = {"numeric": "歷年數值類報告", "orders": "歷年醫囑清單", "visits": "歷次就診紀錄",
          "case_numeric": "該次數值類報告", "case_orders": "該次醫囑清單",
          "order_report": "醫囑報告內容", "visit_soap": "歷史 SOAP",
@@ -59,6 +60,19 @@ ARCHIVE_LIMIT = 100
 ARCHIVE_FILE_LIMIT = 500
 ARCHIVE_SIZE_LIMIT = 512 * 1024 * 1024
 ARCHIVE_MIMES = {"application/pdf", "image/jpeg", "image/png", "image/gif"}
+
+
+def _selection_ids(ids, limit):
+    if (not isinstance(ids, list) or not 1 <= len(ids) <= limit
+            or any(not isinstance(item, str) or not re.fullmatch(r"[a-f0-9]{64}", item) for item in ids)):
+        raise ValueError(f"請勾選 1 至 {limit} 個清單項目。")
+    return list(dict.fromkeys(ids))
+
+
+def _select_list_items(ids, items):
+    if set(ids) - items.keys():
+        raise ValueError("部分勾選項目已不在目前清單，請重新勾選。")
+    return [items[key] for key in ids]
 
 
 class ReviewHistory:
@@ -270,6 +284,30 @@ class ReviewHistory:
             raise ValueError("醫囑不在已核對的病人索引。")
         return groups[reference]
 
+    def _order_list(self, mrn, resource, reference):
+        if resource == "case_orders":
+            step = self._index_steps(mrn, resource, reference)[0]
+            return (self._groups(mrn, step["payload"]), step["saved_at"]) if step else (None, "")
+        steps = self._index_steps(mrn, resource)
+        if not any(steps):
+            return None, ""
+        groups = self._groups(mrn, self._order_sources(mrn))
+        return groups, max(step["saved_at"] for step in steps if step)
+
+    def order_selection(self, values, *, limit):
+        if values.get("resource") not in ORDER_LIST_RESOURCES:
+            raise ValueError("請從醫囑清單勾選。")
+        ids = _selection_ids(values.get("order_keys"), limit)
+        with self.app.store.library.read_snapshot():
+            _, mrn, resource, reference = self.scope(values)
+            groups, _ = self._order_list(mrn, resource, reference)
+            orders = _select_list_items(ids, groups or {})
+            if resource == "case_orders":
+                case = self.case(mrn, reference)
+                for variants in orders:
+                    validate_case_orders(variants, case)
+        return mrn, orders
+
     def _stored(self, mrn, resource, reference, *, cataract=False):
         if resource == "scans":
             step = self.store.step(mrn, "scans-history")
@@ -282,12 +320,9 @@ class ReviewHistory:
         if resource == "numeric":
             step = self.store.step(mrn, "numeric-history")
             return (step["payload"], step["saved_at"]) if step else (None, "")
-        if resource == "orders":
-            steps = self._index_steps(mrn, resource)
-            if not any(steps):
-                return None, ""
-            orders = self._order_sources(mrn)
-            return self._public_orders(self._groups(mrn, orders)), max(step["saved_at"] for step in steps if step)
+        if resource in ORDER_LIST_RESOURCES:
+            groups, saved = self._order_list(mrn, resource, reference)
+            return (self._public_orders(groups), saved) if groups is not None else (None, "")
         if resource == "visits":
             cases, saved = self._visits(mrn)
             if cases is None:
@@ -302,19 +337,16 @@ class ReviewHistory:
                              "case_no": case.case_no, "doctor": case.doctor_name,
                              "soap_available": case.case_type == "O" and bool(case.visit_date and case.visit_date <= today())})
             return sorted(rows, key=lambda row: (row["date"], row["id"]), reverse=True), saved
-        if resource in {"case_numeric", "case_orders"}:
+        if resource == "case_numeric":
             case = self.case(mrn, reference)
-            if resource == "case_numeric" and getattr(self.app, "resources", None):
+            if getattr(self.app, "resources", None):
                 from .clinical_resources import ClinicalResources
 
                 value = ClinicalResources.cached_numeric(self.app, mrn, case, allow_stale=True, allow_partial=True)
                 return (value.value, value.saved_at) if value else (None, "")
-            key = ("numeric-case:" if resource == "case_numeric" else "orders-case:") + digest(case.identity)
-            step = self.store.step(mrn, key)
+            step = self.store.step(mrn, "numeric-case:" + digest(case.identity))
             if not step:
                 return None, ""
-            if resource == "case_orders":
-                return self._public_orders(self._groups(mrn, step["payload"])), step["saved_at"]
             return step["payload"], step["saved_at"]
         if resource == "order_report":
             step = self.store.step(mrn, "history-order:" + reference)
@@ -362,20 +394,15 @@ class ReviewHistory:
     def _archive_selection(self, values):
         if values.get("resource") not in ("orders", "case_orders", "scans", "case_scans"):
             raise ValueError("請從醫囑清單或掃描病歷選擇要下載的原檔。")
-        ids = values.get("ids")
-        if (not isinstance(ids, list) or not 1 <= len(ids) <= ARCHIVE_LIMIT
-                or any(not isinstance(item, str) or not re.fullmatch(r"[a-f0-9]{64}", item) for item in ids)):
-            raise ValueError(f"請勾選 1 至 {ARCHIVE_LIMIT} 個清單項目。")
+        ids = _selection_ids(values.get("ids"), ARCHIVE_LIMIT)
         _, mrn, resource, reference = self.scope(values)
         data, _ = self._stored(mrn, resource, reference)
-        orders = resource in ("orders", "case_orders")
+        orders = resource in ORDER_LIST_RESOURCES
         listed = (data or []) if orders else (data or {}).get("records", (data or {}).get("scans", []))
         rows = {}
         for row in listed:
             rows.setdefault(row["id"], row)
-        if set(ids) - rows.keys():
-            raise ValueError("部分勾選項目已不在目前清單，請重新勾選。")
-        return mrn, resource, [rows[key] for key in dict.fromkeys(ids)]
+        return mrn, resource, _select_list_items(ids, rows)
 
     def _archive_files(self, mrn, resource, row):
         if resource in ("orders", "case_orders"):

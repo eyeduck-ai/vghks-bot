@@ -460,15 +460,14 @@ body.review-result-compact .review-page .review-layout{flex:1;height:auto;max-he
 .history-order-actions{display:flex;align-items:center;flex-wrap:wrap;gap:4px;min-width:10rem}
 .history-order-actions .attachment-control{margin:0;line-height:1.3}
 .history-order-actions .pacs-control{gap:4px}
-.history-order-actions .pacs-message{flex-basis:100%;font-size:11px;max-width:24rem}
 .history-order-table :is(th,td).history-order-select{width:3.5ch;min-width:0;text-align:center}
 .review-archive-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px;margin:6px 0 9px}
 .review-archive-toolbar :is(button,a){min-height:29px;padding:4px 8px;font-size:12px}
+.history-order-bulk button:is(.history-order-download,.pacs-button){min-height:26px;padding:3px 7px;font-size:11px;line-height:1.25}
 .review-archive-status{margin:0;font-size:12px;overflow-wrap:anywhere}
 #dataDialog .history-report-back{margin-inline-end:2px;border:1px solid var(--selection-border);background:var(--selection-bg);color:var(--green)}
 #dataDialog .history-report-back .icon{width:18px;height:18px}
 #dataDialog .history-report-back[hidden],#dataDialog:not([data-view="history"]) .history-report-back{display:none}
-.pacs-message:empty{display:none}
 .history-orders-footer{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:8px}
 .history-orders-footer>div[hidden]{display:none}
 #dataDialog.order-list-dialog{padding:20px}

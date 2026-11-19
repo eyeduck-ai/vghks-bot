@@ -36,3 +36,12 @@
 .pacs-control label{white-space:nowrap}
 .pacs-control select{max-width:18rem;min-width:0}
 .pacs-control .pacs-message{overflow-wrap:anywhere;max-width:36rem}
+.pacs-control .pacs-message:empty,.pacs-control.is-compact .pacs-message{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+.pacs-control.is-compact .pacs-message.is-visible{position:fixed;z-index:10;inset:auto 0 max(16px,env(safe-area-inset-bottom));margin-inline:auto;width:max-content;max-width:min(36rem,calc(100% - 32px));height:auto;overflow:visible;clip-path:none;pointer-events:none;padding:8px 12px;border:1px solid #cbdad7;border-radius:5px;background:#fff;color:#294c3b;font-size:12px;box-shadow:0 2px 8px #0002}
+.pacs-control.is-compact .pacs-message.is-visible.error{color:#8d2e2a;border-color:#dfb4ae}
+.pacs-control.is-compact .pacs-button{display:inline-flex;align-items:center;justify-content:center;gap:3px}
+.pacs-state-icon{display:inline-block;inline-size:1em;flex:none;text-align:center;font-weight:700}
+.pacs-button[data-state=busy]{background:#e9f2fa!important;border-color:#9db7d2!important;color:#274d70!important;opacity:1;cursor:wait}
+.pacs-button[data-state=sent]{background:#e7f3e8!important;border-color:#9ac0a4!important;color:#235236!important}
+.pacs-button[data-state=warning]{background:#fff4dd!important;border-color:#dec48d!important;color:#68490b!important}
+.pacs-button[data-state=error]{background:#fbece9!important;border-color:#dfb4ae!important;color:#8d2e2a!important}
