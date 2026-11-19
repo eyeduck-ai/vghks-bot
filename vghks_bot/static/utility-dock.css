@@ -1,5 +1,5 @@
 .utility-dock{position:fixed;right:max(12px,env(safe-area-inset-right));bottom:max(12px,env(safe-area-inset-bottom));display:grid;gap:7px;width:min(360px,calc(100vw - 24px));max-height:calc(100dvh - 100px);z-index:75;pointer-events:none}
-.utility-dock[hidden]{display:none}.utility-dock>*{pointer-events:auto;min-width:0}
+.utility-dock[hidden],.utility-dock>.utility-dock-slot-hidden{display:none}.utility-dock>*{pointer-events:auto;min-width:0}
 body.utility-dock-host #content{padding-bottom:calc(var(--utility-dock-height,0px) + 20px)}
 dialog.utility-dock-host:not(.utility-dock-active)::after{content:"";display:block;flex:none;height:var(--utility-dock-height,0px)}
 .utility-dock.utility-dock-modal{position:static;inset:auto;display:flex;align-items:flex-start;justify-content:flex-end;flex-wrap:wrap;flex:none;gap:6px 10px;width:100%;max-width:none;max-height:none;box-sizing:border-box;padding:7px 12px;border-top:1px solid #d8e3dc;background:#f8faf9;pointer-events:auto}

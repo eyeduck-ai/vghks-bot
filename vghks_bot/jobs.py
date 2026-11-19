@@ -13,6 +13,7 @@ from pathlib import Path
 from vghks_sdk import __version__ as sdk_version
 
 from . import __version__
+from .biometry import biometry_variant
 from .clinical_identity import classify_opd_registration
 from .connection_state import should_pause
 from .encoding import patient_name_display_profile
@@ -84,6 +85,7 @@ class Application:
                 "settings": self.settings.public(), "accounts": [a.public() for a in self.accounts.values()],
                 "data_dir": str(self.store.directory), "warnings": self.store.warnings,
                 "version": __version__, "sdk_version": sdk_version,
+                "biometry_variant": biometry_variant(),
                 "patient_name_profile": patient_name_display_profile(),
                 "library": self.store.library.stats(),
             }
@@ -531,6 +533,7 @@ class Application:
 
     def request_close(self):
         self.analysis.cataract_queue.close()
+        self.analysis.biometry.close()
         self.task_manager.cancel_pending()
         with self.lock:
             if self.closing:

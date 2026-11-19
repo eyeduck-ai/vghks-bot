@@ -1,0 +1,195 @@
+.cataract-biometry-review {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--paper, #fff);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+}
+
+.cataract-biometry-review-head,
+.cataract-biometry-review-footer {
+  padding: 8px 10px;
+}
+
+.cataract-biometry-review :is(h3, h4, p) {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.cataract-biometry-review h3 {
+  color: var(--green);
+  font-size: 14px;
+}
+
+.cataract-biometry-review h4 {
+  font-size: 13px;
+}
+
+.cataract-biometry-review-source,
+.cataract-biometry-review-title,
+.cataract-biometry-review-actions,
+.cataract-biometry-review-tabs {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 7px;
+}
+
+.cataract-biometry-review-title {
+  justify-content: space-between;
+}
+
+.cataract-biometry-review-source {
+  margin-top: 3px;
+}
+
+.cataract-biometry-review-source p {
+  flex: 1 1 9ch;
+}
+
+.cataract-biometry-review-tabs {
+  padding: 0 10px 6px;
+  border-bottom: 1px solid var(--line);
+}
+
+.cataract-biometry-review-tabs[hidden] {
+  display: none;
+}
+
+.cataract-biometry-review-tabs [aria-pressed="true"] {
+  color: var(--green);
+  background: var(--selection-bg);
+  border-color: var(--selection-border);
+}
+
+.cataract-biometry-review-fields {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 6px 10px;
+  scrollbar-gutter: stable;
+}
+
+.cataract-biometry-review-measurements {
+  width: 100%;
+  table-layout: fixed;
+  font-size: 11px;
+}
+
+.cataract-biometry-review-measurements :is(th, td) {
+  position: static;
+  padding: 4px;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.cataract-biometry-review-measurements thead th:first-child {
+  width: 30%;
+}
+
+.cataract-biometry-review-measurements tbody th {
+  background: transparent;
+  font-weight: 600;
+}
+
+.cataract-biometry-review-field {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: start;
+  gap: 3px;
+  min-width: 0;
+}
+
+.cataract-biometry-review-field :is(input, select) {
+  width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  padding: 3px 6px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.cataract-biometry-review-field .review-attention {
+  border-color: var(--red);
+  box-shadow: inset 0 0 0 1px var(--red);
+}
+
+.cataract-biometry-review-label,
+.cataract-biometry-review-warning {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.cataract-biometry-review-warning.is-attention {
+  color: var(--red);
+}
+
+.cataract-biometry-review-field .cataract-biometry-review-page {
+  align-self: start;
+}
+
+.cataract-biometry-review .cataract-biometry-review-page {
+  min-height: 24px;
+  padding: 2px 3px;
+  color: var(--green);
+  font-size: 11px;
+}
+
+.cataract-biometry-review-iol,
+.cataract-biometry-review-table {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.cataract-biometry-review-table {
+  padding: 7px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+}
+
+.cataract-biometry-review-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 7rem), 1fr));
+  align-items: start;
+  gap: 5px 7px;
+  min-width: 0;
+}
+
+.cataract-biometry-review-row {
+  min-width: 0;
+  margin: 0;
+  padding: 5px 7px 7px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+
+.cataract-biometry-review-row legend {
+  padding-inline: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.cataract-biometry-review-footer {
+  display: grid;
+  gap: 5px;
+  border-top: 1px solid var(--line);
+  background: var(--canvas);
+  border-radius: 0 0 6px 6px;
+}
+
+.cataract-biometry-review-footer label {
+  margin: 0;
+  font-size: 12px;
+}
+
+.cataract-biometry-review-actions > * {
+  font-size: 12px;
+}

@@ -6,7 +6,8 @@ window.FileCompare = (() => {
   const limit = 6;
   let account = "", mrn = "", patientName = "", items = [], activeIndex = 0, remoteCount = 0, feedbackTimer = 0, linkedFrame = null;
   let remoteDigests = new Set(), remoteItems = [], inlineHost = null, inlineActive = 0, inlineActiveDigest = "";
-  let numericKey = "", clearing = null, selectionRevision = 0, compareTrigger = null;
+  let detailScope = "", detailRead = null, detailChoice = "", railCollapsed = false;
+  let clearing = null, selectionRevision = 0, compareTrigger = null;
   let trayNode = null, trayGroupNode = null, feedbackNode = null, outpatient = true;
   const embedded = window.parent !== window;
   const make = (tag, label, cls) => {
@@ -63,8 +64,8 @@ window.FileCompare = (() => {
     selectionRevision++;
     items = [];
     activeIndex = 0;
-    numericKey = "";
-    document.getElementById("fileCompareNumeric")?.replaceChildren();
+    detailScope = ""; detailRead = null; detailChoice = ""; railCollapsed = false;
+    document.getElementById("fileCompareDetailContent")?.replaceChildren();
     clearPanes(document.getElementById("fileComparePanes"));
     document.getElementById("fileCompareTabs")?.replaceChildren();
     document.getElementById("fileCompareDialog")?.close();
@@ -199,21 +200,11 @@ window.FileCompare = (() => {
     titleGroup.append(title, patient);
     const count = make("span", "", "file-compare-count");
     count.id = "fileCompareCount";
-    const numericToggle = button("收合數值", () => {
-      const workspace = document.getElementById("fileCompareWorkspace");
-      const closed = workspace.classList.toggle("numeric-closed");
-      numericToggle.textContent = closed ? "展開數值" : "收合數值";
-      numericToggle.setAttribute("aria-expanded", String(!closed));
-    });
-    numericToggle.id = "fileCompareNumericToggle";
-    numericToggle.setAttribute("aria-controls", "fileCompareNumeric");
-    numericToggle.setAttribute("aria-expanded", "true");
-    numericToggle.hidden = true;
     const close = button("×", () => dialog.close());
     close.setAttribute("aria-label", "關閉檢查檔案比較");close.title="關閉";
     const clearAll = button("清除比較", () => {void requestClear();});
     clearAll.id = "fileCompareClearAll";
-    heading.append(titleGroup, count, numericToggle, clearAll, close);
+    heading.append(titleGroup, count, clearAll, close);
     dialog.setAttribute("aria-describedby", "fileComparePatient");
     const tabs = make("div", undefined, "file-compare-tabs");
     tabs.id = "fileCompareTabs";
@@ -223,14 +214,38 @@ window.FileCompare = (() => {
     panes.id = "fileComparePanes";
     const workspace = make("div", undefined, "file-compare-workspace");
     workspace.id = "fileCompareWorkspace";
-    const numeric = make("aside", undefined, "file-compare-numeric");
-    numeric.id = "fileCompareNumeric";
-    numeric.setAttribute("aria-label", "歷年眼科數值");
-    numeric.hidden = true;
-    workspace.append(numeric, panes);
+    const rail = make("aside", undefined, "file-compare-rail");
+    rail.id = "fileCompareDetailRail";
+    rail.setAttribute("aria-label", "病人資料");
+    rail.hidden = true;
+    const railHeading = make("div", undefined, "file-compare-rail-heading");
+    const choices = make("div", undefined, "file-compare-detail-choices");
+    choices.id = "fileCompareDetailChoices";
+    choices.setAttribute("role", "group");
+    choices.setAttribute("aria-label", "比較中顯示的病人資料");
+    choices.hidden = true;
+    for (const [mode, label, id] of [["numeric", "眼科數值", "fileCompareNumeric"], ["soap", "SOAP", "fileCompareSoap"]]) {
+      const choice = button(label, () => {detailChoice = mode; showDetail(mode);});
+      choice.dataset.detailMode = mode;
+      choice.setAttribute("aria-controls", id);
+      choices.append(choice);
+    }
+    const content = make("div", undefined, "file-compare-detail-content");
+    content.id = "fileCompareDetailContent";
+    const railToggle = button("", () => {railCollapsed = !railCollapsed; syncDetailCollapse();});
+    railToggle.className = "file-compare-rail-toggle";
+    railToggle.id = "fileCompareRailToggle";
+    railToggle.setAttribute("aria-controls", rail.id);
+    const arrow = make("span", undefined, "sidebar-arrow");
+    arrow.setAttribute("aria-hidden", "true");
+    railToggle.append(arrow);
+    railToggle.hidden = true;
+    railHeading.append(choices, railToggle);
+    rail.append(railHeading, content);
+    workspace.append(rail, panes);
     dialog.append(heading, tabs, workspace);
     dialog.addEventListener("close", () => {
-      numericKey = "";render();
+      detailRead = null;render();
       const trigger = compareTrigger;compareTrigger = null;
       // Moving the dock back into an iframe/reader can interrupt native focus restoration.
       if (trigger?.isConnected && !trigger.disabled && !trigger.hidden &&
@@ -281,30 +296,76 @@ window.FileCompare = (() => {
       dialog.showModal();
     }
     render();
-    void loadNumeric();
+    void loadPatientDetails();
   }
-  async function loadNumeric() {
+  function syncDetailCollapse() {
+    const toggle = document.getElementById("fileCompareRailToggle");
+    const rail = document.getElementById("fileCompareDetailRail");
+    const label = railCollapsed ? "展開病人資料" : "收合病人資料";
+    toggle.setAttribute("aria-expanded", String(!railCollapsed));
+    toggle.setAttribute("aria-label", label);
+    toggle.title = label;
+    const heading = railCollapsed
+      ? document.getElementById("fileCompareDialog").querySelector(".file-compare-heading")
+      : rail.firstElementChild;
+    const restoreFocus = document.activeElement === toggle;
+    if (toggle.parentElement !== heading) heading.insertBefore(toggle, railCollapsed ? heading.firstElementChild : null);
+    rail.hidden = toggle.hidden || railCollapsed;
+    if (restoreFocus && !toggle.hidden && document.activeElement !== toggle) toggle.focus({preventScroll:true});
+  }
+  function showDetail(mode) {
+    document.getElementById("fileCompareNumeric").hidden = mode !== "numeric";
+    document.getElementById("fileCompareSoap").hidden = mode !== "soap";
+    for (const choice of document.getElementById("fileCompareDetailChoices").children)
+      choice.setAttribute("aria-pressed", String(choice.dataset.detailMode === mode));
+  }
+  async function loadPatientDetails() {
     if (embedded) return;
     const frame = document.getElementById("cataractFrame");
-    const visible = frame?.hasAttribute("src") && !frame.hidden &&
+    const visible = frame?.hasAttribute("src") && !frame.hidden && frame.dataset.cohort &&
       !document.getElementById("modulePage")?.hidden && frame.dataset.account === account;
-    const toggle = document.getElementById("fileCompareNumericToggle");
-    const rail = document.getElementById("fileCompareNumeric");
-    toggle.hidden = !visible;
-    rail.hidden = !visible;
-    if (!visible) return;
+    document.getElementById("fileCompareRailToggle").hidden = !visible;
+    if (!visible) {detailRead = null; syncDetailCollapse(); return;}
     const key = [account, frame.dataset.cohort, mrn].join(":");
-    if (key === numericKey) return;
-    numericKey = key;
-    rail.replaceChildren(make("p", "正在讀取已存數值…", "small muted"));
+    if (key !== detailScope) {
+      detailScope = key;
+      detailChoice = "";
+      railCollapsed = false;
+    }
+    syncDetailCollapse();
+    if (detailRead?.key === key) return;
+    const read = detailRead = {key};
+    const choices = document.getElementById("fileCompareDetailChoices");
+    const content = document.getElementById("fileCompareDetailContent");
+    const status = make("p", "正在讀取已存病人資料…", "small muted file-compare-detail-status");
+    status.setAttribute("role", "status");
+    choices.hidden = true;
+    content.replaceChildren(status);
     try {
       const data = await api("/analysis/results", {cohort_id: frame.dataset.cohort,
         mrn, module: "cataract", start: "", end: ""});
-      if (numericKey !== key || data.member.account_id !== account || data.member.mrn !== mrn) return;
-      rail.replaceChildren(window.CataractNumeric.create(data.numeric || [],
+      if (detailRead !== read || !document.getElementById("fileCompareDialog").open) return;
+      if (data.member?.account_id !== account || data.member?.mrn !== mrn)
+        throw new Error("已存資料與目前比較病人不符。");
+      const numeric = make("div", undefined, "file-compare-detail-pane");
+      numeric.id = "fileCompareNumeric";
+      numeric.append(window.CataractNumeric.create(data.numeric || [],
         {eye:"both", expanded:new Set(window.CataractNumeric.exams)}));
+      const soap = make("section", undefined, "file-compare-detail-pane soap-record");
+      soap.id = "fileCompareSoap";
+      soap.append(make("h3", "最新眼科門診 SOAP"));
+      const record = data.latest_soap?.record;
+      if (record) {
+        const metadata = [record.date, record.section, record.case_no].filter(Boolean).join(" · ");
+        if (metadata) soap.append(make("p", metadata, "caption"));
+        soap.append(window.SOAPView.create(record));
+      } else soap.append(make("p", "尚無已存眼科 SOAP。", "small muted"));
+      content.replaceChildren(numeric, soap);
+      // Prefer the same notion of usable data as the shared numeric renderer.
+      showDetail(detailChoice || (numeric.querySelector(".cataract-numeric-group") ? "numeric" : "soap"));
+      choices.hidden = false;
     } catch (error) {
-      if (numericKey === key) rail.replaceChildren(make("p", error.message || "無法讀取已存數值。", "small muted"));
+      if (detailRead === read) status.textContent = error.message || "無法讀取已存病人資料。";
     }
   }
   function move(index, delta) {
@@ -555,6 +616,6 @@ window.FileCompare = (() => {
     if (event.data.error) announce(event.data.error);
   });
   document.addEventListener("DOMContentLoaded", mount);
-  function clear(){selectionRevision++;items=[];remoteItems=[];remoteDigests.clear();remoteCount=0;numericKey="";document.getElementById("fileCompareDialog")?.close();render();if(embedded){renderInline();changed();}}
+  function clear(){selectionRevision++;items=[];remoteItems=[];remoteDigests.clear();remoteCount=0;detailRead=null;document.getElementById("fileCompareDialog")?.close();render();if(embedded){renderInline();changed();}}
   return {add, context, visibility, count, has, remove:removeDigest, open, receive, renderInline, clear, requestClear, patient:()=>mrn};
 })();

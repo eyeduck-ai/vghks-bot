@@ -131,7 +131,8 @@ function workflow() {
   c.window.ToolWorkspace = {currentKind: () => "retina", navigate: async tool => {calls.push("tool:" + tool);c.page = "tool";}};
   ui.init({});ui.render(c.root, c.account);
   const start = source.indexOf("function rememberAccountView(){"), end = source.indexOf("async function loadAccount(key){", start);
-  vm.runInContext(source.slice(start, end), c);
+  const flush = source.slice(source.indexOf("async function flushCataractReviews("), source.indexOf("async function restoreCataract("));
+  vm.runInContext(flush + source.slice(start, end), c);
   return {c, get, calls, notices};
 }
 async function lifecycleTests() {
@@ -151,16 +152,17 @@ async function lifecycleTests() {
   const fresh = workflow();await fresh.c.enter("B");assert.equal(fresh.c.page, "patients", "a fresh page must forget navigation history");
 }
 async function failureTests() {
-  for (const failure of ["notes", "draft", "activation", "password"]) {
-    const {c, calls} = workflow();
+  for (const failure of ["notes", "biometry", "draft", "activation", "password"]) {
+    const {c, calls, get} = workflow();
     if (failure === "notes") c.window.ReviewNotesUI.flushAll = async () => false;
+    if (failure === "biometry") get("cataractFrame").contentWindow = {CataractBiometry: {flushAll: async () => false}};
     if (failure === "draft") c.api = async () => {throw new Error("synthetic disk failure");};
     if (failure === "activation") c.ra = async () => ({status: "unavailable", message: "synthetic network failure"});
     if (failure === "password") c.ra = async () => ({status: "needs_password"});
     if (failure === "password") await c.activateAccount("D");
     else await assert.rejects(c.activateAccount("B"));
     assert.equal(c.account, "A");assert.equal(c.page, "library");assert.equal(c.accountTransition, false);
-    if (["notes", "draft"].includes(failure)) assert.ok(!calls.includes("/accounts/activate"));
+    if (["notes", "biometry", "draft"].includes(failure)) assert.ok(!calls.includes("/accounts/activate"));
     if (failure === "password") assert.ok(calls.some(item => Array.isArray(item) && item[0] === "password"));
   }
   const {c, calls} = workflow(), gate = deferred();
@@ -169,6 +171,11 @@ async function failureTests() {
   await duplicate;assert.equal(calls.length, 0);gate.resolve(true);await first;
   assert.equal(calls.filter(value => value === "/accounts/activate").length, 1);
   assert.equal(c.account, "B");
+  const cataract = workflow(), reviewSave = deferred();
+  cataract.get("cataractFrame").contentWindow = {CataractBiometry: {flushAll: () => reviewSave.promise}};
+  const switching = cataract.c.activateAccount("B");
+  await tick();assert.deepEqual(cataract.calls, ["notes"], "account switch must wait for the local cataract review");
+  reviewSave.resolve(true);await switching;assert.equal(cataract.c.account, "B");
   const stale = workflow(), note = deferred();
   stale.c.window.ReviewNotesUI.flushAll = () => note.promise;
   const pending = stale.c.activateAccount("B");stale.c.epoch++;stale.c.account = "C";note.resolve(true);

@@ -37,10 +37,19 @@ class CleanupTests(unittest.TestCase):
         removed = [self.file(name) for name in (
             ".build/pyinstaller/cache", "build/cache", ".ruff_cache/cache",
             "vghks_bot/__pycache__/cached.pyc", ".playwright-cli/page.yml",
-            "output/playwright/synthetic.png", "dist/VGHKS-bot-v6.6.33-windows-x64.zip")]
+            "output/playwright/synthetic.png", "dist/VGHKS-bot-v6.6.33-windows-x64.zip",
+            "dist/VGHKS-bot-lite-v6.6.34-windows-x64.zip", "dist/VGHKS-bot-basic-v6.6.35-windows-x64.zip",
+            "dist/VGHKS-bot-pdf-v6.6.36-windows-x64.zip", "dist/VGHKS-bot-ocr-v6.6.37-windows-x64.zip")]
         kept = [self.file(name) for name in (
             ".build/ci/report.json", "dist/VGHKS-bot-v6.6.48-windows-x64.zip",
-            "dist/VGHKS-bot-v6.6.49-windows-x64.zip", "dist/VGHKS-bot.exe",
+            "dist/VGHKS-bot-v6.6.49-windows-x64.zip", "dist/VGHKS-bot.exe", "dist/VGHKS-bot-lite.exe",
+            "dist/VGHKS-bot-lite-v6.6.45-windows-x64.zip", "dist/VGHKS-bot-lite-v6.6.47-windows-x64.zip",
+            "dist/VGHKS-bot-basic.exe", "dist/VGHKS-bot-basic-v6.6.44-windows-x64.zip",
+            "dist/VGHKS-bot-basic-v6.6.46-windows-x64.zip",
+            "dist/VGHKS-bot-pdf.exe", "dist/VGHKS-bot-pdf-v6.6.48-windows-x64.zip",
+            "dist/VGHKS-bot-pdf-v6.6.49-windows-x64.zip",
+            "dist/VGHKS-bot-ocr.exe", "dist/VGHKS-bot-ocr-v6.6.48-windows-x64.zip",
+            "dist/VGHKS-bot-ocr-v6.6.49-windows-x64.zip",
             "dist/SHA256SUMS.txt", "dist/incident.har", "dist/VGHKS-debug.zip",
             "output/keep.txt", ".venv/keep.txt", ".local/keep.txt",
             "VGHKS-bot-data/accounts/clinical.sqlite3", "vghks_bot/source.py")]

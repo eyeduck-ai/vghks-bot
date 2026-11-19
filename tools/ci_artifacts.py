@@ -11,6 +11,7 @@ import json
 import math
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -22,12 +23,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from tools.release_variants import SOURCE_REPORT, VARIANTS, digest, verify_report  # noqa: E402
 from tools.test_suite import plan_shards  # noqa: E402
 
 WORKFLOW = ".github/workflows/windows.yml"
-REPORT_NAMES = (
-    "source-selftest.json", "exe-selftest.json", "bundle-verification.json",
-)
+RELEASE_METADATA = {"SHA256SUMS.txt", "RELEASE_NOTES.md"}
 
 
 def read_json(path):
@@ -37,10 +37,6 @@ def read_json(path):
 def write_json(path, value):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
-
-
-def digest(path):
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def git_value(*arguments):
@@ -90,9 +86,8 @@ def collect_tests(directory, count):
         timings.update(measured)
     if completed != set(expected):
         raise ValueError("Test shards do not cover the complete suite")
-    for name in ("source-selftest.json",):
-        if read_json(directory / name).get("ok") is not True:
-            raise ValueError("Failed source self-test: " + name)
+    if read_json(directory / SOURCE_REPORT).get("ok") is not True:
+        raise ValueError("Failed source self-test: " + SOURCE_REPORT)
     summary = {"ok": True, "tests": len(completed), "shards": count, "shard_seconds": seconds,
                "test_ids_sha256": hashlib.sha256("\n".join(expected).encode()).hexdigest(),
                "plan_sha256": plan["sha256"]}
@@ -107,12 +102,11 @@ def collect_tests(directory, count):
 
 
 def release_files(version):
-    return {"VGHKS-bot.exe",
-            f"VGHKS-bot-v{version}-windows-x64.zip", "SHA256SUMS.txt", "RELEASE_NOTES.md"}
+    return RELEASE_METADATA | {name for variant in VARIANTS for name in (variant.executable, variant.archive(version))}
 
 
 def verify_files(directory, version):
-    expected = release_files(version) - {"SHA256SUMS.txt", "RELEASE_NOTES.md"}
+    expected = release_files(version) - RELEASE_METADATA
     sums = {}
     for line in (directory / "SHA256SUMS.txt").read_text(encoding="utf-8").splitlines():
         match = re.fullmatch(r"([a-f0-9]{64})  ([A-Za-z0-9_.-]+)", line)
@@ -121,23 +115,23 @@ def verify_files(directory, version):
         sums[match[2]] = match[1]
     if set(sums) != expected or any(digest(directory / name) != value for name, value in sums.items()):
         raise ValueError("Release file names or checksums differ")
-    with zipfile.ZipFile(directory / f"VGHKS-bot-v{version}-windows-x64.zip") as bundle:
-        if len(bundle.namelist()) != len(set(bundle.namelist())):
-            raise ValueError("Duplicate ZIP entries")
-        if any("VGHKS-calendar-monitor.exe" in name or name.startswith("validation/monitor-") for name in bundle.namelist()):
-            raise ValueError("Monitor artifacts belong in the independent repository")
-        for exe in ("VGHKS-bot.exe",):
-            if hashlib.sha256(bundle.read(exe)).hexdigest() != sums[exe]:
-                raise ValueError("ZIP executable differs from the verified release executable")
-        for name in REPORT_NAMES:
-            report = json.loads(bundle.read("validation/" + name))
-            if report.get("ok") is not True:
-                raise ValueError("Failed packaged validation: " + name)
-            if "bundle-verification" in name:
-                exe = "VGHKS-bot.exe"
-                if report.get("credentials_blank") is not True or report.get("sha256") != sums[exe]:
-                    raise ValueError("Packaged executable validation differs: " + name)
-    return {name: digest(directory / name) for name in sorted(release_files(version))}
+    for variant in VARIANTS:
+        with zipfile.ZipFile(directory / variant.archive(version)) as bundle:
+            names = bundle.namelist()
+            if len(names) != len(set(names)):
+                raise ValueError("Duplicate ZIP entries")
+            if any("VGHKS-calendar-monitor.exe" in name or name.startswith("validation/monitor-") for name in names):
+                raise ValueError("Monitor artifacts belong in the independent repository")
+            exe = variant.executable
+            if {name for name in names if name.lower().endswith(".exe")} != {exe}:
+                raise ValueError("ZIP executable names differ from the release variant")
+            with bundle.open(exe) as stream:
+                if hashlib.file_digest(stream, "sha256").hexdigest() != sums[exe]:
+                    raise ValueError("ZIP executable differs from the verified release executable")
+            for name in variant.reports:
+                report = json.loads(bundle.read("validation/" + name))
+                verify_report(report, name, variant, sums[exe])
+    return {**sums, **{name: digest(directory / name) for name in sorted(RELEASE_METADATA)}}
 
 
 def record_build(directory):
@@ -193,7 +187,8 @@ def extract_release(archive_path, directory, version):
         if set(names) != allowed or len(names) != len(allowed):
             raise ValueError("Unexpected release artifact contents")
         for name in allowed:
-            (directory / name).write_bytes(archive.read(name))
+            with archive.open(name) as source, (directory / name).open("wb") as output:
+                shutil.copyfileobj(source, output)
 
 
 def download_release(directory, tag, wait_seconds=0):
@@ -231,7 +226,8 @@ def download_release(directory, tag, wait_seconds=0):
     files = verify_files(directory, version)
     info = read_json(directory / "BUILD_INFO.json")
     validate_build_info(info, run, repository, commit, tree, version, files)
-    print(f"Verified {tag}: exact main commit {commit}, run {run['id']}, {info['test_summary']['tests']} tests and frozen main EXE")
+    print(f"Verified {tag}: exact main commit {commit}, run {run['id']}, "
+          f"{info['test_summary']['tests']} tests and {len(VARIANTS)} frozen EXEs")
 
 
 def main():

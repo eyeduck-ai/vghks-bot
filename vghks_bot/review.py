@@ -225,18 +225,21 @@ class Review:
         pointer = self.db.get("draft", "handoff:" + module)
 
         def update():
-            with self.app.store.library.batch():
-                current = self.db.get("draft", "handoff:" + module)
-                if current["cohort_id"] != pointer["cohort_id"]:
-                    raise ValueError("待處理清單已變更，請重新整理。")
-                group = self.db.get("set", pointer["set_id"])
-                if removed - {member["mrn"] for member in group["members"]}:
-                    raise ValueError("病人不在此待處理清單。")
-                group["members"] = [member for member in group["members"] if member["mrn"] not in removed]
-                group = self.db.save("set", group)
-                cohort = self.app.analysis.store.document("analysis_cohorts", pointer["cohort_id"])
-                cohort.update(members=self._cohort_members(group), updated_at=timestamp())
-                self.app.analysis.store.save_document("analysis_cohorts", cohort)
+            with self.app.lock:
+                with self.app.store.library.batch():
+                    current = self.db.get("draft", "handoff:" + module)
+                    if current["cohort_id"] != pointer["cohort_id"]:
+                        raise ValueError("待處理清單已變更，請重新整理。")
+                    group = self.db.get("set", pointer["set_id"])
+                    if removed - {member["mrn"] for member in group["members"]}:
+                        raise ValueError("病人不在此待處理清單。")
+                    group["members"] = [member for member in group["members"] if member["mrn"] not in removed]
+                    group = self.db.save("set", group)
+                    cohort = self.app.analysis.store.document("analysis_cohorts", pointer["cohort_id"])
+                    cohort.update(members=self._cohort_members(group), updated_at=timestamp())
+                    self.app.analysis.store.save_document("analysis_cohorts", cohort)
+                if module == "cataract":
+                    self.app.analysis.biometry.invalidate(mrns=removed, cohort=cohort["id"])
                 return public_document({"worklist": group, "cohort": cohort,
                         "focus_mrn": group["members"][0]["mrn"] if group["members"] else ""})
 

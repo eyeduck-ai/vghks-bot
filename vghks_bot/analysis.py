@@ -11,6 +11,7 @@ from datetime import date
 from .analysis_fetch import PatientCollector, RunSessions, order_identity, validate_patient
 from .analysis_numeric import MODULES, term_match
 from .analysis_store import AnalysisStore, digest, identifier
+from .cataract_biometry import CataractBiometry
 from .connection_state import should_pause
 from .demographics import merge_demographics, without_profile_contacts
 from .google_sheets import SheetError, SheetUncertain
@@ -42,6 +43,7 @@ class Analysis:
         from .cataract_queue import CataractQueue
 
         self.cataract_queue = CataractQueue(self)
+        self.biometry = CataractBiometry(self)
 
     # Compatibility for callers that configure analysis clients in offline tests.
     @property
@@ -82,6 +84,7 @@ class Analysis:
             "cohorts/delete": self.delete_cohort, "start": self.start, "results": self.results,
             "raw": self.raw_data, "cataract/status": self.cataract_status,
             "cataract/queue": self.cataract_queue.handle,
+            "cataract/biometry": self.biometry.handle,
             "delete": self.delete_data, "google": lambda _: self.google.public(),
             "google/save": self.google.save, "google/remove": lambda _: self.google.remove_key(),
             "google/test": self.test_google,
@@ -217,8 +220,10 @@ class Analysis:
             name = values.get("name", "").strip()
             if not name or len(name) > 100:
                 raise ValueError("分析清單名稱需為 1–100 字。")
+            previous = {}
             if values.get("id"):
                 cohort = self.store.document("analysis_cohorts", values["id"])
+                previous = {member["mrn"]: member.get("account_id") for member in cohort["members"]}
                 assignments = values.get("assignments", {})
                 if not isinstance(assignments, dict):
                     raise ValueError("抓取帳號格式不正確。")
@@ -240,7 +245,12 @@ class Analysis:
                         member["account_id"] = account.id
             cohort.update(name=name, updated_at=timestamp(),
                           members=[without_profile_contacts(member) for member in cohort["members"]])
-            return public_document(self.store.save_document("analysis_cohorts", cohort))
+            saved = self.store.save_document("analysis_cohorts", cohort)
+            assignments = {member["mrn"]: member["account_id"] for member in saved["members"]}
+            revoked = {mrn for mrn, account in previous.items() if mrn not in assignments or assignments[mrn] != account}
+            if revoked:
+                self.biometry.invalidate(mrns=revoked, cohort=saved["id"])
+            return public_document(saved)
 
     def delete_cohort(self, values):
         key = identifier(values.get("id"))
@@ -248,6 +258,7 @@ class Analysis:
             if any(r.get("cohort_id") == key and r.get("status") in ACTIVE for r in self.store.documents("analysis_runs")):
                 raise ValueError("請先停止此清單的分析。")
             self.cataract_queue.discard(key)
+            self.biometry.invalidate(cohort=key)
             with self.store.library.connect() as db:
                 db.execute("DELETE FROM analysis_cohorts WHERE id=?", (key,))
         return {"ok": True}
@@ -381,12 +392,15 @@ class Analysis:
         run.update({k: copy.deepcopy(state.data[k]) for k in ("status", "message", "counts", "issues")})
         self.store.save_document("analysis_runs", run)
 
-    def member(self, values):
+    def cohort_member(self, values):
         cohort = self.store.document("analysis_cohorts", values.get("cohort_id"))
         member = next((m for m in cohort["members"] if m["mrn"] == values.get("mrn")), None)
         if not member:
             raise ValueError("病人不在此分析清單。")
-        return public_document(self.member_demographics(member))
+        return member
+
+    def member(self, values):
+        return public_document(self.member_demographics(self.cohort_member(values)))
 
     def member_demographics(self, member):
         review = getattr(self.app, "review", None)

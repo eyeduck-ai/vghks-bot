@@ -34,6 +34,10 @@ def step_category(key, kind=""):
     return "analysis"
 
 
+def biometry_sources(requested, categories):
+    return {"orders", "scans"} if "analysis" in requested else categories & {"orders", "scans"}
+
+
 def profile_copies(db, mrns):
     """Find private profile fields duplicated into older workbench snapshots."""
     selected, known, documents, items = set(mrns), set(), [], []
@@ -123,11 +127,14 @@ class LibraryData:
             lists = [dict(row) for row in db.execute("SELECT * FROM list_cache WHERE (account,day) IN "
                 "(SELECT json_extract(value,'$.account'),json_extract(value,'$.day') FROM json_each(?))", (json.dumps(list_keys),))]
             records = [dict(row) for row in db.execute("SELECT DISTINCT mrn FROM records WHERE " + where, (packed,))]
+            reviews = [dict(row) for row in db.execute(
+                "SELECT mrn,source,document_id,digest,capture_id,revision FROM cataract_pdf_review WHERE "
+                + where + " ORDER BY mrn,source,document_id,digest", (packed,))]
             has_documents = db.execute("SELECT 1 FROM sqlite_master WHERE name='bot_documents'").fetchone()
             documents = [dict(row) for row in db.execute("SELECT * FROM bot_documents WHERE kind IN "
                 "('profile','registrations','visits','numeric') AND coalesce(nullif(json_extract(payload,'$.mrn'),''),id) "
                 "IN (SELECT value FROM json_each(?)) ORDER BY kind,id", (packed,))] if has_documents else []
-        return steps, versions, refs, assets, lists, records, documents
+        return steps, versions, refs, assets, lists, records, documents, reviews
 
     def read(self, values):
         from .library_inventory import read
@@ -149,8 +156,8 @@ class LibraryData:
         if any(not isinstance(row, dict) or not isinstance(row.get("account"), str)
                or not isinstance(row.get("day"), str) for row in list_keys):
             raise ValueError("請選擇門診掛號清單。")
-        steps, versions, refs, assets, lists, records, documents = self._snapshot(mrns, list_keys)
-        known = {row["mrn"] for row in steps + versions + refs + records}
+        steps, versions, refs, assets, lists, records, documents, reviews = self._snapshot(mrns, list_keys)
+        known = {row["mrn"] for row in steps + versions + refs + records + reviews}
         known.update(json.loads(row["payload"]).get("mrn") or row["id"] for row in documents)
         copies = []
         if "profile" in selected and getattr(self.app, "review", None):
@@ -170,6 +177,8 @@ class LibraryData:
                 if row["mrn"] in mrns and step_category(row["key"], kinds.get((row["mrn"], row["key"]), "")) in categories}
         removed_steps = [row for row in steps if (row["mrn"], row["key"]) in keys]
         removed_versions = [row for row in versions if (row["mrn"], row["key"]) in keys]
+        sources = biometry_sources(selected, categories)
+        removed_reviews = [row for row in reviews if row["source"] in sources]
         removed_documents = []
         for row in documents:
             raw = json.loads(row["payload"])
@@ -188,10 +197,11 @@ class LibraryData:
             picked_lists.append(allowed_lists[(row["account"], row["day"])])
         fingerprint = hashlib.sha256(encoded([str(self.library.path), sorted(set(mrns)), sorted(set(selected)),
                                              sorted(categories), sorted(keys), removed_steps, removed_versions,
-                                             removed_documents, refs, picked_lists, copies]).encode()).hexdigest()
+                                             removed_documents, refs, picked_lists, copies, removed_reviews]).encode()).hexdigest()
         return {"mrns": sorted(set(mrns)), "categories": sorted(categories),
                 "requested_categories": sorted(set(selected)), "cascaded": sorted(categories - set(selected)),
-                "records": sum(row["kind"] != "numeric_structured" for row in removed_steps) + len(removed_documents) + len(copies),
+                "records": (sum(row["kind"] != "numeric_structured" for row in removed_steps)
+                            + len(removed_documents) + len(copies) + len(removed_reviews)),
                 "versions": len(removed_versions),
                 "attachments": len(freed), "attachment_bytes": sum(assets.get(sha, {}).get("size", 0) for sha in freed),
                 "lists": [{"account": row["account"], "day": row["day"]} for row in picked_lists],
@@ -216,6 +226,8 @@ class LibraryData:
             self.app.analysis.store.invalidate_previews(selected)
             resources = getattr(self.app, "resources", None)
             with resources.invalidation(selected, categories) if resources else nullcontext(), self.library.connect() as db:
+                sources = biometry_sources(preview["requested_categories"], categories)
+                self.app.analysis.biometry.invalidate(mrns=selected, sources=sources)
                 if "analysis" in categories:
                     purge_sources(db, mrns=selected)
                     if db.execute("SELECT 1 FROM sqlite_master WHERE name='surgery_drafts'").fetchone():
@@ -223,6 +235,9 @@ class LibraryData:
                                    "IN (SELECT value FROM json_each(?))", (json.dumps(sorted(selected)),))
                 packed = json.dumps(sorted(selected))
                 scope = "mrn IN (SELECT value FROM json_each(?))"
+                if sources:
+                    db.execute("DELETE FROM cataract_pdf_review WHERE " + scope +
+                               " AND source IN (SELECT value FROM json_each(?))", (packed, json.dumps(sorted(sources))))
                 keys = [(row["mrn"], row["key"]) for row in db.execute("SELECT * FROM analysis_steps WHERE " + scope, (packed,))
                         if row["mrn"] in selected and step_category(row["key"], row["kind"]) in categories]
                 known_kinds = {(row["mrn"], row["key"]): row["kind"] for row in db.execute("SELECT * FROM analysis_steps WHERE " + scope, (packed,))}

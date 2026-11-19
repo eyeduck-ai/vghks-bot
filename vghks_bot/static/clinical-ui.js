@@ -61,10 +61,11 @@ window.ClinicalUI = (() => {
     const seconds = elapsed({startedAt});
     area.append(icon, text, seconds);area.dispose = () => seconds.dispose();return area;
   }
-  function pdfURL(path) {
+  function pdfURL(path, page) {
     const url = new URL(path, location.href);
     const options = new URLSearchParams(url.hash.slice(1));
     options.set("navpanes", "0"); options.set("toolbar", "1");
+    if (Number.isSafeInteger(page) && page > 0) options.set("page", String(page));
     url.hash = options.toString();
     return url.href;
   }

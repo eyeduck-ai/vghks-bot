@@ -1,0 +1,222 @@
+.cataract-biometry {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px 8px;
+  margin: 4px 0 6px;
+}
+
+.cataract-biometry > .cataract-biometry-launcher {
+  min-height: 26px;
+  padding: 2px 7px;
+  border-color: var(--line);
+  color: var(--green);
+  font-size: 12px;
+}
+
+.cataract-biometry-workspace {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.cataract-biometry-heading, .cataract-biometry-actions, .cataract-biometry-source-tools, .cataract-biometry-job-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+
+.cataract-biometry-heading {
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.cataract-biometry-heading h2 {
+  flex: 1;
+  min-width: min(12rem, 100%);
+  color: var(--green);
+  font-size: 1rem;
+  overflow-wrap: anywhere;
+}
+
+.cataract-biometry-workspace :is(h2, h3, h4, label, p) {
+  margin: 0;
+}
+
+.cataract-biometry-workspace [hidden] {
+  display: none;
+}
+
+.cataract-biometry-workspace button {
+  min-height: 32px;
+  padding: 4px 9px;
+  font-size: 12px;
+}
+
+.cataract-biometry-workspace-review {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  gap: 12px;
+  height: max(26rem, calc(100dvh - 118px));
+}
+
+.cataract-biometry-selection, .cataract-biometry-source {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--paper, white);
+}
+
+.cataract-biometry-selection h4, .cataract-biometry-source h3 {
+  color: var(--green);
+}
+
+.cataract-biometry-source {
+  min-height: 0;
+}
+
+.cataract-biometry-source h3 {
+  font-size: 0.875rem;
+  overflow-wrap: anywhere;
+}
+
+.cataract-biometry-source-tools select {
+  flex: 1 1 14rem;
+  min-width: 0;
+}
+
+.cataract-biometry-source-preview, .cataract-biometry-workspace-fields {
+  min-width: 0;
+  min-height: 0;
+}
+
+.cataract-biometry-source-preview {
+  flex: 1;
+}
+
+.cataract-biometry-source-preview iframe {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+.cataract-biometry-workspace-fields {
+  display: flex;
+  flex-direction: column;
+}
+
+.cataract-biometry-workspace-fields > .cataract-biometry-review {
+  flex: 1;
+}
+
+.cataract-biometry-catalog-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 8px;
+}
+
+.cataract-biometry-catalog-tools label {
+  flex: 0 1 auto;
+}
+
+.cataract-biometry-catalog-tools :is(select, input[type="search"]) {
+  min-height: 32px;
+  padding: 3px 7px;
+  font-size: 14px;
+}
+
+.cataract-biometry-catalog-tools input[type="search"] {
+  flex: 1 1 10rem;
+}
+
+.cataract-biometry-catalog {
+  max-height: 58dvh;
+  overflow: auto;
+  scrollbar-gutter: stable;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.cataract-biometry-catalog:empty {
+  display: none;
+}
+
+.cataract-biometry-document {
+  padding: 6px 9px;
+  border-bottom: 1px solid var(--line);
+}
+
+.cataract-biometry-document:last-child {
+  border-bottom: 0;
+}
+
+.cataract-biometry-document-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.cataract-biometry-document-info label {
+  overflow-wrap: anywhere;
+}
+
+.cataract-biometry-document-info > span {
+  padding-inline-start: 25px;
+}
+
+.cataract-biometry-document:has(.cataract-biometry-document-info input:checked) {
+  background: var(--soft);
+}
+
+.cataract-biometry-pages {
+  padding: 6px 0 2px;
+}
+
+.cataract-biometry-page-group {
+  border: 0;
+  margin: 0 0 6px;
+  padding: 0;
+  min-width: 0;
+}
+
+.cataract-biometry-page-group legend {
+  font-size: 12px;
+  margin-bottom: 5px;
+}
+
+.cataract-biometry-page-numbers {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(3.3rem, 1fr));
+  gap: 3px 5px;
+}
+
+.cataract-biometry-page-numbers label {
+  min-height: 26px;
+  font-variant-numeric: tabular-nums;
+}
+
+.cataract-biometry-job-status progress {
+  width: min(100%, 20rem);
+}
+
+@media (max-width: 760px) {
+  .cataract-biometry-workspace-review {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    height: auto;
+  }
+
+  .cataract-biometry-source-preview {
+    height: 48dvh;
+    flex: none;
+  }
+}

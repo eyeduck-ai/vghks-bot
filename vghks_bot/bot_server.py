@@ -141,7 +141,13 @@ class BotHandler(Handler):
             # across patients. HTML, scripts and clinical responses stay fresh.
             versioned_icon = (mime == "image/svg+xml"
                               and parse_qs(url.query).get("v") == [__version__])
-            self.reply(200, (STATIC / name).read_bytes(), mime=mime,
+            body = (STATIC / name).read_bytes()
+            if url.path == "/tools":
+                account = parse_qs(url.query, keep_blank_values=True).get("account", [""])[0]
+                if re.fullmatch(r"[a-f0-9]{32}", account):
+                    # Apply the embedded layout before deferred scripts or API reads.
+                    body = body.replace(b"<body>", b'<body class="tool-embedded tool-starting">', 1)
+            self.reply(200, body, mime=mime,
                        cache_control="private, max-age=31536000, immutable" if versioned_icon else "no-store")
             return
         if not url.path.startswith("/api/"):
@@ -215,8 +221,9 @@ class BotHandler(Handler):
                 readonly_routes = {"/api/lists", "/api/library/search", "/api/library/record", "/api/patient-tags/search",
                     "/api/reviews/patients", "/api/reviews/patient", "/api/reviews/notes/page", "/api/reviews/notes/summary", "/api/sets/read", "/api/sets/search",
                     "/api/library/data/read", "/api/library/data/preview-delete",
-                    "/api/reviews/results", "/api/reviews/history/read", "/api/reviews/notes/read", "/api/extensions/read", "/api/analysis/results", "/api/analysis/raw",
+                    "/api/reviews/results", "/api/reviews/history/read", "/api/reviews/history/export", "/api/reviews/notes/read", "/api/extensions/read", "/api/analysis/results", "/api/analysis/raw",
                     "/api/analysis/google", "/api/analysis/google/sources", "/api/analysis/cataract/status", "/api/analysis/surgery/candidates", "/api/analysis/surgery/history",
+                    "/api/analysis/cataract/biometry",
                     "/api/analysis/export", "/api/analysis/export/read",
                     "/api/approvals/enter", "/api/approvals/overview", "/api/approvals/results", "/api/approvals/detail", "/api/approvals/tracking",
                     "/api/earnings/overview", "/api/earnings/detail", "/api/earnings/export",
@@ -225,6 +232,12 @@ class BotHandler(Handler):
                     "/api/sheet-sync/status", "/api/sheet-management/status"}
                 if root.read_only and local not in readonly_routes:
                     raise ValueError("目前是唯讀檢閱；請建立可編輯副本後操作。")
+                if local == "/api/reviews/history/export":
+                    with workspace.review.history.archive(self.read_json()) as (path, name, files, missing):
+                        self.asset_reply(path, "application/zip", filename=name, download=True,
+                                         headers={"X-VGHKS-Archive-Files": str(files),
+                                                  "X-VGHKS-Archive-Missing": str(missing)})
+                    return
                 if local == "/api/reviews/notes/search":
                     self.reply(200, workspace.review.search_notes(self.read_json()))
                     return

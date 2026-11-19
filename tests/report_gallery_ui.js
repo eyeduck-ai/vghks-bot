@@ -202,6 +202,7 @@ function assertReportToolbar(header, panel){
  assert.equal(galleryHeader.querySelector(".report-gallery-heading").firstElementChild.textContent,"附件 1 / 2");
  const files=toolbar.querySelector(".report-gallery-file-actions"),zoom=toolbar.querySelector(".report-gallery-zoom-group");
  assert.ok(files.querySelector("input").checked);
+ assert.equal(files.children.at(-1).textContent,"新視窗開啟");
  const download=new URL(files.children.at(-1).href);
  assert.equal(download.pathname,"/api/accounts/"+"a".repeat(32)+"/analysis/asset");
  assert.equal(download.searchParams.get("id"),"PDF");
@@ -215,7 +216,7 @@ async function historyTests(){
  s.run("vghks_bot/static/local-session.js");c.window.LocalSession.accept({session:"S".repeat(43),resource:"f".repeat(64)});
  const pdf=asset("PDFREF","PDF","application/pdf"),image=asset("IMAGEREF","IMG");
  const items=[{ref_key:"PDFREF",ordinal:1,status:"ready",kind:"pdf"},{ref_key:"IMAGEREF",ordinal:2,status:"pending",kind:"image"}];
- const details=[{fields:{檢查項目:"合成眼科醫囑"}}];let data={...payload(items,[pdf]),details};
+ const details=[{fields:{檢查項目:"合成眼科醫囑"}}],texts=[{text:"合成文字報告"}];let data={...payload(items,[pdf]),details,texts};
  c.ClinicalUI.loading=()=>s.node("div","等待","clinical-loading");c.ClinicalUI.textDownload=()=>s.node("button","文字報告");c.ClinicalUI.pacsControl=options=>{const value=s.node("div","本地 PACS","pacs-control");value.options=options;return value;};
  c.window.FileCompare={context(){}};c.work.online=true;c.extensionTask="";c.dialog=()=>{$("#dataDialog").open=true;};c.setPatientDialogContext=()=>{};c.reviewPatientIdentity=()=>({name:"合成病人"});c.JobProgress={pending(){},publish(){}};
  c.Option=function(label,value){const option=s.node("option",label);option.value=value;return option;};
@@ -223,14 +224,18 @@ async function historyTests(){
  c.api=async(path,values)=>{calls.push({path,values});if(path==="/reviews/history/read")return {data,complete,updated_at:"same-second",issues:[],coverage:{orders_start:"2015-11-25"}};if(path==="/reviews/pacs/open")return {status:"HANDOFF_SENT",message:"合成交接"};if(path==="/tasks/start"){if(startGate)await startGate.promise;return {task_id:"TASK"};}if(path.startsWith("/tasks/detail"))return {status,revision,updated_at:"same-second"};throw new Error(path);};
  s.run("vghks_bot/static/review-history.js");const ui=c.window.ReviewHistoryUI;
  await ui.open("order_report","TEST001","ORDER");
- const panel=$("#dataContent"),viewport=panel.querySelector(".report-gallery-viewport"),stage=viewport.firstElementChild,iframe=stage.firstElementChild,detailDisclosure=panel.querySelector("details");viewport.scrollTop=77;
+ const panel=$("#dataContent"),viewport=panel.querySelector(".report-gallery-viewport"),stage=viewport.firstElementChild,iframe=stage.firstElementChild,detailDisclosure=panel.querySelector(".history-report-details"),textDisclosure=panel.querySelector(".history-report-texts");viewport.scrollTop=77;
  const controls=()=>[...$("#dataDialogActions").querySelectorAll(".history-action"),...panel.querySelectorAll(".history-action")];
  assert.equal($("#dataDialog").classList.contains("report-view-dialog"),true);assert.ok($("#dataDialogActions").querySelector(".history-controls"));assert.equal(panel.querySelector(".history-controls"),null,"report toolbar occupied another content row");assert.equal(detailDisclosure.open,false,"order details were initially expanded");detailDisclosure.open=true;
+ assert.equal(textDisclosure.open,false,"text reports were initially expanded");textDisclosure.open=true;
+ assert.equal(textDisclosure.parentElement.parentElement,panel.querySelector(".report-gallery-sidebar"));
+ assert.equal(detailDisclosure.parentElement,textDisclosure.parentElement);
  assertReportToolbar($("#dataDialogActions"),panel);
- items[1]={...items[1],status:"ready"};data={...payload(items,[pdf,image]),details:[...details,{fields:{附註:"漸進更新"}}]};revision++;
+ items[1]={...items[1],status:"ready"};data={...payload(items,[pdf,image]),texts,details:[...details,{fields:{附註:"漸進更新"}}]};revision++;
  const previousReads=calls.filter(value=>value.path==="/reviews/history/read").length;await ui.poll();
  assert.equal(calls.filter(value=>value.path==="/reviews/history/read").length,previousReads+1,"same-second revision failed to read a newly ready image");
- assert.equal(viewport.firstElementChild,stage);assert.equal(stage.firstElementChild,iframe);assert.equal(viewport.scrollTop,77);assert.equal(panel.querySelector("details"),detailDisclosure);assert.equal(detailDisclosure.open,true,"progress collapsed an explicitly expanded detail section");
+ assert.equal(viewport.firstElementChild,stage);assert.equal(stage.firstElementChild,iframe);assert.equal(viewport.scrollTop,77);assert.equal(panel.querySelector(".history-report-details"),detailDisclosure);assert.equal(detailDisclosure.open,true,"progress collapsed an explicitly expanded detail section");
+ assert.equal(panel.querySelector(".history-report-texts"),textDisclosure);assert.equal(textDisclosure.open,true,"progress collapsed an explicitly expanded text report");
  const tiles=panel.querySelectorAll(".report-gallery-tile");assert.equal(tiles[1].dataset.status,"ready");
  await tiles[1].emit("click");const mainImage=viewport.firstElementChild;revision++;await ui.poll();assert.equal(viewport.firstElementChild,mainImage);
  startGate=deferred();const force=controls().find(value=>value.textContent==="更新資料").run();await tick();
@@ -241,13 +246,13 @@ async function historyTests(){
  complete=true;status="completed";data=[...Array.from({length:45},(_,index)=>({id:"EYE"+index,name:"Beta "+index,date:"2026-10-27",order_date:"2026-10-27",execution_date:"2026-10-28",ophthalmic:true})),...Array.from({length:60},(_,index)=>({id:"OTHER"+index,name:"Alpha "+index,date:"2026-09-01",order_date:"2026-09-01",ophthalmic:false}))];
  await ui.open("orders","TEST001");assert.equal($("#dataDialog").classList.contains("report-view-dialog"),false,"report-only layout leaked into order list");assert.equal($("#dataDialog").classList.contains("order-list-dialog"),true);assert.ok($("#dataDialogActions").querySelector(".history-controls"));assert.equal(panel.querySelector(".history-controls"),null);assert.equal(pages.at(-1).total,45,"historical orders did not default to ophthalmic checks");
  assert.equal(panel.querySelectorAll(".history-action").find(value=>value.textContent.startsWith("眼科檢查"))["aria-pressed"],"true");
- const grid=panel.querySelector(".history-order-table"),headers=grid.querySelectorAll("th"),names=()=>grid.querySelector("tbody").children.map(row=>row.children[0].textContent);
+ const grid=panel.querySelector(".history-order-table"),headers=grid.querySelectorAll("th").slice(1),names=()=>grid.querySelector("tbody").children.map(row=>row.children[1].textContent);
  assert.equal(panel.querySelectorAll("button").some(value=>value.textContent==="更早醫囑"),false,"historical orders retained the misleading visit-history shortcut");
  assert.deepEqual(names().slice(0,3),["Beta 0","Beta 1","Beta 2"]);
  await panel.querySelectorAll(".history-action").find(value=>value.textContent.startsWith("全部")).run();assert.equal(pages.at(-1).total,105,"all tab hid other reports");
  assert.equal(panel.querySelectorAll("table").length,1,"orders were split into multiple tables");
  assert.equal(headers[0]["aria-sort"],"ascending");assert.deepEqual(names().slice(0,3),["Alpha 0","Alpha 1","Alpha 2"]);
- assert.equal(names().length,40);assert.equal(grid.querySelector("tbody").firstElementChild.children[2].textContent,"—","execution date was inferred from the order date");
+ assert.equal(names().length,40);assert.equal(grid.querySelector("tbody").firstElementChild.children[3].textContent,"—","execution date was inferred from the order date");
  assert.equal(panel.querySelectorAll(".history-order-category").length,0);assert.equal(panel.querySelectorAll("h4").length,0);
  assert.equal(panel.all().some(value=>value.textContent.includes("點選後才讀取")),false);
  const listScroll=panel.querySelector(".history-orders-scroll");listScroll.scrollTop=120;
@@ -266,11 +271,11 @@ async function historyTests(){
  assert.equal(panel.querySelector("input"),search,"filtering replaced the focused search input");assert.equal(panel.querySelector(".history-order-table"),grid,"sorting replaced the keyboard-focused headers");
  data=[{id:"FIRST",name:"Alpha",order_date:"2025-01-01",execution_date:"2026-02-01"},{id:"SECOND",name:"Beta",order_date:"2026-01-01",execution_date:"2025-02-01"},{id:"MISSING",name:"Gamma"}];
  await ui.open("case_orders","TEST001","VISIT");assert.equal(direct.current(),false,"old list scope remained active after changing visits");
- const caseGrid=panel.querySelector("table"),caseBody=caseGrid.querySelector("tbody");assert.equal(caseBody.firstElementChild.children[0].textContent,"Alpha","case orders did not default to name sorting");
- await caseGrid.querySelectorAll("th")[1].firstElementChild.run();assert.equal(caseBody.firstElementChild.children[0].textContent,"Beta","sorting used execution time instead of order time");assert.equal(caseBody.children.at(-1).children[0].textContent,"Gamma");
- await caseGrid.querySelectorAll("th")[1].firstElementChild.run();assert.equal(caseBody.children.at(-1).children[0].textContent,"Gamma","missing dates sorted before known dates");
- await caseGrid.querySelectorAll("th")[2].firstElementChild.run();assert.equal(caseBody.firstElementChild.children[0].textContent,"Alpha","execution sorting used order time");assert.equal(caseGrid.querySelectorAll("th")[2]["aria-sort"],"descending");assert.equal(caseGrid.querySelectorAll("th")[1]["aria-sort"],undefined);
- await caseGrid.querySelectorAll("th")[2].firstElementChild.run();assert.equal(caseBody.firstElementChild.children[0].textContent,"Beta");assert.equal(caseBody.children.at(-1).children[0].textContent,"Gamma","missing execution dates sorted before known dates");
+ const caseGrid=panel.querySelector("table"),caseBody=caseGrid.querySelector("tbody"),caseHeaders=caseGrid.querySelectorAll("th").slice(1);assert.equal(caseBody.firstElementChild.children[1].textContent,"Alpha","case orders did not default to name sorting");
+ await caseHeaders[1].firstElementChild.run();assert.equal(caseBody.firstElementChild.children[1].textContent,"Beta","sorting used execution time instead of order time");assert.equal(caseBody.children.at(-1).children[1].textContent,"Gamma");
+ await caseHeaders[1].firstElementChild.run();assert.equal(caseBody.children.at(-1).children[1].textContent,"Gamma","missing dates sorted before known dates");
+ await caseHeaders[2].firstElementChild.run();assert.equal(caseBody.firstElementChild.children[1].textContent,"Alpha","execution sorting used order time");assert.equal(caseHeaders[2]["aria-sort"],"descending");assert.equal(caseHeaders[1]["aria-sort"],undefined);
+ await caseHeaders[2].firstElementChild.run();assert.equal(caseBody.firstElementChild.children[1].textContent,"Beta");assert.equal(caseBody.children.at(-1).children[1].textContent,"Gamma","missing execution dates sorted before known dates");
  c.root.read_only=true;await ui.open("case_orders","TEST001","VISIT");assert.equal(panel.querySelectorAll(".pacs-control").length,0);ui.reset();assert.equal($("#dataDialog").classList.contains("order-list-dialog"),false);
  c.root.read_only=false;data=[
   {id:"A-OLD",name:"Alpha",ophthalmic:true,order_date:"2024-01-01",execution_date:"2026-01-01"},
@@ -279,11 +284,72 @@ async function historyTests(){
   {id:"A-MISSING",name:"Alpha",ophthalmic:true,date:"2027-01-01"},
   {id:"OTHER",name:"Aardvark",ophthalmic:false,order_date:"2027-01-01"}];
  await ui.open("orders","TEST001");
- const groupedGrid=panel.querySelector("table"),orderedIds=()=>groupedGrid.querySelector("tbody").children.map(row=>row.querySelector(".pacs-control").options.scope.reference);
+ const groupedGrid=panel.querySelector("table"),groupedHeaders=groupedGrid.querySelectorAll("th").slice(1),orderedIds=()=>groupedGrid.querySelector("tbody").children.map(row=>row.querySelector(".pacs-control").options.scope.reference);
  assert.deepEqual(orderedIds(),["A-NEW","A-OLD","A-MISSING","B-NEW"],"default name groups did not put newest order times first or inferred a missing order date");
- await groupedGrid.querySelectorAll("th")[1].firstElementChild.run();assert.deepEqual(orderedIds(),["B-NEW","A-NEW","A-OLD","A-MISSING"]);
- await groupedGrid.querySelectorAll("th")[2].firstElementChild.run();assert.deepEqual(orderedIds(),["A-OLD","A-NEW","B-NEW","A-MISSING"]);
- await groupedGrid.querySelectorAll("th")[2].firstElementChild.run();assert.deepEqual(orderedIds(),["B-NEW","A-NEW","A-OLD","A-MISSING"]);
- await groupedGrid.querySelectorAll("th")[0].firstElementChild.run();assert.deepEqual(orderedIds(),["A-NEW","A-OLD","A-MISSING","B-NEW"]);ui.reset();
+ await groupedHeaders[1].firstElementChild.run();assert.deepEqual(orderedIds(),["B-NEW","A-NEW","A-OLD","A-MISSING"]);
+ await groupedHeaders[2].firstElementChild.run();assert.deepEqual(orderedIds(),["A-OLD","A-NEW","B-NEW","A-MISSING"]);
+ await groupedHeaders[2].firstElementChild.run();assert.deepEqual(orderedIds(),["B-NEW","A-NEW","A-OLD","A-MISSING"]);
+ await groupedHeaders[0].firstElementChild.run();assert.deepEqual(orderedIds(),["A-NEW","A-OLD","A-MISSING","B-NEW"]);ui.reset();
 }
-(async()=>{await galleryTests();await imageFitTests();await thumbnailTests();await historyTests();process.stdout.write("Report gallery revision polling, classification, fit and manual zoom, lazy thumbnails and cleanup passed\n");})().catch(error=>{console.error(error);process.exitCode=1;});
+async function orderArchiveTests(){
+ const s=setup(),c=s.context,$=s.$;s.gallery.dispose();
+ const calls=[],archives=[],prepared=[],saved=[];
+ const orders=[{id:"CACHED",name:"Alpha",ophthalmic:true},{id:"NEED",name:"Beta",ophthalmic:true},{id:"ERROR",name:"Gamma",ophthalmic:false}];
+ let exportGate=null;
+ Object.assign(c,{AbortController,dialog:()=>{$("#dataDialog").open=true;},setPatientDialogContext(){},reviewPatientIdentity:()=>({name:"合成病人"}),extensionTask:""});
+ c.ClinicalUI.loading=()=>s.node("div","等待","clinical-loading");c.ClinicalUI.pacsControl=()=>s.node("div","本地 PACS","pacs-control");
+ c.ClinicalUI.saveBlob=(blob,name)=>saved.push({blob,name});c.window.ClinicalUI=c.ClinicalUI;
+ c.window.FileCompare={context(){}};c.work.online=true;
+ c.window.ScanBrowser={async runResource(request,values,current){assert.equal(current(),true);prepared.push(values);}};
+ c.api=async (endpoint,values,options)=>{
+  calls.push({endpoint,values});
+  if(endpoint==="/reviews/history/read"){
+   if(values.resource!=="order_report")return {data:orders,complete:true,issues:[]};
+   if(values.reference==="ERROR")throw new Error("synthetic read failure");
+   return {data:payload([],[]),complete:values.reference==="CACHED",issues:[]};
+  }
+  if(endpoint!=="/reviews/history/export")throw new Error(endpoint);
+  assert.equal(options.raw,true);archives.push({values,signal:options.signal});
+  if(exportGate)await exportGate.promise;
+  const name="合成原檔.zip";
+  return new Response("ZIP",{headers:{"Content-Type":"application/zip","Content-Disposition":`attachment; filename="synthetic.zip"; filename*=UTF-8''${encodeURIComponent(name)}`,"X-VGHKS-Archive-Files":"2","X-VGHKS-Archive-Missing":"1"}});
+ };
+ s.run("vghks_bot/static/review-archive.js");s.run("vghks_bot/static/review-history.js");const ui=c.window.ReviewHistoryUI;
+ const panel=$("#dataContent"),fileControls=()=>panel.querySelector(".review-archive-toolbar");
+ const selectAll=()=>panel.querySelector("thead").querySelector("input");
+ const select=async input=>{input.checked=true;await input.emit("change");};
+ await ui.open("orders","TEST001");
+ assert.equal(fileControls().firstElementChild.disabled,true);
+ await select(selectAll());assert.equal(fileControls().children[2].textContent,"已選 2 筆");
+ await panel.querySelectorAll(".history-action").find(value=>value.textContent==="查看內容").run();
+ await $("#dataDialogBack").emit("click");
+ assert.equal(fileControls().children[2].textContent,"已選 2 筆","returning from the report discarded the selected rows");
+ await panel.querySelectorAll(".history-action").find(value=>value.textContent.startsWith("其他（")).run();
+ await select(panel.querySelector("tbody").querySelector("input"));
+ assert.equal(fileControls().children[2].textContent,"已選 3 筆","filtering discarded earlier selections");
+ await fileControls().firstElementChild.emit("click");
+ assert.deepEqual(prepared.map(value=>value.reference),["NEED"],"cached orders triggered unnecessary refetch or missing order blocked progress");
+ assert.equal(archives[0].values.resource,"orders");assert.equal(archives[0].values.mrn,"TEST001");
+ assert.deepEqual(Array.from(archives[0].values.ids),["CACHED","NEED","ERROR"]);
+ assert.deepEqual(saved.map(value=>value.name),["合成原檔.zip"]);
+ assert.match(fileControls().querySelector(".review-archive-status").textContent,/缺漏清單/);
+
+ c.work.online=false;c.root.read_only=true;
+ await ui.open("case_orders","TEST001","VISIT1");
+ assert.equal(fileControls().firstElementChild.disabled,true,"reopening for a visit reused selection from historical orders");
+ await select(panel.querySelector("tbody").querySelector("input"));
+ const before=calls.length;await fileControls().firstElementChild.emit("click");
+ assert.deepEqual(calls.slice(before).map(value=>value.endpoint),["/reviews/history/export"]);
+ assert.equal(archives.at(-1).values.reference,"VISIT1");
+ assert.equal(archives.at(-1).values.resource,"case_orders");
+ assert.deepEqual(Array.from(archives.at(-1).values.ids),["CACHED"]);
+
+ exportGate=deferred();const downloading=fileControls().firstElementChild.emit("click");await tick();
+ const stale=archives.at(-1);await ui.open("case_orders","TEST002","VISIT2");
+ assert.equal(stale.signal.aborted,true);
+ exportGate.resolve();await downloading;
+ assert.equal(saved.length,2,"another patient's ZIP finished after moving away");
+ assert.equal(fileControls().firstElementChild.disabled,true);
+ ui.reset();
+}
+(async()=>{await galleryTests();await imageFitTests();await thumbnailTests();await historyTests();await orderArchiveTests();process.stdout.write("Report gallery, order list ZIP selection and scoped downloads, thumbnail and cleanup checks passed\n");})().catch(error=>{console.error(error);process.exitCode=1;});

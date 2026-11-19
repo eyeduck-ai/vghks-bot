@@ -1,7 +1,8 @@
 "use strict";
 
 const embeddedAccount = new URLSearchParams(location.search).get("account");
-const scopedPath = path => /^[a-f0-9]{32}$/.test(embeddedAccount || "") && path.startsWith("/api/") && path !== "/api/session"
+const toolWorkspace = /^[a-f0-9]{32}$/.test(embeddedAccount || "");
+const scopedPath = path => toolWorkspace && path.startsWith("/api/") && path !== "/api/session"
   ? `/api/accounts/${embeddedAccount}${path.slice(4)}` : path;
 
 const $ = (selector, parent = document) => parent.querySelector(selector);
@@ -11,12 +12,13 @@ const statusLabels = {queued:"排隊中", running:"查詢中", cancelling:"停�
 let config, accounts = new Map(), history = [], selectedRun = "", current = null;
 let categoryFilter = "", stopped = false, historySignature = "", toastTimer;
 let pollTimer=0,pollBusy=false,sharedStatus=null,workspaceVisible=true,historyOffset=0,historyTotal=0;
-const embedded=/^[a-f0-9]{32}$/.test(embeddedAccount||"")&&parent!==window;
+let workspaceInitialized = false;
+const embedded=toolWorkspace&&parent!==window;
 function watchedRuns(){return [...new Set([selectedRun,...(typeof analysisState!=="undefined"?analysisState.runs.filter(run=>run.cohort_id===currentCohort?.id).slice(0,5).map(run=>run.id):[])])].filter(Boolean);}
 window.addEventListener("message",event=>{
  if(!embedded||event.source!==parent||event.origin!==location.origin||event.data?.account!==embeddedAccount)return;
  if(event.data.type==="bot:workspace-visibility"){workspaceVisible=!!event.data.visible;if(!workspaceVisible)clearTimeout(pollTimer);}
- if(event.data.type==="bot:workspace-status"){sharedStatus=event.data.status;if(config&&workspaceVisible&&!document.hidden&&!pollBusy){pollBusy=true;refresh().catch(error=>notify(error.message,true)).finally(()=>{pollBusy=false;});}}
+ if(event.data.type==="bot:workspace-status"){sharedStatus=event.data.status;if(workspaceInitialized&&workspaceVisible&&!document.hidden&&!pollBusy){pollBusy=true;refresh().catch(error=>notify(error.message,true)).finally(()=>{pollBusy=false;});}}
 });
 const pageSizes = new Map();
 
@@ -454,6 +456,7 @@ $("#reclassify").addEventListener("click",() => action(async () => {
 $("#jsonExport").addEventListener("click",() => { if (current) download(`VGHKS-${current.account}-${current.start}-${current.id.slice(0,8)}.json`,JSON.stringify(current,null,2),"application/json;charset=utf-8"); });
 $("#csvExport").addEventListener("click",exportCSV);
 $("#exitButton").addEventListener("click",() => action(async () => {
+  if (await window.CataractBiometry?.flushAll() === false) throw new Error("白內障核對內容尚未儲存，請重試後再結束程式。");
   await api("/api/shutdown",{}); stopped=true;
   document.body.replaceChildren(el("p","程式已結束，查詢紀錄已保留。可以關閉此分頁。","closed"));
 }));
@@ -470,9 +473,17 @@ async function initialize() {
   window.ClinicalUI?.configurePatientNames?.(config.patient_name_profile);
   $("#version").textContent = `v${config.version}`;
   config.accounts.forEach(addAccount);
-  await initializeWorkspace();
-  window.dispatchEvent(new Event("workspace-ready"));
+  if (toolWorkspace) await initializeToolWorkspace();
+  else await initializeWorkspace();
+  workspaceInitialized = true;
   if (config.warnings?.length) notify(config.warnings.join(" "),true);
   await poll();
 }
-document.addEventListener("DOMContentLoaded", () => initialize().catch(error => { notify(error.message,true); $("#runSelected").disabled=true; $("#addAccount").disabled=true; $("#settingsButton").disabled=true; }));
+document.addEventListener("DOMContentLoaded", () => initialize().catch(error => {
+  if (toolWorkspace) {
+    $("#listPane").hidden = true;
+    document.body.classList.remove("tool-starting");
+  }
+  notify(error.message, true);
+  $("#runSelected").disabled = $("#addAccount").disabled = $("#settingsButton").disabled = true;
+}));

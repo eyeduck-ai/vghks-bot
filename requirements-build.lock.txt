@@ -25,3 +25,25 @@ pycparser==3.0
 pyasn1==0.6.4
 pyasn1-modules==0.4.2
 vghks-sheet-core @ git+https://github.com/eyeduck-ai/op_spreadsheet.git@3e4babe8bbb799d103372732bd2e45bc1405fb83#subdirectory=packages/python
+biometry-parser[ocr] @ git+https://github.com/eyeduck-ai/biometry-parser.git@aa9ac5974f0cb42c164298d43081e5d6ca01733d
+annotated-types==0.8.0
+colorama==0.4.6
+colorlog==6.12.0
+flatbuffers==25.12.19
+numpy==2.4.6
+omegaconf==2.4.0
+onnxruntime==1.32.0
+opencv-python-headless==5.0.0.93
+Pillow==13.0.0
+protobuf==7.36.2
+psutil==7.2.2
+pyclipper==1.4.0
+pydantic==2.14.3
+pydantic-core==2.50.4
+pypdfium2==5.15.2
+PyYAML==6.0.3
+rapidocr==3.10.0
+Shapely==2.2.0
+six==1.17.0
+tqdm==4.70.1
+typing-inspection==0.4.5

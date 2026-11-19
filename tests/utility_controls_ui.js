@@ -77,7 +77,7 @@ function environment() {
   }
   const document=new Document(),window=new Target();window.parent=window;
   class Clock extends Date {static now(){return wall;}}
-  const context={window,parent:window,document,Date:Clock,Intl,URL,URLSearchParams,Set,Map,
+  const context={window,parent:window,document,Date:Clock,Intl,URL,URLSearchParams,Set,Map,AbortController,
     performance:{now:()=>monotonic},location:{origin:"http://synthetic.invalid",pathname:"/",search:"",href:"http://synthetic.invalid/"},
     CustomEvent:class {constructor(type,options={}){this.type=type;this.detail=options.detail;}},
     MutationObserver:class {constructor(callback){this.callback=callback;observers.push(this);}observe(target){this.target=target;}disconnect(){this.target=null;this.disconnected=true;}},
@@ -171,6 +171,22 @@ function dockPlacement(){
   assert.equal(inner.style["--utility-dock-height"],undefined,"old but connected iframe document retained its layout reservation");
   assert.equal(inner.classList.contains("utility-dock-host"),false);assert.equal(dock.parentElement,replacement);assert.equal(dock.children.find(value=>value.id==="selection"),comparison);
   inner.close();s.flush();assert.equal(dock.parentElement,replacement,"retired iframe mutation displaced the live dock");
+
+  replacement.close();s.flush();
+  const compare=s.element("dialog");compare.id="fileCompareDialog";
+  progress.hidden=feedback.hidden=true;comparison.hidden=false;dockUI.sync();
+  compare.showModal();s.flush();
+  assert.equal(dock.parentElement,compare);
+  assert.ok(comparison.classList.contains("utility-dock-slot-hidden"),"comparison dialog exposed its duplicate shortcut");
+  assert.ok(dock.hidden,"comparison-only dock reserved room for a suppressed shortcut");
+  assert.equal(compare.classList.contains("utility-dock-host"),false);
+  progress.hidden=false;dockUI.sync();
+  assert.equal(dock.hidden,false,"comparison hid active task progress");
+  assert.equal(progress.classList.contains("utility-dock-slot-hidden"),false);
+  compare.close();s.flush();
+  assert.equal(dock.parentElement,s.document.body);
+  assert.equal(comparison.classList.contains("utility-dock-slot-hidden"),false,"closing comparison did not restore its shortcut");
+  assert.equal(comparison.hidden,false);
 }
 
 function patientDockPlacement(){
@@ -237,6 +253,53 @@ function compareSetup({embedded=false}={}){
   const ui=s.window.FileCompare;s.window.UtilityDock.context(accountA);ui.context(accountA,"SYN001","合成病人");
   const item=(digit,overrides={})=>({account:accountA,mrn:"SYN001",digest:digit.repeat(64),mime:"application/pdf",name:"合成附件 "+digit,date:"2026-10-27",...overrides});
   return {...s,ui,item,prompt:()=>s.document.getElementById("fileCompareClearDialog")};
+}
+
+async function comparisonPatientDetails(){
+  const s=compareSetup(),{ui,item}=s,details=(id)=>s.document.getElementById(id);
+  s.document.createTextNode=text=>{const node=s.document.createElement("span");node.textContent=text;return node;};
+  s.load("vghks_bot/static/cataract-numeric.js");
+  s.window.SOAPView={create:record=>{const node=s.document.createElement("div");node.textContent=record.soap;return node;}};
+  const frame=s.element("iframe"), first=deferred(), second=deferred();frame.id="cataractFrame";
+  frame.setAttribute("src","/tool");frame.dataset.account=accountA;frame.dataset.cohort="SYNTHETIC";
+  const response=(mrn,numeric)=>({member:{account_id:accountA,mrn},numeric,
+    latest_soap:{record:{date:"2026-11-01",section:"眼科",soap:"合成 SOAP " + mrn}}});
+  const measurement=[{exams:["Va"],cells:[{exam:"Va",side:"OD",raw:0}],date:"2026-11-01"}];
+  const placeholders=[{exams:["Va"],cells:[],unparsed:true,values:["2026-11-01","OD","N/A"]}];
+  const requests=[first.promise,second.promise,Promise.resolve(response("SYN001",measurement)),
+    Promise.resolve(response("SYN002",placeholders))];
+  s.context.api=async(path,payload)=>{assert.equal(path,"/analysis/results");assert.equal(payload.cohort_id,"SYNTHETIC");return requests.shift();};
+  const settle=()=>new Promise(resolve=>setImmediate(resolve));
+  ui.add(item("1"));ui.open();
+  assert.equal(details("fileCompareDetailChoices").hidden,true);
+  details("fileCompareDialog").close();ui.open();
+  second.resolve(response("SYN001",measurement));await settle();
+  const [numeric,soap]=details("fileCompareDetailChoices").children;
+  assert.equal(numeric.getAttribute("aria-pressed"),"true","actual measurements should take priority, including zero");
+  const pane=details("fileComparePanes").querySelector("iframe");
+  first.resolve(response("SYN001",[]));await settle();
+  assert.equal(numeric.getAttribute("aria-pressed"),"true","a previous opening replaced the current patient details");
+  soap.dispatchEvent({type:"click"});
+  assert.equal(details("fileCompareNumeric").hidden,true);assert.equal(details("fileCompareSoap").hidden,false);
+  assert.match(details("fileCompareSoap").textContent,/合成 SOAP SYN001/);
+  const rail=details("fileCompareDetailRail"),toggle=details("fileCompareRailToggle");
+  assert.ok(rail.contains(toggle),"the expanded toggle should fit inside the rail");
+  toggle.focus();toggle.dispatchEvent({type:"click"});
+  assert.equal(toggle.getAttribute("aria-expanded"),"false");assert.equal(rail.hidden,true);
+  assert.equal(toggle.hidden,false,"collapse hid its only expand control");
+  assert.ok(toggle.parentElement.classList.contains("file-compare-heading"),"the collapsed toggle should use the dialog header");
+  assert.equal(s.document.activeElement,toggle,"collapsing moved keyboard focus off the toggle");
+  toggle.dispatchEvent({type:"click"});assert.equal(toggle.getAttribute("aria-expanded"),"true");
+  assert.ok(rail.contains(toggle),"the toggle should return to the reopened rail");
+  assert.equal(s.document.activeElement,toggle,"expanding moved keyboard focus off the toggle");
+  assert.equal(details("fileComparePanes").querySelector("iframe"),pane,"patient detail switching reloaded a PDF");
+  details("fileCompareDialog").close();ui.open();await settle();
+  assert.equal(soap.getAttribute("aria-pressed"),"true","reopening comparison discarded the chosen detail view");
+  numeric.dispatchEvent({type:"click"});
+  ui.context(accountA,"SYN002");ui.add(item("2",{mrn:"SYN002"}));ui.open();await settle();
+  assert.equal(soap.getAttribute("aria-pressed"),"true","placeholder-only data should default to SOAP for a new patient");
+  assert.match(details("fileCompareSoap").textContent,/合成 SOAP SYN002/);
+  assert.equal(requests.length,0,"changing detail tabs incurred an extra analysis request");
 }
 
 function comparisonZoomReset(){
@@ -380,6 +443,74 @@ async function scanPreviewLifecycle(){
   assert.equal(dialog.querySelector(".scan-error"),null);
 }
 
+async function scanArchiveSelection(){
+  const s=environment(), reads=[], archives=[], pending=deferred();
+  const asset={mime:"application/pdf",digest:"c".repeat(64)}, rows=[
+    {id:"A",category_label:"已存 A",eye:true,asset},
+    {id:"A",category_label:"另一類 A",eye:true,asset},
+    {id:"B",category_label:"缺檔 B",eye:true},
+  ];
+  let fetched=false, block=false;
+  s.window.ReviewArchive={limit:100,download:async ({scope,ids,current})=>{
+    assert.equal(current(),true);
+    archives.push({scope,ids:Array.from(ids)});
+    return {files:ids.length-Number(!fetched),missing:Number(!fetched)};
+  }};
+  s.window.JobProgress={ready:async()=>{},publish(){}};
+  s.load("vghks_bot/static/scan-browser.js");
+  const options={archive:true,account:accountA,mrn:"SYN001",review_task_id:"SYN-TASK",resource:"scans",allowFetch:()=>true,
+    request:async(path,values,settings)=>{
+      reads.push({path,values,settings});
+      if(path==="/tasks/start"){fetched=true;return {task_id:"SYN-SCAN"};}
+      if(path.startsWith("/tasks/detail"))return {status:"completed"};
+      if(values.resource==="scan_asset")return block?pending.promise:{data:fetched?asset:null};
+      return {data:{records:rows,scans:rows.slice(1),links_complete:true},complete:true};
+    }};
+  const scans=s.window.ScanBrowser;
+  await scans.open(options);
+  const dialog=s.document.getElementById("scanBrowserDialog"),catalog=dialog.querySelector(".scan-browser-catalog");
+  const set=(node,key,value,type)=>{node[key]=value;node.dispatchEvent({type});};
+  const tick=async()=>{for(let index=0;index<20;index++)await Promise.resolve();};
+  const toolbar=()=>dialog.querySelector(".review-archive-toolbar"), action=()=>toolbar().querySelector("button");
+  const choices=()=>dialog.querySelectorAll(".scan-row input");
+  const status=()=>toolbar().querySelector(".review-archive-status").textContent;
+  assert.equal(action().disabled,true);
+  set(choices()[0],"checked",true,"change");
+  assert.equal(choices()[1].checked,true,"the same scan under two labels must share one selection");
+  assert.equal(toolbar().querySelector("input").indeterminate,true);
+  set(choices()[2],"checked",true,"change");
+  const search=catalog.querySelector(".scan-filters input");set(search,"value","已存","input");
+  assert.equal(choices().length,1);assert.match(toolbar().querySelector(".review-archive-count").textContent,/已選 2 份/);
+  action().dispatchEvent({type:"click"});await tick();
+  assert.deepEqual(archives[0].ids,["A","B"]);
+  assert.equal(archives[0].scope.resource,"scans");
+  assert.equal(reads.filter(call=>call.path==="/tasks/start").length,1);
+  assert.equal(reads.find(call=>call.path==="/tasks/start").values.reference,"B");
+  assert.match(status(),/已下載 2 個原檔/);
+
+  dialog.close();fetched=false;
+  await scans.open({...options,resource:"case_scans",reference:"SYN-VISIT",allowFetch:()=>false});
+  assert.equal(action().disabled,true,"an old patient list selection must reset on reopen");
+  set(toolbar().querySelector("input"),"checked",true,"change");
+  action().dispatchEvent({type:"click"});await tick();
+  assert.deepEqual(archives[1].ids,["A","B"]);
+  assert.equal(archives[1].scope.reference,"SYN-VISIT");
+  assert.equal(reads.filter(call=>call.path==="/tasks/start").length,1,"offline archive attempted a source fetch");
+  assert.match(status(),/1 筆未取得/);
+  toolbar().querySelectorAll("button")[1].dispatchEvent({type:"click"});
+  assert.equal(action().disabled,true);assert.equal(choices()[0].checked,false);
+
+  block=true;
+  await scans.open(options);set(choices()[2],"checked",true,"change");
+  action().dispatchEvent({type:"click"});await tick();
+  dialog.close();await scans.open({...options,archive:false,mrn:"SYN002"});
+  pending.resolve({data:null});await tick();
+  assert.equal(reads.findLast(call=>call.values.resource==="scan_asset").settings.signal.aborted,true);
+  assert.equal(dialog.querySelector(".review-archive-toolbar"),null);
+  assert.equal(archives.length,2,"a closed scan list must not download a stale archive");
+  assert.equal(reads.filter(call=>call.path==="/tasks/start").length,1);
+}
+
 async function confirmationSafety(){
   const s=compareSetup(),{ui,item}=s;ui.add(item("1"));ui.add(item("2"));
   const first=ui.requestClear(),prompt=s.prompt();
@@ -454,4 +585,4 @@ async function comparisonWorkspaceVisibility(){
   assert.equal(s.requests.length,0,"presentation changes issued attachment or mutation requests");
 }
 
-(async()=>{await clocksWhilePending();dockPlacement();patientDockPlacement();progressClockCleanup();comparisonZoomReset();comparisonFitModes();comparisonSwitchFocus();await scanPreviewLifecycle();await confirmationSafety();await comparisonWorkspaceVisibility();process.stdout.write("Utility control clocks, dock placement, confirmations and selection isolation checks passed\nModal footer, native PDF zoom guidance and persistent image zoom reset checks passed\nComparison shortcut workspace visibility and retained selection checks passed\nPatient progress and shortcut surface lifecycle checks passed\n");})().catch(error=>{console.error(error);process.exitCode=1;});
+(async()=>{await clocksWhilePending();dockPlacement();patientDockPlacement();progressClockCleanup();await comparisonPatientDetails();comparisonZoomReset();comparisonFitModes();comparisonSwitchFocus();await scanPreviewLifecycle();await scanArchiveSelection();await confirmationSafety();await comparisonWorkspaceVisibility();process.stdout.write("Utility control clocks, dock placement, confirmations and selection isolation checks passed\nModal footer, native PDF zoom guidance and persistent image zoom reset checks passed\nComparison patient detail switching, shortcut visibility and retained selection checks passed\nPatient progress and shortcut surface lifecycle checks passed\n");})().catch(error=>{console.error(error);process.exitCode=1;});

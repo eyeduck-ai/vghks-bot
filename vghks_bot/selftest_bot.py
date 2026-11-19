@@ -1,9 +1,11 @@
 """Synthetic verification, also executed inside the frozen Windows binary."""
 from __future__ import annotations
 
+import hashlib
 import http.client
 import json
 import shutil
+import sys
 import tempfile
 import threading
 import time
@@ -389,7 +391,15 @@ def self_test(report_path: Path) -> int:
                     thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": .02}, daemon=True)
                     thread.start()
                     try:
-                        for url in ("/", "/bot.js", "/bot.css", "/databases.js", "/approvals.js", "/tool-workspace.js", "/review-handoff.js", "/sheet-sync-ui.js", "/monitor-ui.js", "/earnings.js", "/surgery-system.js", "/surgery-system.css", "/progress.js", "/progress.css", "/clinical-ui.js", "/clinical-ui.css", "/library-data.js", "/cataract-export.js", "/tools", "/tool-bridge.js", "/analysis.js", "/analysis.css", "/app.js", "/workspace.js", "/patient-tags.js", "/style.css", "/favicon.svg"):
+                        for url in (
+                            "/", "/bot.js", "/bot.css", "/databases.js", "/approvals.js", "/tool-workspace.js",
+                            "/review-handoff.js", "/sheet-sync-ui.js", "/monitor-ui.js", "/earnings.js",
+                            "/surgery-system.js", "/surgery-system.css", "/progress.js", "/progress.css",
+                            "/clinical-ui.js", "/clinical-ui.css", "/library-data.js", "/cataract-export.js",
+                            "/cataract-biometry.css", "/cataract-biometry.js", "/cataract-scans.css",
+                            "/cataract-scans.js", "/tools", "/tool-bridge.js", "/analysis.js", "/analysis.css",
+                            "/app.js", "/workspace.js", "/patient-tags.js", "/style.css", "/favicon.svg",
+                        ):
                             connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
                             connection.request("GET", url)
                             reply = connection.getresponse()
@@ -455,6 +465,44 @@ def self_test(report_path: Path) -> int:
         except ValueError:
             pass
         result["checks"].append("Chinese encoding and isolated regex timeout in frozen runtime")
+        if getattr(sys, "frozen", False):
+            from .biometry import biometry_variant
+
+            variant = result["variant"] = biometry_variant()
+            if variant == "basic":
+                from importlib.util import find_spec
+
+                from .biometry import BiometryError, extract_biometry, pdf_page_count
+
+                for package in ("biometry_parser", "pypdfium2", "rapidocr", "onnxruntime"):
+                    assert find_spec(package) is None, f"Unexpected PDF extraction dependency: {package}"
+                for operation in (pdf_page_count, extract_biometry):
+                    try:
+                        operation(b"")
+                    except BiometryError as exc:
+                        assert "基本版" in str(exc)
+                    else:
+                        raise AssertionError("Basic build must reject PDF extraction")
+                result["checks"].append("basic build supports PDF preview and comparison without PDF parsing dependencies")
+            else:
+                from .selftest_biometry import (
+                    check_bundled_ocr,
+                    check_concurrent_page_count,
+                    check_lite_text_pdf,
+                )
+
+                if variant == "full":
+                    check_bundled_ocr()
+                    result["checks"].append("embedded PP-OCRv6 model reads an image-only PDF with an empty user cache")
+                else:
+                    check_lite_text_pdf()
+                    result["checks"].append("lite PDF text extraction succeeds without an OCR runtime and identifies scans requiring OCR")
+                check_concurrent_page_count()
+                result["checks"].append("cached PDF page counting remains available during another extraction")
+            executable = Path(sys.executable)
+            with executable.open("rb") as stream:
+                result["sha256"] = hashlib.file_digest(stream, "sha256").hexdigest()
+            result["executable"] = executable.name
         result["ok"] = True
     except Exception as exc:
         result.update(error_type=type(exc).__name__, error=str(exc)[:1500])

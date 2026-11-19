@@ -5,10 +5,10 @@ window.ReportGallery=(()=>{
  function element(tag,text,cls){const value=document.createElement(tag);if(text!==undefined)value.textContent=text;if(cls)value.className=cls;return value;}
  function button(label,run){const value=element("button",label,"attachment-control");value.type="button";value.addEventListener("click",run);return value;}
  function create({urlFor,identity}){
-  const root=element("section",undefined,"report-gallery"),rail=element("div",undefined,"report-gallery-rail"),main=element("div",undefined,"report-gallery-main");
+  const root=element("section",undefined,"report-gallery"),sidebar=element("div",undefined,"report-gallery-sidebar"),rail=element("div",undefined,"report-gallery-rail"),main=element("div",undefined,"report-gallery-main");
   const heading=element("div",undefined,"report-gallery-heading"),title=element("strong"),tools=element("div",undefined,"attachment-toolbar"),viewport=element("div",undefined,"report-gallery-viewport"),notice=element("p",undefined,"caption report-gallery-notice");
   const header=element("div",undefined,"report-gallery-header dialog-toolbar");
-  rail.setAttribute("aria-label","報告附件");heading.append(title);header.append(heading,tools);main.append(header,notice,viewport);root.append(rail,main);
+  rail.setAttribute("aria-label","報告附件");heading.append(title);header.append(heading,tools);main.append(header,notice,viewport);sidebar.append(rail);root.append(sidebar,main);
   const entries=new Map(),positions=new Map(),queue=[];let selected="",userSelected=false,selectedDigest="",controlsKey="",file=null,pdfStage=null,zoom=1,imageFit=true,zoomControl=null,zoomSteps=[],stopImageLoad=null,disposed=false,active=0,order={};
   const observer=typeof IntersectionObserver==="function"?new IntersectionObserver(changes=>{
    for(const change of changes){
@@ -147,7 +147,7 @@ window.ReportGallery=(()=>{
    entry.comparison={...identity,digest:asset.digest,mime:asset.mime,name:order.name||"醫囑附件",source:"醫囑報告",date:order.date||"",fileIndex:entry.ordinal,fileCount:entries.size,reportId:order.id};
    const fileActions=element("div",undefined,"report-gallery-file-actions dialog-toolbar");
    fileActions.append(ClinicalUI.comparisonChoice(entry.comparison),ClinicalUI.assetTools({url,asset,name,image:()=>file}));
-   const link=element("a","獨立開啟原檔","attachment-control");link.href=url;link.target="_blank";link.rel="noopener";fileActions.append(link);tools.append(fileActions);
+   const link=element("a","新視窗開啟","attachment-control");link.href=url;link.target="_blank";link.rel="noopener";fileActions.append(link);tools.append(fileActions);
    if(asset.mime?.startsWith("image/")||asset.mime==="application/pdf"){
     const reset=()=>{if(pdfStage)zoom=1;else{imageFit=true;restorePosition({});}applyZoom();savePosition();};
     const resize=direction=>{
@@ -215,7 +215,7 @@ window.ReportGallery=(()=>{
    visibleFallback();
   }
   function dispose(){if(disposed)return;disposed=true;if(fitObserver)fitObserver.disconnect();else window.removeEventListener?.("resize",refit);observer?.disconnect();queue.length=0;for(const entry of entries.values())release(entry);clearOriginal();entries.clear();positions.clear();}
-  return {element:root,update,dispose};
+  return {element:root,sidebar,update,dispose};
  }
  return {create};
 })();

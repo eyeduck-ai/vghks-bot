@@ -13,6 +13,27 @@ window.CataractUI = (() => {
   const resultKey = values => [embeddedAccount, values.cohort_id, values.mrn].join(":");
   const resultRange = values => JSON.stringify([values.start || "", values.end || ""]);
 
+  function releasePreviews() {
+    currentState?.orderBiometry?.dismiss();
+    currentUI?.orderExtraction?.dispose();
+    currentUI?.scans?.clear();
+  }
+
+  function mountBiometryWorkspace(workspace) {
+    const layout = $("#cataractLayout"), area = $("#analysisResults");
+    const x = window.scrollX, y = window.scrollY;
+    area.append(workspace);
+    layout.classList.add("cataract-batch-open");
+    window.scrollTo?.(0, 0);
+    return () => {
+      workspace.remove();
+      layout.classList.remove("cataract-batch-open");
+      currentUI?.orderExtraction?.refreshReview();
+      currentUI?.scans?.refreshBiometryReview();
+      window.scrollTo?.(x, y);
+    };
+  }
+
   function cachedResult(values) {
     const cached = resultCache.get(resultKey(values));
     return cached?.range === resultRange(values) ? cached.data : null;
@@ -102,6 +123,7 @@ window.CataractUI = (() => {
     if (key !== currentKey) {
       currentKey = key;
       orderSequence++;
+      releasePreviews();
       currentUI = null;
     }
     currentState = patientStates.get(key);
@@ -114,9 +136,14 @@ window.CataractUI = (() => {
       cacheContext = contextKey();
       resultCache.clear();resultReads.clear();patientStates.clear();
       status = null;statusRead = null;statusAt = 0;
+      releasePreviews();
       currentKey = "";currentState = null;currentUI = null;orderSequence++;
     }
-    if (!cataract || !currentCohort) restoreHeaderTools();
+    if (!cataract || !currentCohort) {
+      currentState?.orderBiometry?.dismiss();
+      currentUI?.scans?.dismissBiometry?.();
+      restoreHeaderTools();
+    }
     const area = $("#cataractLayout"), list = $("#cataractPatients");
     if (!patientResize && typeof ResizeObserver === "function") {
       patientResize = new ResizeObserver(fitPatientRail);patientResize.observe($("#analysisPane"));
@@ -317,6 +344,36 @@ window.CataractUI = (() => {
 
   function orderPanel(data, state, section = el("section", undefined, "cataract-section cataract-orders")) {
     if (!section.querySelector("h3")) section.append(el("h3", "歷年醫囑"));
+    const account = embeddedAccount, cohortId = currentCohort.id, mrn = data.member.mrn;
+    const database = config?.context;
+    const canExtract = data.member.account_id === account && config?.biometry_variant !== "basic";
+    if (state.orderBiometry && (!canExtract || state.orderBiometry.database !== database)) {
+      if (currentUI?.orders === section) clearOrderExtraction();
+      state.orderBiometry.clear();
+      state.orderBiometry.element.remove();
+      state.orderBiometry = null;
+    }
+    if (!state.orderBiometry && canExtract && window.CataractBiometry) {
+      state.orderBiometry = window.CataractBiometry.create({account, cohortId, mrn, source: "orders",
+        request: values => ap("cataract/biometry", values),
+        mountWorkspace: mountBiometryWorkspace,
+        textOnly: config?.biometry_variant === "lite",
+        current: () => activeView() && currentState === state && database === config?.context &&
+          currentCohort?.id === cohortId && embeddedAccount === account && $("#analysisPatient").value === mrn &&
+          currentCohort.members.some(member => member.mrn === mrn && member.account_id === account),
+        readonly: !!config?.read_only,
+        range: () => ({start: $("#analysisStart").value, end: $("#analysisEnd").value})});
+      state.orderBiometry.database = database;
+    }
+    if (state.orderBiometry) {
+      if (state.orderBiometry.element.parentElement !== section)
+        section.querySelector("h3").after(state.orderBiometry.element);
+      const pdfs = (data.orders || []).flatMap(row => (row.attachments || [])
+        .filter(asset => asset.mime === "application/pdf" && asset.available !== false)
+        .map(asset => ({id: row.id, digest: asset.digest, date: row.date,
+          label: [row.name, asset.name].filter(Boolean).join(" · ")})));
+      state.orderBiometry.setDocuments(pdfs);
+    }
     section.querySelector(".empty-orders")?.remove();
     const preferred = analysisState.modules.cataract.orders, groups = new Map();
     for (const row of data.orders || []) {
@@ -360,7 +417,8 @@ window.CataractUI = (() => {
         select.querySelector("span").textContent=row.report_loaded&&!row.report_complete?`部分完成 · ${count}`:count;
         if(group.children[index+1]!==item)group.insertBefore(item,group.children[index+1]||null);
       }
-      if(section.children[position+1]!==group)section.insertBefore(group,section.children[position+1]||null);
+      const groupPosition = position + (state.orderBiometry ? 2 : 1);
+      if(section.children[groupPosition]!==group)section.insertBefore(group,section.children[groupPosition]||null);
     }
     if(!names.length)section.append(el("p","尚無符合的醫囑。","small muted empty-orders"));
     return section;
@@ -442,16 +500,20 @@ window.CataractUI = (() => {
     currentUI.railToggle.setAttribute("aria-label", currentState.numericOpen ? "收合歷年眼科數值" : "展開歷年眼科數值");
     currentUI.railToggle.textContent = currentState.numericOpen ? "‹" : "›";
     currentUI.railToggle.hidden = view !== "work";
+    if (view === "scans") currentUI.scans?.activate();
     refitImagePreviews();
   }
 
   function render(data) {
     layout();
     const area = $("#analysisResults"), member = data.member, state = stateFor(member);
+    const account = embeddedAccount, cohortId = currentCohort?.id;
+    const allowedToReadScans = () => currentCohort?.members.find(row => row.mrn === member.mrn)?.account_id === account;
+    const scanAllowed = allowedToReadScans();
     const numericSignature = JSON.stringify(data.numeric || []), soapSignature = JSON.stringify(data.latest_soap || {});
     const orderSignature = JSON.stringify(data.orders || []);
     const identitySignature = JSON.stringify([member.mrn, member.name, member.birthday, ClinicalUI.patientAge(member)]);
-    if (currentUI && area.contains(currentUI.heading)) {
+    if (currentUI && currentUI.scanAllowed === scanAllowed && area.contains(currentUI.heading)) {
       if (currentUI.identitySignature !== identitySignature) {
         const next = patientIdentity(member);currentUI.identity.replaceWith(next);
         currentUI.identity = next;currentUI.identitySignature = identitySignature;
@@ -464,6 +526,7 @@ window.CataractUI = (() => {
       if (currentUI.soapSignature !== soapSignature) {
         const next = soapSection(data); currentUI.soap.replaceWith(next);
         currentUI.soap = next; currentUI.soapSignature = soapSignature;
+        currentUI.scans?.updateSOAP(soapSection(data));
       }
       if (currentUI.orderSignature !== orderSignature) {
         const scroll = currentUI.orders.scrollTop;
@@ -481,8 +544,10 @@ window.CataractUI = (() => {
       }
       syncOrderControls();
       syncAttachments();
+      if (state.view === "scans") currentUI.scans?.activate();
       return;
     }
+    releasePreviews();
     restoreHeaderTools();
     area.replaceChildren();
     if (state.selectedOrderId) {
@@ -493,7 +558,9 @@ window.CataractUI = (() => {
     const identity = patientIdentity(member);heading.append(identity);
     const tabs = {}, nav = el("nav", undefined, "cataract-view-nav");
     nav.setAttribute("aria-label", "術前分析檢視");
-    for (const [key, label] of [["overview", "總覽"], ["work", "醫囑報告"]]) {
+    const views = [["overview", "SOAP+數值"], ["work", "數值+醫囑報告"]];
+    if (window.CataractScans) views.push(["scans", "SOAP+掃描病歷"]);
+    for (const [key, label] of views) {
       const control = button(label, () => showView(key), "quiet-button");
       control.dataset.view = key; control.setAttribute("aria-pressed", String(state.view === key));
       tabs[key] = control; nav.append(control);
@@ -525,10 +592,20 @@ window.CataractUI = (() => {
     const preview = el("section", undefined, "cataract-section cataract-report-preview");
     workPage.append(mobileSwitch("work", state), workspace);
     workspace.append(numeric, orders, preview);
-    currentUI = {heading, identity, identitySignature, tools, pages:{overview, work:workPage}, tabs, compare, retry,
+    const pages = {overview, work:workPage};
+    const scans = scanAllowed && window.CataractScans?.create({account, cohortId, mrn:member.mrn, soap:soapSection(data),
+      readOnly:!!config?.read_only, canFetch:() => !config?.read_only && sharedStatus?.online !== false,
+      isCurrent:() => activeView() && currentUI?.scans === scans && scans.element.isConnected &&
+        currentCohort?.id === cohortId && $("#analysisPatient").value === member.mrn && allowedToReadScans(),
+      biometryRequest:config?.biometry_variant === "basic" ? undefined : values => ap("cataract/biometry", values),
+      mountBiometryWorkspace,
+      textOnly:config?.biometry_variant === "lite"});
+    if (window.CataractScans) pages.scans = scans?.element ||
+      el("p", "請將病人抓取帳號設為目前登入帳號。", "cataract-view small muted");
+    currentUI = {heading, identity, identitySignature, tools, pages, tabs, compare, retry, scans, scanAllowed,
       overview, overviewNumeric, work:workPage, soap, numeric, orders, preview, workspace, railToggle,
       numericSignature, soapSignature, orderSignature};
-    area.append(heading, overview, workPage);
+    area.append(heading, ...Object.values(pages));
     // Keep the shared controls connected while constructing the new view.
     // Report rendering reads their values, including a restored selection.
     for (const control of [toolbar, coverage]) {
@@ -551,6 +628,7 @@ window.CataractUI = (() => {
     for (const checkbox of $$("#analysisResults input[data-compare-digest]"))
       checkbox.checked = window.FileCompare.has(checkbox.dataset.compareDigest);
     if (currentUI) {
+      currentUI.scans?.syncControls();
       currentUI.compare.textContent = `查看比較（${window.FileCompare.count()} / 6）`;
       currentUI.compare.disabled = !window.FileCompare.count();
       const row = status?.members?.find(item => item.mrn === $("#analysisPatient").value);
@@ -622,12 +700,162 @@ window.CataractUI = (() => {
     return box;
   }
 
+  function createPdfExtraction(biometry, doc, viewer) {
+    const element = el("div", undefined, "cataract-pdf-extraction");
+    const extract = button("擷取PDF", run, "quiet attachment-control");
+    const category = el("select");
+    for (const [value, label] of window.CataractBiometry.categories) {
+      const option = el("option", label);
+      option.value = value;
+      category.append(option);
+    }
+    category.value = "all";
+    const categoryLabel = el("label", "擷取內容", "cataract-pdf-category");
+    categoryLabel.append(category);
+    const group = el("fieldset", undefined, "cataract-pdf-pages");
+    const numbers = el("div", undefined, "cataract-pdf-page-choices");
+    const status = el("p", undefined, "caption cataract-pdf-status");
+    status.setAttribute("role", "status");
+    const retry = button("重讀核對結果", () => biometry.reloadDocument(doc), "quiet-button");
+    retry.hidden = true;
+    const panel = el("aside", undefined, "cataract-inline-review");
+    const review = button("檢核結果", () => setReviewOpen(true), "quiet-button");
+    const close = button("收合", () => {setReviewOpen(false); review.focus();}, "quiet-button");
+    close.setAttribute("aria-label", "收合擷取結果");
+    panel.hidden = review.hidden = true;
+    const selected = new Set();
+    let file = null, job = {}, loading = false, pageError = "", startError = "", disposed = false;
+    let unsubscribe, editor = null, reviewedJob = "";
+
+    function checkbox(text, ariaLabel, update) {
+      const label = el("label", undefined, "check-label");
+      const input = el("input");
+      input.type = "checkbox";
+      input.setAttribute("aria-label", ariaLabel);
+      input.addEventListener("change", () => {update(input.checked); render();});
+      label.append(input, el("span", text));
+      return [label, input];
+    }
+
+    const [wholeLabel, whole] = checkbox("整份", "整份 PDF", checked => {
+      if (checked) {
+        selected.clear();
+        for (const input of numbers.querySelectorAll("input")) input.checked = false;
+      }
+    });
+    whole.checked = true;
+    group.append(el("legend", "擷取頁碼", "sr-only"), wholeLabel, numbers);
+    element.append(extract, categoryLabel, group, review, retry, status);
+
+    function setReviewOpen(open) {
+      panel.hidden = !open;
+      review.hidden = !reviewedJob || open;
+    }
+
+    function renderReview() {
+      const documents = job.result?.documents;
+      const index = documents?.findIndex(row => row.id === doc.id && row.digest === doc.digest) ?? -1;
+      if (index < 0 || !job.jobId) {
+        if (reviewedJob) panel.replaceChildren();
+        reviewedJob = "";
+        editor = null;
+        setReviewOpen(false);
+        return;
+      }
+      if (reviewedJob === job.jobId || !window.CataractBiometryReview) return;
+      const jobId = reviewedJob = job.jobId;
+      const navigate = page => {
+        if (disposed || reviewedJob !== jobId || !viewer?.isConnected || !Number.isSafeInteger(page) || page < 1) return;
+        const url = ClinicalUI.pdfURL(viewer.src, page);
+        if (viewer.src !== url) viewer.src = url;
+      };
+      editor = window.CataractBiometryReview.create({result:job.result, ...biometry.reviewOptions(job.result),
+        documentIndex:index, current:() => !disposed && element.isConnected && reviewedJob === jobId,
+        onPageChange:navigate});
+      editor.header.append(close);
+      panel.replaceChildren(editor.element);
+      setReviewOpen(true);
+      if (documents[index].pages?.length === 1) navigate(documents[index].pages[0]);
+    }
+
+    function render() {
+      group.hidden = !file;
+      extract.textContent = pageError ? "重讀頁數" : "擷取PDF";
+      extract.disabled = loading || !pageError && (!file || job.busy || !whole.checked && !selected.size);
+      category.disabled = loading || job.busy;
+      renderReview();
+      retry.hidden = !job.restoreError || job.restoring || !biometry.reloadDocument;
+      const savedMessage = job.changed ? "原始 PDF 已變更，請重新擷取。" : job.restoreError ||
+        (job.restoring ? "正在讀取本機核對結果…" : job.saved ? "已載入本機擷取與核對結果。" : "");
+      const message = [pageError || startError || (loading ? "正在讀取 PDF 頁數…" : job.message), savedMessage]
+        .filter(Boolean).join(" ");
+      if (status.textContent !== message) status.textContent = message;
+      status.hidden = !message;
+      status.classList.toggle("form-error", !!(pageError || startError || job.restoreError || job.changed || job.error || job.state === "failed"));
+    }
+
+    async function loadPages() {
+      loading = true;
+      pageError = "";
+      render();
+      try {
+        const pages = await biometry.readPages(doc, () => !disposed && element.isConnected);
+        if (disposed) return;
+        if (!pages) throw new Error("無法讀取此 PDF 的頁數。");
+        file = {id:doc.id, digest:pages.digest || doc.digest};
+        for (let page = 1; page <= pages.count; page++) {
+          const [label] = checkbox(String(page), `第 ${page} 頁`, checked => {
+            if (checked) {selected.add(page); whole.checked = false;}
+            else selected.delete(page);
+          });
+          numbers.append(label);
+        }
+      } catch (error) {
+        if (!disposed) pageError = error.message || "無法讀取此 PDF 的頁數。";
+      } finally {
+        loading = false;
+        if (!disposed) render();
+      }
+    }
+
+    async function run() {
+      if (disposed || extract.disabled) return;
+      if (pageError) return loadPages();
+      startError = "";
+      try {
+        await biometry.startDocument(file, whole.checked ? undefined : [...selected], category.value);
+      } catch (error) {
+        if (!disposed) startError = error.message || "無法安排背景擷取。";
+      } finally {
+        if (!disposed) render();
+      }
+    }
+
+    return {element, panel,
+      activate() {
+        unsubscribe = biometry.subscribeDocument(doc, next => {job = next; render();});
+        void loadPages();
+      },
+      refreshReview() {editor?.refresh();},
+      dispose() {disposed = true; unsubscribe?.(); element.remove(); panel.remove();}};
+  }
+
+  function clearOrderExtraction() {
+    currentUI.orderExtraction?.dispose();
+    currentUI.orderExtraction = null;
+  }
+
   function renderOrder(value, fallback) {
     const area = currentUI?.preview, row = value?.order || fallback;
     if (!area) return;
-    const wanted=value?.assets?.some(asset=>asset.digest===currentState.selectedAssetDigest)?currentState.selectedAssetDigest:value?.assets?.[0]?.digest;
+    const assets = value?.assets || [];
+    const selected = assets.find(asset => asset.digest === currentState.selectedAssetDigest) || assets[0];
     const previous=area.querySelector(".cataract-asset");
-    const retained=previous?.dataset.digest===wanted?previous:null;
+    const retained = previous?.dataset.digest === selected?.digest ? previous : null;
+    const biometry = selected?.mime === "application/pdf" && !config?.read_only ? currentState.orderBiometry : null;
+    if (currentUI.orderExtraction &&
+        (!retained || currentUI.orderExtraction.id !== row?.id || currentUI.orderExtraction.biometry !== biometry))
+      clearOrderExtraction();
     for(const child of [...area.children])if(child!==retained)child.remove();
     area.append(el("h3", "醫囑報告", "sr-only"));
     if (!row) {
@@ -652,20 +880,24 @@ window.CataractUI = (() => {
       syncAttachments();
       return;
     }
-    const assets = value.assets || [];
-    if (assets.length) {
-      if (!assets.some(asset => asset.digest === currentState.selectedAssetDigest))
-        currentState.selectedAssetDigest = assets[0].digest;
+    if (selected) {
+      currentState.selectedAssetDigest = selected.digest;
       syncOrderControls();
-      const selected = assets.find(asset => asset.digest === currentState.selectedAssetDigest);
-      if(!retained){
-      const url=window.LocalSession.resourceURL(scopedPath("/api/analysis/asset?id=" + encodeURIComponent(selected.digest)));
-      let box;
-      if (selected.mime === "application/pdf") {
-        box = el("div", undefined, "cataract-asset");box.dataset.digest = selected.digest;
-        const file = el("iframe");file.src = ClinicalUI.pdfURL(url);file.title = `${row.name} · 所選檔案`;box.append(file);
-      } else box = imagePreview(selected, url, `${row.name} · 所選檔案`);
-      if(pacs)pacs.after(box);else area.prepend(box);
+      let box = retained;
+      if (!box) {
+        const url = window.LocalSession.resourceURL(scopedPath("/api/analysis/asset?id=" + encodeURIComponent(selected.digest)));
+        if (selected.mime === "application/pdf") {
+          box = el("div", undefined, "cataract-asset");box.dataset.digest = selected.digest;
+          const file = el("iframe");file.src = ClinicalUI.pdfURL(url);file.title = `${row.name} · 所選檔案`;box.append(file);
+        } else box = imagePreview(selected, url, `${row.name} · 所選檔案`);
+        if (pacs) pacs.after(box); else area.prepend(box);
+      }
+      if (biometry && !currentUI.orderExtraction) {
+        const extraction = createPdfExtraction(biometry, {id:row.id, digest:selected.digest}, box.querySelector("iframe"));
+        currentUI.orderExtraction = {...extraction, id:row.id, biometry};
+        box.prepend(extraction.element);
+        currentUI.workspace.append(extraction.panel);
+        extraction.activate();
       }
       refitImagePreviews();
     } else syncOrderControls();
@@ -746,8 +978,8 @@ window.CataractUI = (() => {
     for (const [key, cached] of resultCache) if (cleared.includes(cached.data.member.mrn)) resultCache.delete(key);
     for (const key of resultReads.keys()) if (cleared.includes(key.split(":").at(-1))) resultReads.delete(key);
     statusAt = 0;
-    for(const [key,state] of patientStates)if(cleared.includes(key.split(":").at(-1))){state.report=null;state.reportSavedAt="";state.orderRow=null;state.selectedOrderId="";state.selectedAssetDigest="";}
-    if(cleared.includes($("#analysisPatient").value)){orderSequence++;resultRequest++;currentUI=null;restoreHeaderTools();$("#analysisResults").replaceChildren();window.ScanBrowser?.reset();action(()=>loadAnalysisResult());}
+    for(const [key,state] of patientStates)if(cleared.includes(key.split(":").at(-1))){state.report=null;state.reportSavedAt="";state.orderRow=null;state.selectedOrderId="";state.selectedAssetDigest="";state.orderBiometry?.clear();}
+    if(cleared.includes($("#analysisPatient").value)){orderSequence++;resultRequest++;releasePreviews();currentUI=null;restoreHeaderTools();$("#analysisResults").replaceChildren();window.ScanBrowser?.reset();action(()=>loadAnalysisResult());}
   });
   $("#cataractUpdate").addEventListener("click", () => action(() => start({refresh: true})));
   document.addEventListener("pointerdown", event => {
@@ -755,7 +987,11 @@ window.CataractUI = (() => {
     if (tools?.open && !tools.contains(event.target)) tools.open = false;
   });
   window.addEventListener("filecomparechange", syncAttachments);
-  window.addEventListener("filecomparemessage", event => {if (activeView()) notify(event.detail, true);});
+  window.addEventListener("filecomparemessage", event => {
+    if (!activeView()) return;
+    currentUI?.scans?.comparisonFailed();
+    notify(event.detail, true);
+  });
   window.addEventListener("message", event => {
     if (event.origin !== location.origin || event.source !== parent ||
         event.data?.type !== "bot:workspace-resumed" || !activeView()) return;
@@ -782,6 +1018,6 @@ window.CataractUI = (() => {
       });
     });
   });
-  return {layout, refreshStatus, renderPatients, render, cachedResult, readResult, preparePatient, readFailure,
+  return {layout, refreshStatus, renderPatients, render, cachedResult, readResult, preparePatient, readFailure, createPdfExtraction,
     autoStart: ({selectedOnly=false}={}) => enqueue(selectedOnly?"selected":"start")};
 })();

@@ -49,6 +49,12 @@ class AnalysisStore:
                 CREATE TABLE IF NOT EXISTS analysis_asset_refs (
                     mrn TEXT NOT NULL, key TEXT NOT NULL, digest TEXT NOT NULL,
                     PRIMARY KEY(mrn,key,digest));
+                CREATE TABLE IF NOT EXISTS cataract_pdf_review (
+                    mrn TEXT NOT NULL, source TEXT NOT NULL, document_id TEXT NOT NULL,
+                    digest TEXT NOT NULL, slot TEXT NOT NULL, capture_id TEXT NOT NULL,
+                    category TEXT NOT NULL, document TEXT NOT NULL, draft TEXT NOT NULL,
+                    revision INTEGER NOT NULL, updated_at TEXT NOT NULL,
+                    PRIMARY KEY(mrn,source,document_id,digest));
                 CREATE TABLE IF NOT EXISTS sheet_previews (
                     id TEXT PRIMARY KEY, payload TEXT NOT NULL, updated_at TEXT NOT NULL);
                 CREATE INDEX IF NOT EXISTS sheet_preview_recent ON sheet_previews(updated_at DESC,id);
@@ -254,6 +260,49 @@ class AnalysisStore:
                        (mrn, key, kind, content, saved, account, encoded(assessment or {})))
             if kind == "numeric":
                 self._save_numeric_structure(db, mrn, key, payload, saved, account)
+
+    @staticmethod
+    def cataract_review_draft(row):
+        return {"revision": row["revision"], **json.loads(row["draft"])}
+
+    def cataract_pdf_review(self, mrn, source, document_id, sha, *, draft_only=False):
+        columns = "capture_id,revision,draft" if draft_only else "*"
+        with self.library.connect() as db:
+            return db.execute(f"SELECT {columns} FROM cataract_pdf_review WHERE mrn=? AND source=? AND document_id=? AND digest=?",
+                              (mrn, source, document_id, sha)).fetchone()
+
+    def cataract_pdf_previous(self, mrn, source, document_id, slot):
+        with self.library.connect() as db:
+            return {row[0] for row in db.execute("SELECT digest FROM cataract_pdf_review "
+                "WHERE mrn=? AND source=? AND document_id=? AND slot=?", (mrn, source, document_id, slot))}
+
+    def save_cataract_pdf_capture(self, mrn, source, slot, capture_id, category, document):
+        draft = {"confirmed": False, "edits": []}
+        with self.library.connect() as db:
+            db.execute("""INSERT INTO cataract_pdf_review VALUES(?,?,?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(mrn,source,document_id,digest) DO UPDATE SET
+                slot=excluded.slot,capture_id=excluded.capture_id,category=excluded.category,
+                document=excluded.document,draft=excluded.draft,revision=0,updated_at=excluded.updated_at""",
+                (mrn, source, document["id"], document["digest"], slot, capture_id,
+                 category, encoded(document), encoded(draft), 0, timestamp()))
+        return {"revision": 0, **draft}
+
+    def save_cataract_pdf_draft(self, mrn, source, document_id, sha, capture_id, revision, draft):
+        key = (mrn, source, document_id, sha)
+        with self.library.batch() as db:
+            row = db.execute("SELECT capture_id,revision,draft FROM cataract_pdf_review "
+                             "WHERE mrn=? AND source=? AND document_id=? AND digest=?", key).fetchone()
+            if row is None or row["capture_id"] != capture_id:
+                return {"state": "changed"}
+            content, current = encoded(draft), row["revision"]
+            if row["draft"] == content:
+                return {"state": "saved", "saved_review": self.cataract_review_draft(row)}
+            if revision != current:
+                return {"state": "conflict", "saved_review": self.cataract_review_draft(row)}
+            db.execute("UPDATE cataract_pdf_review SET draft=?,revision=?,updated_at=? "
+                       "WHERE mrn=? AND source=? AND document_id=? AND digest=?",
+                       (content, current + 1, timestamp(), *key))
+            return {"state": "saved", "saved_review": {"revision": current + 1, **draft}}
 
     @staticmethod
     def _numeric_structure(key, payload, saved):

@@ -1,3 +1,4 @@
+:root{--green:#235c4c;--selection-bg:color-mix(in srgb,var(--green) 13%,var(--paper,#fff));--selection-border:color-mix(in srgb,var(--green) 70%,var(--paper,#fff))}
 .patient-mrn-copy{display:inline-flex;align-items:center;width:auto;min-height:25px!important;padding:2px 8px!important;border:1px solid #c4d6bc!important;border-radius:4px!important;background:#eff6e9!important;color:#406334!important;font-size:12px!important;font-weight:650;text-decoration:none!important;white-space:nowrap}
 .patient-mrn-copy:hover{background:#deecd5!important;border-color:#83a876!important}.patient-mrn-copy:focus-visible,.patient-rail-toggle:focus-visible{outline:2px solid #177b86;outline-offset:2px}
 .patient-mrn-fallback{width:10ch!important;min-height:25px!important;padding:2px 5px!important;font-size:12px!important}

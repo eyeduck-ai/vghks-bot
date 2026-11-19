@@ -1,3 +1,4 @@
+import hashlib
 import json
 import subprocess
 import tempfile
@@ -7,6 +8,9 @@ from unittest.mock import Mock, patch
 
 from tools import verify_bundle
 from tools.verify_repository import (
+    UNSTAGED_PUBLIC_ASSETS,
+    bundled_static_assets,
+    check_biometry_installation,
     check_contents,
     check_core_installation,
     check_metadata,
@@ -47,6 +51,44 @@ class ReleaseBoundaryTests(unittest.TestCase):
     def test_installed_sdk_matches_the_pinned_git_commit(self):
         revision = check_sdk_installation()
         self.assertEqual(len(revision), 40)
+
+    def test_installed_biometry_parser_matches_the_pinned_git_commit(self):
+        self.assertEqual(len(check_biometry_installation()), 40)
+
+    def test_bundle_verifies_both_ocr_weights(self):
+        model = "ppocr-v6-small"
+        base = f"vghks_bot/biometry_models/{model}"
+        artifacts = {role: {"filename": f"{role}.onnx", "sha256": hashlib.sha256(role.encode()).hexdigest()}
+                     for role in ("det", "rec")}
+        registry = {"models": {model: {"artifacts": artifacts}}}
+        files = {f"{base}/{item['filename']}": role.encode() for role, item in artifacts.items()}
+        with patch.object(verify_bundle, "load_manifest", return_value=registry):
+            self.assertEqual(verify_bundle.verify_ocr_models(files, files.__getitem__),
+                             {item["filename"]: item["sha256"] for item in artifacts.values()})
+            detector = f"{base}/det.onnx"
+            with self.assertRaisesRegex(ValueError, "file names"):
+                verify_bundle.verify_ocr_models(files.keys() - {detector}, files.__getitem__)
+            files[detector] = b"corrupt weight"
+            with self.assertRaisesRegex(ValueError, "differs from the pinned manifest.*det.onnx"):
+                verify_bundle.verify_ocr_models(files, files.__getitem__)
+            self.assertEqual(verify_bundle.verify_ocr_models([], files.__getitem__, variant="lite"), {})
+            for unexpected in (detector, "rapidocr/models/accidental.onnx"):
+                with self.subTest(unexpected=unexpected), self.assertRaisesRegex(ValueError, "expected variant"):
+                    verify_bundle.verify_ocr_models([unexpected], files.__getitem__, variant="lite")
+
+    def test_pdf_profiles_check_native_assets_and_pyz_modules(self):
+        native = ["pypdfium2_raw/pdfium.dll", "PIL/_imaging.pyd"]
+        modules = ["biometry_parser.client", "pypdfium2._library_scope", "pydantic.main", "psutil"]
+        verify_bundle.verify_pdf_packages([], [], "basic")
+        verify_bundle.verify_pdf_packages(native, modules, "lite")
+        with self.assertRaisesRegex(ValueError, "Unexpected.*pypdfium2_raw"):
+            verify_bundle.verify_pdf_packages(native, [], "basic")
+        with self.assertRaisesRegex(ValueError, "Unexpected.*numpy"):
+            verify_bundle.verify_pdf_packages([*native, "numpy.libs/openblas.dll"], modules, "lite")
+        with self.assertRaisesRegex(ValueError, "Unexpected.*rapidocr"):
+            verify_bundle.verify_pdf_packages(native, [*modules, "rapidocr.main"], "lite")
+        with self.assertRaisesRegex(ValueError, "Missing.*onnxruntime"):
+            verify_bundle.verify_pdf_packages(native, modules, "full")
 
     def test_same_sdk_version_cannot_hide_a_stale_commit_or_missing_provenance(self):
         revision = check_sdk_installation()
@@ -95,9 +137,13 @@ class ReleaseBoundaryTests(unittest.TestCase):
             subprocess.run(["git", "add", "vghks_bot/static/app.js"], cwd=root, check=True, capture_output=True)
             (static / "draft.js").write_text("// not staged", encoding="utf-8")
             (static / "service-account-synthetic.json").write_text("{}", encoding="utf-8")
+            additional = [static / name for name in UNSTAGED_PUBLIC_ASSETS]
+            for path in additional:
+                path.write_text("/* synthetic */", encoding="utf-8")
             self.assertEqual(tracked_directory("vghks_bot/static", root=root), [script])
-            base = {"vghks_bot/static/app.js": script.read_bytes(),
-                    "vghks_bot/defaults.json": b'{"username":"", "password":"synthetic"}'}
+            self.assertEqual(bundled_static_assets(root), [script, *additional])
+            base = {path.relative_to(root).as_posix(): path.read_bytes() for path in [script, *additional]}
+            base["vghks_bot/defaults.json"] = b'{"username":"", "password":"synthetic"}'
             for files, error in (
                 ({**base, "vghks_bot/static/service-account-synthetic.json": b"{}"}, "static file names"),
                 (base, "login defaults must be blank"),
@@ -108,5 +154,10 @@ class ReleaseBoundaryTests(unittest.TestCase):
                       patch.object(verify_bundle, "CArchiveReader", return_value=archive),
                       patch.object(verify_bundle, "check_sdk_installation", return_value="0" * 40),
                       patch.object(verify_bundle, "check_core_installation", return_value="1" * 40),
+                      patch.object(verify_bundle, "check_biometry_installation", return_value="2" * 40),
                       self.assertRaisesRegex(ValueError, error)):
                     verify_bundle.verify(root / "synthetic.exe", root=root)
+            (static / "cataract-biometry-review.css").write_text(
+                "-----BEGIN PRIVATE KEY-----\n" + "A" * 32, encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, r"Private key material.*cataract-biometry-review\.css"):
+                bundled_static_assets(root)

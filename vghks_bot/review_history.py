@@ -2,8 +2,15 @@
 from __future__ import annotations
 
 import copy
+import os
+import re
+import tempfile
 import uuid
+from contextlib import contextmanager
 from datetime import timedelta
+from pathlib import Path
+from shutil import copyfileobj
+from zipfile import ZIP_STORED, ZipFile
 
 from vghks_sdk import AuthenticationError, SoapRecord, VisitCase
 from vghks_sdk.core.errors import error_info
@@ -29,6 +36,7 @@ from .analysis_fetch import (
 )
 from .analysis_store import digest
 from .connection_state import should_pause
+from .downloads import filename
 from .encoding import report_attachment_downloads
 from .order_display import display_group
 from .progress import progress
@@ -47,6 +55,10 @@ NAMES = {"numeric": "歷年數值類報告", "orders": "歷年醫囑清單", "vi
          "case_numeric": "該次數值類報告", "case_orders": "該次醫囑清單",
          "order_report": "醫囑報告內容", "visit_soap": "歷史 SOAP",
          "scans": "歷年掃描病歷", "case_scans": "該次掃描病歷", "scan_asset": "掃描病歷 PDF"}
+ARCHIVE_LIMIT = 100
+ARCHIVE_FILE_LIMIT = 500
+ARCHIVE_SIZE_LIMIT = 512 * 1024 * 1024
+ARCHIVE_MIMES = {"application/pdf", "image/jpeg", "image/png", "image/gif"}
 
 
 class ReviewHistory:
@@ -346,6 +358,85 @@ class ReviewHistory:
                 "complete": complete, "issues": issues,
                 "coverage": {"numeric_start": (today() - timedelta(days=3650)).isoformat(),
                              "orders_start": (today() - timedelta(days=4000)).isoformat()}}
+
+    def _archive_selection(self, values):
+        if values.get("resource") not in ("orders", "case_orders", "scans", "case_scans"):
+            raise ValueError("請從醫囑清單或掃描病歷選擇要下載的原檔。")
+        ids = values.get("ids")
+        if (not isinstance(ids, list) or not 1 <= len(ids) <= ARCHIVE_LIMIT
+                or any(not isinstance(item, str) or not re.fullmatch(r"[a-f0-9]{64}", item) for item in ids)):
+            raise ValueError(f"請勾選 1 至 {ARCHIVE_LIMIT} 個清單項目。")
+        _, mrn, resource, reference = self.scope(values)
+        data, _ = self._stored(mrn, resource, reference)
+        orders = resource in ("orders", "case_orders")
+        listed = (data or []) if orders else (data or {}).get("records", (data or {}).get("scans", []))
+        rows = {}
+        for row in listed:
+            rows.setdefault(row["id"], row)
+        if set(ids) - rows.keys():
+            raise ValueError("部分勾選項目已不在目前清單，請重新勾選。")
+        return mrn, resource, [rows[key] for key in dict.fromkeys(ids)]
+
+    def _archive_files(self, mrn, resource, row):
+        if resource in ("orders", "case_orders"):
+            data, _ = self._stored(mrn, "order_report", row["id"])
+            data = data or {}
+            incomplete = (data.get("processing")
+                          or any(item.get("status") != "ready" for item in data.get("attachment_items", []))
+                          or any(issue.get("code") != "BOT_REPORT_TEXT_PARTIAL" for issue in data.get("issues", [])))
+            return row.get("name") or "醫囑報告", data.get("assets", []), incomplete
+        return row.get("category_label") or "掃描病歷", [row["asset"]] if row.get("asset") else [], False
+
+    @contextmanager
+    def archive(self, values):
+        """Zip original cached files from the verified list without changing clinical data."""
+        with tempfile.TemporaryDirectory(prefix="vghks-originals-") as directory:
+            path = Path(directory) / "originals.zip"
+            count, total_size, missing = 0, 0, []
+            with self.store.library.read_snapshot() as db:
+                mrn, resource, rows = self._archive_selection(values)
+                with ZipFile(path, "w", ZIP_STORED) as output:
+                    for position, row in enumerate(rows, 1):
+                        label, assets, incomplete = self._archive_files(mrn, resource, row)
+                        label = " ".join(f'{row.get("date") or ""} {label}'.split())
+                        before = count
+                        # The digest comes only from the verified item and must also
+                        # belong to this patient in the current account's storage.
+                        for number, asset in enumerate(assets, 1):
+                            sha = asset.get("digest")
+                            if not db.execute("SELECT 1 FROM analysis_asset_refs WHERE mrn=? AND digest=? LIMIT 1",
+                                              (mrn, sha)).fetchone():
+                                incomplete = True
+                                continue
+                            try:
+                                source, mime = self.store.asset(sha)
+                                if mime not in ARCHIVE_MIMES:
+                                    raise ValueError("invalid MIME")
+                                handle = source.open("rb")
+                            except (OSError, TypeError, ValueError):
+                                incomplete = True
+                                continue
+                            with handle:
+                                size = os.fstat(handle.fileno()).st_size
+                                if not size or asset.get("size", size) != size:
+                                    incomplete = True
+                                    continue
+                                if count >= ARCHIVE_FILE_LIMIT or total_size + size > ARCHIVE_SIZE_LIMIT:
+                                    raise ValueError("原檔超過 500 份或總計 512 MiB，請減少勾選項目後再下載。")
+                                name = filename(f"{position:03d}-{number:03d}-{label}", mime)
+                                with output.open(name, "w") as destination:
+                                    copyfileobj(handle, destination, length=128 * 1024)
+                                count += 1
+                                total_size += size
+                        if incomplete or count == before:
+                            detail = "部分附件尚未取得" if count > before else "沒有已取得的 PDF 或圖片原檔"
+                            missing.append(f"{position:03d} {label[:120]}：{detail}")
+                    if not count:
+                        raise ValueError("勾選項目沒有已取得的 PDF 或圖片原檔。")
+                    if missing:
+                        output.writestr("缺漏清單.txt", ("\n".join(missing) + "\n").encode("utf-8-sig"))
+            name = filename(f"{NAMES[resource]}-原檔-{today().isoformat()}", "application/zip")
+            yield path, name, count, len(missing)
 
     def execute(self, task, state=None):
         mrn, resource, reference = task["mrn"], task["resource"], task.get("reference", "")

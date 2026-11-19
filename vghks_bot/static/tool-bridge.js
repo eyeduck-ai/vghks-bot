@@ -1,7 +1,7 @@
 "use strict";
 // Share the proven comparison and sheet editors inside the account workbench.
-if (/^[a-f0-9]{32}$/.test(embeddedAccount || "")) {
-  document.body.classList.add("tool-embedded");
+if (toolWorkspace) {
+  document.body.classList.add("tool-embedded", "tool-starting");
   document.documentElement.dataset.density = "compact";
   window.addEventListener("message", event => {
     if(event.origin===location.origin&&event.source===parent&&event.data?.type==="bot:soap-updated")action(()=>loadSurgery());
@@ -10,38 +10,45 @@ if (/^[a-f0-9]{32}$/.test(embeddedAccount || "")) {
     if(event.origin===location.origin&&event.source===parent&&event.data?.type==="bot:tool-focus"&&event.data.account===embeddedAccount)
       action(async()=>{await loadAnalysis(event.data.cohort,event.data.mrn);if($("#analysisView").value==="cataract")await window.CataractUI.autoStart({selectedOnly:!!event.data.selected_only});});
   });
-  window.addEventListener("workspace-ready", () => action(async () => {
-    const query = new URLSearchParams(location.search);
-    const module = ["retina", "cataract", "surgery"].includes(query.get("module")) ? query.get("module") : "retina";
-    const names = {retina:"視網膜比較", cataract:"白內障術前分析", surgery:"刀表更新"};
-    document.title = names[module] + " · VGHKS-bot";
-    $("#analysisTitle").textContent = names[module];
-    $("#googleSettingsButton").hidden = $("#sheetHistoryButton").hidden = module !== "surgery";
-    $(".analysis-run-controls").previousElementSibling.textContent = "檢查期間與資料更新";
-    for (const input of $$("input[name=analysisModule]")) {
-      input.checked = input.value === module;
-      input.parentElement.lastChild.textContent = names[input.value];
+}
+
+async function initializeToolWorkspace() {
+  const query = new URLSearchParams(location.search);
+  const module = ["retina", "cataract", "surgery"].includes(query.get("module")) ? query.get("module") : "retina";
+  const names = {retina:"視網膜比較", cataract:"白內障術前分析", surgery:"刀表更新"};
+  document.title = names[module] + " · VGHKS-bot";
+  $("#analysisTitle").textContent = names[module];
+  $("#googleSettingsButton").hidden = $("#sheetHistoryButton").hidden = module !== "surgery";
+  $(".analysis-run-controls").previousElementSibling.textContent = "檢查期間與資料更新";
+  for (const input of $$("input[name=analysisModule]")) {
+    input.checked = input.value === module;
+    input.parentElement.lastChild.textContent = names[input.value];
+  }
+  for (const option of $("#analysisView").options) option.textContent = names[option.value];
+  $("#analysisView").value = module;
+  $("#analysisView").disabled = true;
+  $("#analysisView").closest("label").hidden = true;
+  $("#startAnalysis").textContent = "抓取並比較";
+  if (module === "surgery") $("#startAnalysis").textContent = "補充院內手術資料";
+  if (module === "cataract") {
+    document.body.classList.add("cataract-embedded");
+    $("#analysisStart").value = $("#analysisEnd").value = "";
+    for (const id of ["analysisStart", "analysisEnd", "analysisRefresh"])
+      $("#" + id).closest(id === "analysisRefresh" ? "fieldset" : "label").hidden = true;
+    $("#startAnalysis").hidden = true;
+    $(".analysis-hint").hidden = true;
+    $(".analysis-run-controls").previousElementSibling.hidden = true;
+    $(".analysis-run-controls").hidden = true;
+  }
+  $("#saveCohort").textContent = "儲存清單";
+  for (const heading of $$(".analysis-step-heading")) heading.hidden = true;
+  showPane("analysis");
+  await action(async () => {
+    try {
+      await loadAnalysis(query.get("cohort"), query.get("focus") || "");
+    } finally {
+      document.body.classList.remove("tool-starting");
     }
-    for (const option of $("#analysisView").options) option.textContent = names[option.value];
-    $("#analysisView").value = module;
-    $("#analysisView").disabled = true;
-    $("#analysisView").closest("label").hidden = true;
-    $("#startAnalysis").textContent = "抓取並比較";
-    if (module === "surgery") $("#startAnalysis").textContent = "補充院內手術資料";
-    if (module === "cataract") {
-      document.body.classList.add("cataract-embedded");
-      $("#analysisStart").value = $("#analysisEnd").value = "";
-      for (const id of ["analysisStart", "analysisEnd", "analysisRefresh"])
-        $("#" + id).closest(id === "analysisRefresh" ? "fieldset" : "label").hidden = true;
-      $("#startAnalysis").hidden = true;
-      $(".analysis-hint").hidden = true;
-      $(".analysis-run-controls").previousElementSibling.hidden = true;
-      $(".analysis-run-controls").hidden = true;
-    }
-    $("#saveCohort").textContent = "儲存清單";
-    for (const heading of $$(".analysis-step-heading")) heading.hidden = true;
-    showPane("analysis");
-    await loadAnalysis(query.get("cohort"),query.get("focus")||"");
     if (module === "cataract") await window.CataractUI.autoStart({selectedOnly:query.get("queue")==="selected"});
-  }));
+  });
 }

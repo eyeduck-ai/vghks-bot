@@ -365,6 +365,12 @@ class BotTests(unittest.TestCase):
                     code, headers, _ = request(path + suffix + "v=" + __version__)
                     self.assertEqual(code, 200, path)
                     self.assertEqual(headers["Cache-Control"], "no-store", path)
+                for module in ("cataract", "retina", "surgery"):
+                    code, headers, body = request(f"/tools?account={self.key}&module={module}")
+                    self.assertEqual(code, 200)
+                    self.assertEqual(headers["Cache-Control"], "no-store")
+                    self.assertIn(b'<body class="tool-embedded tool-starting">', body)
+                self.assertIn(b"<body>", request("/tools")[2])
                 for script in ("review-handoff.js", "sheet-sync-ui.js", "sheet-management.js"):
                     code, headers, body = request("/" + script)
                     self.assertEqual(code, 200)

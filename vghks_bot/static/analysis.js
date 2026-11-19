@@ -314,7 +314,7 @@ async function loadAnalysisResult({force = false, refreshStatus = true} = {}) {
   const identity=member?.account_id+":"+member?.mrn;
   if(identity!==scanPatient){window.ScanBrowser?.reset();scanPatient=identity;}
   if(member?.account_id)window.FileCompare?.context(member.account_id,member.mrn,(window.ClinicalUI?.patientName?.(member.name)??member.name)||"");
-  const scanButton=$("#analysisScans");scanButton.hidden=module!=="cataract"||!embeddedAccount;
+  const scanButton=$("#analysisScans");scanButton.hidden=module!=="cataract"||!embeddedAccount||!!window.CataractScans;
   scanButton.disabled=!member||member.account_id!==embeddedAccount;
   scanButton.title=scanButton.disabled?"請將病人抓取帳號設為目前登入帳號":"查看此病人的歷年掃描病歷";
   analysisResult=null; $("#analysisJSON").disabled=module==="surgery";

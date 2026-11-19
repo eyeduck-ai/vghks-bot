@@ -76,7 +76,7 @@ async function request(path, body, scoped=true, options={}){
   if(scoped&&!key)throw new Error("請先選擇帳號。");
   const url=scoped?"/api/accounts/"+key+path:"/api"+path;
   const response=await fetch(url,{method:body===undefined?"GET":"POST",credentials:"omit",cache:"no-store",redirect:"error",signal:options.signal,headers:{...window.LocalSession.headers(),...(body===undefined?{}:{"Content-Type":"application/json","X-CSRF-Token":root?.csrf||"","X-Database-Context":root?.context||""})},body:body===undefined?undefined:JSON.stringify(body)});
-  const data=await response.json();
+  const data=options.raw&&response.ok?response:await response.json();
   if(scoped&&(key!==account||revision!==epoch))throw new DOMException("帳號已切換","AbortError");
   if(!response.ok)throw new Error(data.error||"操作未完成。");
   return data;
@@ -177,6 +177,7 @@ async function prepareAccountLeave(){
  if(!account)return;
  const source=account,revision=epoch;
  if(!await window.ReviewNotesUI.flushAll())throw new Error("有備註尚未儲存，請重試後再切換帳號。");
+ await flushCataractReviews("切換帳號");
  if(source!==account||revision!==epoch)throw new DOMException("帳號已切換","AbortError");
  clearTimeout(draftTimer);
  if(!root.read_only)await api("/draft/save",draftValue());
@@ -362,6 +363,10 @@ function resumeCataractFrame(frame){
  if(scroll)requestAnimationFrame(()=>window.scrollTo(scroll.parentX,scroll.parentY));
 }
 function activeModuleFrame(){return $("#cataractFrame").hidden?$("#moduleFrame"):$("#cataractFrame");}
+async function flushCataractReviews(operation){
+ const saved=await $("#cataractFrame")?.contentWindow?.CataractBiometry?.flushAll();
+ if(saved===false)throw new Error(`白內障核對內容尚未儲存，請重試後再${operation}。`);
+}
 async function restoreCataract(){
  const frame=$("#cataractFrame");
  if(!account||!frame.hasAttribute("src")||frame.dataset.account!==account||!frame.dataset.cohort)return false;
@@ -372,9 +377,11 @@ async function restoreCataract(){
  return true;
 }
 async function openModule(cohort,module="retina",{focusMrn="",selectedOnly=false}={}){
+ const frame=module==="cataract"?$("#cataractFrame"):$("#moduleFrame");
+ if(module==="cataract"&&frame.hasAttribute("src")&&(frame.dataset.account!==account||frame.dataset.cohort!==cohort))
+   await flushCataractReviews("切換病人清單");
  window.ToolWorkspace?.activate(module);if(await window.ToolWorkspace?.adoptModule(cohort)===false)return;
  $("#moduleTitle").textContent={retina:"視網膜比較",cataract:"白內障術前分析",surgery:"刀表更新"}[module]||"檢查比較";
- const frame=module==="cataract"?$("#cataractFrame"):$("#moduleFrame");
  if(module!=="cataract")captureCataractScroll();
  $("#modulePage").classList.toggle("cataract-active",module==="cataract");
  $("#cataractFrame").hidden=module!=="cataract";$("#moduleFrame").hidden=module==="cataract";
@@ -1004,7 +1011,12 @@ $("#reconnectForm").addEventListener("submit",event=>{event.preventDefault();if(
  }catch(error){if(attempt===reconnectRevision&&context===root.context){$("#reconnectError").textContent=error.message||"重新連線失敗。";$("#reconnectError").hidden=false;}}
  finally{accountTransition=false;window.AccountSwitcher.busy();button.disabled=false;applyReadonly();}})();
 });
-$("#exit").addEventListener("click",()=>act(async()=>{if(!await window.ReviewNotesUI.flushAll())throw new Error("有備註尚未儲存，請重試後再結束程式。");clearTimeout(draftTimer);if(!root.read_only)await api("/draft/save",draftValue());await ra("/shutdown",{});stopped=true;document.body.replaceChildren(empty("VGHKS-bot 已結束，資料與任務進度已保留。"));}));
+$("#exit").addEventListener("click",()=>act(async()=>{
+ if(!await window.ReviewNotesUI.flushAll())throw new Error("有備註尚未儲存，請重試後再結束程式。");
+ await flushCataractReviews("結束程式");
+ clearTimeout(draftTimer);if(!root.read_only)await api("/draft/save",draftValue());
+ await ra("/shutdown",{});stopped=true;document.body.replaceChildren(empty("VGHKS-bot 已結束，資料與任務進度已保留。"));
+}));
 $("#dateMode").addEventListener("change",dateMode);$("#startDate").addEventListener("change",dateMode);
 $("#dateForm").addEventListener("submit",e=>{e.preventDefault();act(()=>browse());});$("#refreshList").addEventListener("click",()=>act(()=>browse(true)));
 for(const b of $$("[data-day]"))b.addEventListener("click",()=>act(async()=>{$("#dateMode").value="single";$("#startDate").value=relativeDay(root.today,Number(b.dataset.day));await browse();}));

@@ -7,6 +7,9 @@
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/style.css">
   <link rel="stylesheet" href="/analysis.css">
+  <link rel="stylesheet" href="/cataract-scans.css">
+  <link rel="stylesheet" href="/cataract-biometry.css">
+  <link rel="stylesheet" href="/cataract-biometry-review.css">
   <link rel="stylesheet" href="/file-compare.css">
   <link rel="stylesheet" href="/choices.css">
   <script src="/choices.js" defer></script>
@@ -20,6 +23,10 @@
   <script src="/workspace.js" defer></script>
   <script src="/analysis.js" defer></script>
   <script src="/cataract-export.js" defer></script>
+  <script src="/cataract-biometry-exchange.js" defer></script>
+  <script src="/cataract-biometry-review.js" defer></script>
+  <script src="/cataract-biometry.js" defer></script>
+  <script src="/cataract-scans.js" defer></script>
   <script src="/cataract.js" defer></script>
   <script src="/patient-tags.js" defer></script>
   <script src="/tool-bridge.js" defer></script>
@@ -32,6 +39,7 @@
   </header>
   <div id="notice" class="notice" role="alert" hidden></div>
   <main id="main">
+    <p id="toolLoading" class="small muted" role="status">正在開啟進階工具…</p>
     <section class="accounts-panel" aria-labelledby="accountsTitle">
       <div class="section-heading"><div><h1 id="accountsTitle">門診病歷工作台</h1></div><div class="actions"><button id="addAccount" type="button">＋ 新增帳號</button><button id="runSelected" type="button" class="primary">查看已選帳號清單</button></div></div>
       <details id="accountsDetails" open><summary>帳號設定</summary><div id="accounts"></div>

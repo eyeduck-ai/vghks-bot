@@ -157,6 +157,21 @@ class CataractReadTests(unittest.TestCase):
         subprocess.run(['node', 'tests/cataract_render_ui.js'], cwd=root, check=True,
                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=10)
 
+    def test_biometry_pdf_page_selection_background_progress_and_json_copy(self):
+        root = Path(__file__).resolve().parents[1]
+        subprocess.run(['node', 'tests/cataract_biometry_ui.js'], cwd=root, check=True,
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=10)
+
+    def test_biometry_review_page_evidence_edits_and_selective_export(self):
+        root = Path(__file__).resolve().parents[1]
+        subprocess.run(['node', 'tests/cataract_biometry_review_ui.js'], cwd=root, check=True,
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=10)
+
+    def test_biometry_exchange_preserves_confirmed_values_and_parser_contract(self):
+        root = Path(__file__).resolve().parents[1]
+        subprocess.run(['node', 'tests/cataract_biometry_exchange_ui.js'], cwd=root, check=True,
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=10)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -94,11 +94,15 @@ window.UtilityDock = (() => {
     dock.classList.toggle("utility-dock-modal", target.tagName === "DIALOG");
     dock.classList.toggle("utility-dock-inline", target.classList.contains("collection-bar"));
     dock.style.removeProperty("right");dock.style.removeProperty("bottom");dock.style.removeProperty("max-width");
-    for (const {node,order} of slots.values()) {
+    let hasVisibleSlot = false;
+    for (const [name, {node,order}] of slots) {
+      const shortcutHidden = name === "comparison" && target.id === "fileCompareDialog";
+      node.classList.toggle("utility-dock-slot-hidden", shortcutHidden);
+      if (!shortcutHidden && !node.hidden) hasVisibleSlot = true;
       node.style.order = String(order);
       if (node.parentElement !== dock) dock.append(node);
     }
-    dock.hidden = hideDock || ![...slots.values()].some(({node}) => !node.hidden);
+    dock.hidden = hideDock || !hasVisibleSlot;
     target.classList.toggle("utility-dock-host", !dock.hidden);
     target.classList.toggle("utility-dock-active", !dock.hidden);
     if (dock.hidden) reservations.delete(target);else reservations.add(target);

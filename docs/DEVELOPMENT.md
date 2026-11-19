@@ -2,7 +2,7 @@
 
 ## 環境與目錄
 
-使用 Windows x64、Python 3.11、Git 與 Node.js 24。依賴固定於 `requirements-build.lock.txt`，SDK 0.24.4／`a0416ae129b57dfc1a0ad1981318b610ef696101` 與共用核心 1.3.0／`3e4babe8bbb799d103372732bd2e45bc1405fb83` 也固定於 `pyproject.toml`；不可只按版本號判定安裝來源。
+使用 Windows x64、Python 3.11、Git 與 Node.js 24。依賴固定於 `requirements-build.lock.txt`，SDK 0.24.4／`a0416ae129b57dfc1a0ad1981318b610ef696101`、共用核心 1.3.0／`3e4babe8bbb799d103372732bd2e45bc1405fb83`、biometry-parser 0.1.0／`aa9ac5974f0cb42c164298d43081e5d6ca01733d` 也固定於 `pyproject.toml`。安裝來源以完整 commit 核對。
 
 ```powershell
 py -3.11 -m venv .venv
@@ -25,6 +25,8 @@ py -3.11 -m venv .venv
 
 工作區改名／搬移後，`.venv` 啟動腳本可能仍指向舊路徑。`./build.ps1` 會核對路徑及依賴，需要時重建；也可明確使用 `-RebuildEnvironment`。資料目錄及外部資料庫路徑另行保留。
 
+基本版保留瀏覽器 PDF 預覽及檔案比較。文字 PDF 版內建 `biometry-parser` 的基礎依賴，從 PDF 文字層擷取量測。離線 OCR 版另包含 RapidOCR、ONNX Runtime 及 PP-OCRv6 small 權重，建置及封裝驗證會分別比對 `biometry-parser` 清單的 SHA-256。原始碼執行環境可用 `python run.py --install-biometry-models` 準備模型快取，預設位置為 `~/.cache/biometry_parser/models`，可用 `BIOMETRY_PARSER_MODEL_CACHE` 指向其他位置。
+
 ## 架構與不變條件
 
 ```text
@@ -41,16 +43,20 @@ py -3.11 -m venv .venv
 | `app.py`、`bot.py`、`bot_server.py`、`launcher.py` | 啟動、帳號及資料庫生命週期、本機 API 與可信重連 |
 | `bot_gateway.py`、`clinical_identity.py`、`encoding.py` | 同帳號序列操作、完整病人／就診核對、節流及回應解碼 |
 | `review*.py`、`analysis*.py`、`scanned_records.py` | SOAP、歷史檢查、按需報告與完整性／續跑 |
+| `cataract_biometry.py`、`biometry.py` | 白內障 PDF 背景擷取、頁數讀取與本機 OCR |
 | `databases.py`、`bot_store.py`、`library*.py`、`migrations.py` | 帳號 SQLite、快照、版本、索引與可回復更新 |
 | `sheet_service.py`、`sheet_*.py` | 連線、共用寫入鎖、差異預覽、永久 ID、核對及封存 |
 | `debug_*.py`、`diagnostics.py`、`connection_state.py` | 異常證據、錯誤分類及恢復結果 |
 | `static/` | 正式 UI；主畫面與嵌入 `/tools` 比較頁皆需保留 |
 
+- 介面主色統一由 `static/clinical-ui.css` 的 `--green` 定義。白內障介面、眼別標示和比較左欄使用從主色衍生的 `--selection-bg` 與 `--selection-border` 表示選取狀態。
 - 帳號、資料庫、病人與完整就診 selector 都屬於資料身分。快取、進行中查詢合併及延遲回應必須依完整範圍隔離；來源切換後不採用舊結果。
 - 同帳號院內操作序列化，保留任務／連線上限、SDK 登入恢復、取消檢查、429／503 退避及 `Retry-After`。跨任務共享取得不增加併發或延長有效期。
 - 成功回應在帳號序列鎖內使用嚴格遞增時間戳，避免同刻或回退的系統時鐘讓較舊回應覆蓋新快取；各任務仍保留自己的取得快照。
 - 只有正確 PRQ 來源、報告附件範圍內的指定影像／PDF GET 使用零額外等待；仍逐一下載，不修改共享帳號政策或 SDK 私有欄位。
 - 附件通過格式／身分核對後原子保存、逐份發布並更新 revision。部分解析、失敗或缺檔不算完整快取；普通重試只補未完成分支，強制更新另行取得。
+- 白內障掃描擷取在送件時核對來源索引，與預覽共用同帳號、同病人的進行中下載及附件快取。指定頁碼附帶 PDF 雜湊核對；登出、撤銷清單成員或清除附件時會取消對應工作。PDFium 在同一程序內序列執行，背景擷取占用 PDFium 時，頁數查詢由短生命週期的獨立程序處理。
+- 擷取結果與核對草稿保存在帳號資料庫，依病人、來源附件及 PDF 雜湊識別。核對寫入核驗擷取代碼及修訂版本，同一份檔案可在不同病人清單中續接。刪除相關本機資料時同步清除核對紀錄。Biometry-Clip 匯出使用批次 schema 1 並保留原始解析證據。
 - 病歷檢閱按需讀取 40 位摘要及選定病人 SOAP；虛擬列以實測高度保留錨點，畫面／本機鄰近預讀不得自動抓取全員基本資料、歷年數值或醫囑索引。
 - SQLite 保存原始內容、版本、任務引用與可重建摘要；WAL 快照讀取及批次交易維持一致。清除先預覽並重新核對引用，集合、手動 TAG、備註與診斷保留。
 - 本機 HTTP 的 Host／Origin／啟動憑證與資料庫切換租約必須保留；病人文字只當文字顯示，失敗 HTML 不執行。憑證及解密材料僅存本機，不回傳瀏覽器或公開日誌。
@@ -96,7 +102,9 @@ fixture 印出本機 URL；結束測試服務後清除其暫存資料庫。`--lo
 .venv/Scripts/python.exe tools/run_checks.py --build --gas-repo .build/gas-contract
 ```
 
-完整流程：actionlint → 來源／版本／安裝 commit → pip／Ruff／JS → 82 項共用 GAS 契約 → 完整測試 → 來源自測 → PyInstaller → EXE 自測 → 內嵌靜態檔／空白憑證／授權核對 → ZIP／SHA-256。`tools/build_exe.py` 單獨打包不等於完整通過。建置只納入 Git 索引中的靜態檔與文件，新公開檔案須先加入索引。
+完整流程：actionlint → 來源／版本／安裝 commit → pip／Ruff／JS → 82 項共用 GAS 契約 → 完整測試 → 來源自測 → PyInstaller → EXE 自測 → 內嵌靜態檔／空白憑證／授權核對 → ZIP／SHA-256。`tools/build_exe.py` 單獨打包不等於完整通過。靜態檔來自 Git 索引，以及建置程式明列且經過內容檢查的四份白內障掃描與擷取資源；發布文件來自 Git 索引。
+
+完整流程會產出基本版 `VGHKS-bot.exe`、文字 PDF 版 `VGHKS-bot-pdf.exe` 和離線 OCR 版 `VGHKS-bot-ocr.exe`。自測分別驗證基本版可載入檢閱介面、文字 PDF 版可讀取文字層、離線 OCR 版在空白模型快取下可讀取影像型 PDF。打包與發布均會比對自測報告的 EXE 檔名和 SHA-256，再核對各版 ZIP 及共用 `SHA256SUMS.txt`。只需建置單一版本時，可用 `python tools/build_exe.py --variant basic`、`--variant lite` 或 `--variant full`。
 
 actionlint 固定為 1.7.12，下載壓縮檔及解出的工具均核對固定 SHA-256，快取位於 `.build/`。`build.ps1` 與 CI 來源驗證工作在安裝依賴前完成預先檢查；一般 `run_checks.py --checks-only` 使用已驗證快取離線檢查。`--self-test` 實際驗證正確 YAML、錯誤 YAML 及錯誤表達式必須得到預期結果；診斷寫入 `.build/ci/actionlint.json`，CI 即使失敗也保留。
 

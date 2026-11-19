@@ -148,6 +148,7 @@ async function editLoginNoteTests(){
  c.window.AccountSwitcher={busy(){},close(){}};
  const source=fs.readFileSync("vghks_bot/static/bot.js","utf8");
  vm.runInContext(source.slice(source.indexOf("function showEntry("),source.indexOf("async function login("))+
+  source.slice(source.indexOf("async function flushCataractReviews("),source.indexOf("async function restoreCataract("))+
   source.slice(source.indexOf("async function prepareAccountLeave("),source.indexOf("async function activateAccount("))+
   source.slice(source.indexOf('$("#editLogin").addEventListener'),source.indexOf('$("#saveConcurrency").addEventListener')),c);
  s.run("vghks_bot/static/review-notes.js");

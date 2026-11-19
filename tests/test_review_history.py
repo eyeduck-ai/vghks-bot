@@ -12,6 +12,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
+from zipfile import ZipFile
 
 from async_helpers import drain_workspace, wait_event
 from async_helpers import wait_workspace_task as wait_task
@@ -206,6 +207,69 @@ class ReviewHistoryTests(unittest.TestCase):
     def request(self, resource, reference=""):
         return {"review_task_id": self.review["id"], "mrn": MRN,
                 "resource": resource, "reference": reference}
+
+    def test_order_archive_contains_original_files_and_enforces_list_and_patient_scope(self):
+        self.assertEqual(self.fetch("orders")["status"], "completed")
+        row = next(row for row in self.history.read(self.request("orders"))["data"] if row["name"] == "跨科影像")
+        self.assertEqual(self.fetch("order_report", row["id"])["status"], "completed")
+        store = self.work.analysis.store
+        request = dict(self.request("orders"), ids=[row["id"]])
+        with self.history.archive(request) as (path, name, files, missing):
+            self.assertTrue(name.endswith(".zip"))
+            self.assertEqual((files, missing), (2, 0))
+            with ZipFile(path) as output:
+                members = {Path(member).suffix: output.read(member) for member in output.namelist()}
+                self.assertEqual(members, {".pdf": b"%PDF-1.4\n%synthetic\n",
+                                          ".png": b"\x89PNG\r\n\x1a\nsynthetic"})
+        self.assertFalse(path.exists(), "temporary ZIP must be removed after delivery")
+
+        self.assertEqual(self.fetch("visits")["status"], "completed")
+        current = next(row for row in self.history.read(self.request("visits"))["data"] if row["case_no"] == "ONE")
+        self.assertEqual(self.fetch("case_orders", current["id"])["status"], "completed")
+        case_request = self.request("case_orders", current["id"])
+        case_order, = self.history.read(case_request)["data"]
+        with self.assertRaisesRegex(ValueError, "不在目前清單"), self.history.archive(dict(case_request, ids=[row["id"]])):
+            pass
+
+        original = BinaryAsset(b"%PDF-1.4\n%archive-fixture\n", "application/pdf")
+        asset = store.save_asset(MRN, "case-test", original, self.work.username)
+        foreign = store.save_asset("OTHER", "case-test", BinaryAsset(b"%PDF-1.4\n%different\n", "application/pdf"),
+                                   self.work.username)
+        store.save_step(MRN, "history-order:" + case_order["id"], "order_report", {
+            "assets": [asset, foreign], "status": "ready"
+        }, self.work.username)
+        case_request["ids"] = [case_order["id"]]
+        with self.history.archive(case_request) as (path, _, files, missing), ZipFile(path) as output:
+            self.assertEqual((files, missing), (1, 1))
+            pdf, notice = output.namelist()
+            self.assertEqual(output.read(pdf), original.content)
+            self.assertIn("部分附件尚未取得", output.read(notice).decode("utf-8-sig"))
+        with (patch("vghks_bot.review_history.ARCHIVE_SIZE_LIMIT", 1), self.assertRaisesRegex(ValueError, "512 MiB"),
+              self.history.archive(case_request)):
+            pass
+
+    def test_scan_archive_supports_visit_filter_partial_and_offline_readonly(self):
+        self.assertEqual(self.fetch("visits")["status"], "completed")
+        self.assertEqual(self.fetch("scans")["status"], "completed")
+        current = next(row for row in self.history.read(self.request("visits"))["data"] if row["case_no"] == "ONE")
+        self.assertEqual(self.fetch("scan_asset", scan_id(SCAN_LINKED))["status"], "completed")
+        current_request = dict(self.request("case_scans", current["id"]), ids=[scan_id(SCAN_LINKED)])
+        history_request = dict(self.request("scans"), ids=[scan_id(SCAN_LINKED), scan_id(SCAN_OPG)])
+        self.app.logout(self.key)
+        self.app.offline(self.key)
+        calls = list(HistorySDK.calls)
+        self.app.read_only = True
+        with self.history.archive(current_request) as (path, _, files, missing), ZipFile(path) as output:
+            self.assertEqual((files, missing), (1, 0))
+            self.assertEqual(output.read(output.namelist()[0]), b"%PDF-1.4\n%synthetic\n")
+        with self.history.archive(history_request) as (path, _, files, missing), ZipFile(path) as output:
+            self.assertEqual((files, missing), (1, 1))
+            self.assertIn(CONSENT_CATEGORY, output.read("缺漏清單.txt").decode("utf-8-sig"))
+        with self.assertRaisesRegex(ValueError, "不在目前清單"), self.history.archive(dict(current_request, ids=[scan_id(SCAN_OPG)])):
+            pass
+        with self.assertRaisesRegex(ValueError, "沒有已取得"), self.history.archive(dict(history_request, ids=[scan_id(SCAN_OPG)])):
+            pass
+        self.assertEqual(HistorySDK.calls, calls, "archive generation must not refetch data")
 
     def test_cataract_auto_data_uses_latest_eye_soap_and_lazy_order_assets(self):
         cohort = self.work.analysis.save_cohort({"source": "manual", "account_id": self.key,

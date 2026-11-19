@@ -173,7 +173,7 @@ jobs:
         with:
           name: tests-${{ github.sha }}
           path: .build/ci/
-      - name: Build, verify and package the main executable
+      - name: Build, verify and package all Windows variants
         run: python tools/run_checks.py --build-only
       - name: Bind release files to this verified main run
         run: python tools/ci_artifacts.py record-build
@@ -194,7 +194,11 @@ jobs:
           overwrite: true
           path: |
             dist/VGHKS-bot.exe
-            dist/VGHKS-bot-*-windows-x64.zip
+            dist/VGHKS-bot-pdf.exe
+            dist/VGHKS-bot-ocr.exe
+            dist/VGHKS-bot-v*-windows-x64.zip
+            dist/VGHKS-bot-pdf-v*-windows-x64.zip
+            dist/VGHKS-bot-ocr-v*-windows-x64.zip
             dist/SHA256SUMS.txt
             dist/RELEASE_NOTES.md
             dist/BUILD_INFO.json

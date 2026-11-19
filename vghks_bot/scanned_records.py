@@ -31,9 +31,11 @@ class ScanArchive:
         saved = self.store.step(mrn, "visits")
         return saved["payload"] if saved else None
 
-    def _eye_cases(self, mrn):
+    def _eye_cases(self, mrn, *, visits=None):
+        if visits is None:
+            visits = self._visits(mrn)
         cases = []
-        for raw in self._visits(mrn) or []:
+        for raw in visits or []:
             case = model(VisitCase, raw)
             if case.patient_mrn != mrn:
                 raise ValueError("掃描病歷的就診索引與病人不符。")
@@ -70,7 +72,7 @@ class ScanArchive:
             return self._refs(step["payload"], case.mrn)
         from .review import case_key
 
-        saved = self.app.store.library.get_record(case_key(case))
+        saved = self.app.store.library.get_record(case_key(case), include_versions=False)
         structure = saved.get("soap_structure") if saved and saved.get("mrn") == mrn else None
         if isinstance(structure, dict) and isinstance(structure.get("scanned_pdf_refs"), list):
             return self._refs(structure["scanned_pdf_refs"], case.mrn)
@@ -86,7 +88,8 @@ class ScanArchive:
         by_ref = {scan_id(ref): row for row, ref in history or []}
         return ({"case": {"date": case.visit_date.isoformat() if case.visit_date else "",
                           "section": case.section_name, "case_no": case.case_no},
-                 "scans": [self._public(mrn, ref, by_ref.get(scan_id(ref)), case) for ref in refs]}
+                 "scans": [self._public(key, self._asset(mrn, key), by_ref.get(key), case)
+                           for key in dict.fromkeys(scan_id(ref) for ref in refs)]}
                 if refs is not None else None)
 
     def _history_refs(self, mrn):
@@ -117,24 +120,29 @@ class ScanArchive:
             date.fromisoformat(raw["record_date"])
         return ref
 
-    def _asset(self, mrn, identifier):
+    def _asset_entry(self, mrn, identifier):
         step = self.store.step(mrn, "scan-asset:" + identifier)
         if step:
             try:
                 self.store.asset(step["payload"]["digest"])
-                return step["payload"]
-            except (KeyError, ValueError):
+                return step
+            except (KeyError, TypeError, ValueError):
                 pass
         return None
 
-    def _public(self, mrn, ref, record=None, case=None):
+    def _asset(self, mrn, identifier):
+        entry = self._asset_entry(mrn, identifier)
+        return entry["payload"] if entry else None
+
+    @staticmethod
+    def _public(identifier, asset, record=None, case=None):
         record = record or {}
-        return {"id": scan_id(ref), "record_type": record.get("record_type") or "",
+        return {"id": identifier, "record_type": record.get("record_type") or "",
                 "category_label": record.get("category_label") or "",
                 "section_label": record.get("section_label") or "",
                 "date": record.get("record_date") or (case.visit_date.isoformat() if case and case.visit_date else ""),
                 "section": case.section_name if case else "", "case_no": case.case_no if case else "",
-                "asset": self._asset(mrn, scan_id(ref))}
+                "asset": asset}
 
     @staticmethod
     def _is_eye(row):
@@ -144,14 +152,20 @@ class ScanArchive:
             "門診", "記錄", "眼科紀錄")
 
     def history_data(self, mrn):
+        return self.history_catalog(mrn)[0]
+
+    def history_catalog(self, mrn):
+        """Read the public history and its verified references in one pass."""
         cache_error = False
         try:
             history, upgraded = self._history_refs(mrn)
         except (ValueError, TypeError, KeyError):
             history, upgraded, cache_error = None, False, True
         link_error = False
+        visits = None
         try:
-            cases = self._eye_cases(mrn)
+            visits = self._visits(mrn)
+            cases = self._eye_cases(mrn, visits=visits or [])
         except (ValueError, TypeError, KeyError):
             cases, link_error = [], True
         links, checked = {}, 0
@@ -167,23 +181,26 @@ class ScanArchive:
             for ref in refs:
                 links.setdefault(scan_id(ref), (ref, case))
         eye, pending, other, records, seen = [], [], [], [], set()
-        indexed_ids = set()
+        references, assets = {}, {}
         for raw, ref in history or []:
             identifier = scan_id(ref)
             linked = links.get(identifier)
-            row = self._public(mrn, ref, raw, linked[1] if linked else None)
+            if identifier not in references:
+                references[identifier] = ref
+                assets[identifier] = self._asset(mrn, identifier)
+            row = self._public(identifier, assets[identifier], raw, linked[1] if linked else None)
             key = (identifier, row["section_label"], row["category_label"], row["date"], row["record_type"])
             if key in seen:
                 continue
             seen.add(key)
-            indexed_ids.add(identifier)
             row["eye"] = self._is_eye(row) or (not row["category_label"] and bool(linked))
             records.append(row)
             (eye if row["eye"]
              else other if row["category_label"] else pending).append(row)
         for identifier, (ref, case) in links.items():
-            if identifier not in indexed_ids:
-                row = self._public(mrn, ref, case=case)
+            if identifier not in references:
+                references[identifier] = ref
+                row = self._public(identifier, self._asset(mrn, identifier), case=case)
                 row["eye"] = True
                 records.append(row)
                 eye.append(row)
@@ -195,6 +212,7 @@ class ScanArchive:
                 continue
             key = (row["section_label"], row["category_label"])
             categories[key] = categories.get(key, 0) + 1
+        visits_loaded = not link_error and visits is not None
         return {"records": records, "scans": eye, "other_history": other,
                 "unclassified": pending,
                 "categories": [{"section_label": section, "category_label": label, "count": count}
@@ -202,9 +220,9 @@ class ScanArchive:
                 "eye_case_count": len(cases), "checked_case_count": checked,
                 "index_loaded": history is not None, "history_loaded": upgraded,
                 "cache_error": cache_error, "link_error": link_error,
-                "visits_loaded": not link_error and self._visits(mrn) is not None,
+                "visits_loaded": visits_loaded,
                 "complete": upgraded,
-                "links_complete": not link_error and self._visits(mrn) is not None and checked == len(cases)}
+                "links_complete": visits_loaded and checked == len(cases)}, references
 
     def index(self, mrn, *, force=False):
         issues = []
@@ -324,12 +342,28 @@ class ScanArchive:
         self._verified_ref(mrn, identifier)
         return self._asset(mrn, identifier)
 
-    def download(self, mrn, identifier):
-        ref = self._verified_ref(mrn, identifier)
-        cached = self._asset(mrn, identifier)
-        if cached:
-            return {"status": "ready", "asset": cached, "cached": True}
+    def _download_ref(self, ref):
         with self.app.sdk_factory(self.app.settings) as sdk:
-            asset = sdk.orders.download_pdf(ref)
-        return {"status": "ready", "asset": self.store.save_asset(
-            mrn, "scan-asset:" + identifier, asset, self.app.username), "cached": False}
+            return sdk.orders.download_pdf(ref)
+
+    def download(self, mrn, identifier):
+        return self.download_verified(mrn, self._verified_ref(mrn, identifier))
+
+    def download_verified(self, mrn, ref):
+        """Share preview and extraction downloads after account/patient scope verification."""
+        identifier = scan_id(ref)
+
+        def load():
+            entry = self._asset_entry(mrn, identifier)
+            if entry:
+                return entry["payload"], entry["saved_at"]
+            return None
+
+        def save(value, saved, _assessment):
+            with self.store.library.batch():
+                asset = self.store.save_asset(mrn, "scan-asset:" + identifier, value, self.app.username)
+            return asset, saved
+
+        result = self.app.resources.acquire(("scan_asset", identifier), mrn, "scans", load=load,
+                                            fetch=lambda: self._download_ref(ref), save=save)
+        return {"status": "ready", "asset": result.value, "cached": result.source != "network"}

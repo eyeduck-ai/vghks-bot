@@ -1,0 +1,186 @@
+.cataract-scans-workspace {
+  display: grid;
+  grid-template-columns: minmax(185px, 27%) minmax(175px, 23%) minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+}
+
+.cataract-scans-workspace > .cataract-section {
+  min-width: 0;
+  margin: 0;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fff;
+}
+
+.cataract-scans-workspace > :is(.cataract-soap, .cataract-scans-catalog) {
+  position: sticky;
+  top: 5px;
+  max-height: calc(100dvh - 100px);
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+
+.cataract-scans-workspace h3 { margin: 0 0 5px; font-size: 13px; overflow-wrap: anywhere; }
+.cataract-scans-status:empty { margin: 0; }
+
+.cataract-scans-controls,
+.cataract-scans-preview-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+}
+.cataract-scans-controls > button:not(.cataract-order-refresh) { min-height: 28px; padding: 3px 6px; font-size: 11px; }
+.cataract-scans-filters { display: grid; gap: 5px; margin: 7px 0; }
+.cataract-scans-filters[hidden] { display: none; }
+.cataract-scans-filters label { min-width: 0; font-size: 11px; }
+.cataract-scans-filters :is(select, input) { width: 100%; min-width: 0; font-size: 12px; }
+
+.cataract-scans-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 5px;
+  padding: 2px 0;
+  border-top: 1px solid var(--line);
+}
+.cataract-scans-row input { width: 14px; height: 14px; min-height: 0; margin: 0; }
+.cataract-scans-row .cataract-order-row { width: 100%; overflow-wrap: anywhere; }
+.cataract-scans-preview-head { margin-bottom: 6px; }
+.cataract-scans-preview-head h3 { flex-basis: 100%; margin: 0; }
+.cataract-scans-preview-head .cataract-pdf-extraction { flex: 1 1 100%; }
+.cataract-scans-preview > :is(iframe, img) {
+  display: block;
+  width: 100%;
+  height: calc(100dvh - 130px);
+  min-height: 400px;
+  border: 0;
+  object-fit: contain;
+}
+
+/* Both PDF previews use the same inline page controls. */
+.cataract-pdf-extraction {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  min-width: 0;
+  margin-block: 4px;
+}
+.cataract-pdf-category {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  font-size: 11px;
+  white-space: nowrap;
+}
+html[data-density=compact] .tool-embedded .cataract-pdf-category select {
+  min-height: 26px;
+  max-width: 148px;
+  padding: 2px 5px;
+  font-size: 11px;
+}
+.cataract-pdf-pages {
+  display: flex;
+  align-items: start;
+  flex: 1 1 135px;
+  gap: 5px;
+  min-width: 0;
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+.cataract-pdf-page-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 5px;
+  max-height: 54px;
+  min-width: 0;
+  overflow: auto;
+  padding-inline: 2px;
+}
+.cataract-pdf-pages .check-label {
+  min-height: 24px;
+  width: max-content;
+  gap: 3px;
+  border-radius: 3px;
+  padding-inline: 3px;
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.cataract-pdf-pages .check-label:has(input:checked) { background: var(--selection-bg, var(--soft)); }
+html[data-density=compact] .tool-embedded .cataract-pdf-pages input {
+  width: 14px;
+  height: 14px;
+  min-height: 14px;
+  padding: 0;
+  margin: 0;
+}
+.cataract-pdf-status { flex-basis: 100%; margin: 0; }
+.cataract-pdf-extraction [hidden] { display: none; }
+
+@media (max-width: 1150px) and (min-width: 781px) {
+  .cataract-scans-workspace { grid-template-columns: minmax(160px, 32%) minmax(0, 1fr); }
+  .cataract-scans-workspace > .cataract-scans-catalog { grid-area: 1 / 1; max-height: 42dvh; }
+  .cataract-scans-workspace > .cataract-soap { grid-area: 2 / 1; top: calc(42dvh + 13px); max-height: 44dvh; }
+  .cataract-scans-workspace > .cataract-scans-preview { grid-area: 1 / 2 / span 2; }
+}
+
+@media (max-width: 780px) {
+  .cataract-scans-workspace { display: block; }
+  .cataract-scans-workspace > .cataract-section { position: static; max-height: none; }
+  .cataract-scans-view:not([data-mobile=soap]) .cataract-soap,
+  .cataract-scans-view:not([data-mobile=catalog]) .cataract-scans-catalog,
+  .cataract-scans-view:not([data-mobile=preview]) .cataract-scans-preview { display: none; }
+  .cataract-scans-preview > :is(iframe, img) { height: 65dvh; min-height: 0; }
+}
+
+.cataract-layout.active.cataract-batch-open { grid-template-columns: minmax(0, 1fr); }
+.cataract-batch-open > :is(#cataractPatients, #cataractPatientsToggle),
+.cataract-batch-open #analysisResults > :is(.cataract-result-heading, .cataract-view) { display: none; }
+
+.cataract-inline-review {
+  position: sticky;
+  top: 6px;
+  min-width: 0;
+  max-height: calc(100dvh - 92px);
+}
+.cataract-inline-review[hidden] { display: none; }
+.cataract-inline-review > .cataract-biometry-review { max-height: inherit; }
+
+@media (min-width: 1151px) {
+  :is(.cataract-workspace, .cataract-scans-workspace):has(> .cataract-inline-review:not([hidden])) {
+    grid-template-columns: minmax(130px, 15%) minmax(139px, 16%) minmax(0, 1fr) minmax(275px, 33%);
+  }
+  .cataract-workspace.numeric-closed:has(> .cataract-inline-review:not([hidden])) {
+    grid-template-columns: minmax(145px, 17%) minmax(0, 1fr) minmax(275px, 35%);
+  }
+}
+
+@media (min-width: 781px) and (max-width: 1150px) {
+  :is(.cataract-workspace, .cataract-scans-workspace):has(> .cataract-inline-review:not([hidden])) {
+    grid-template-columns: minmax(0, 1fr) minmax(255px, 1fr);
+  }
+  :is(.cataract-workspace, .cataract-scans-workspace):has(> .cataract-inline-review:not([hidden])) >
+  :is(.cataract-numeric, .cataract-orders, .cataract-soap, .cataract-scans-catalog) {
+    grid-area: auto;
+    position: static;
+    max-height: 28dvh;
+  }
+  :is(.cataract-workspace, .cataract-scans-workspace):has(> .cataract-inline-review:not([hidden])) >
+  :is(.cataract-report-preview, .cataract-scans-preview) { grid-area: 2 / 1; }
+  .cataract-inline-review:not([hidden]) { grid-area: 2 / 2; }
+}
+
+@media (max-width: 780px) {
+  .cataract-inline-review { position: static; max-height: none; margin-top: 8px; }
+  .cataract-work-view:not([data-mobile="files"]) .cataract-inline-review,
+  .cataract-scans-view:not([data-mobile="preview"]) .cataract-inline-review { display: none; }
+}

@@ -50,8 +50,23 @@ def main():
     parser.add_argument("--port", type=int, default=0, help="本機埠號；預設自動選擇")
     parser.add_argument("--no-browser", action="store_true", help="不自動開啟瀏覽器")
     parser.add_argument("--data-dir", type=Path, help="資料庫管理目錄（含 databases.json 與 datasets）")
+    parser.add_argument("--install-biometry-models", action="store_true", help="準備白內障掃描 PDF 所需的本機 OCR 模型")
     parser.add_argument("--self-test-report", type=Path, help="使用虛構資料執行離線自我測試，寫入報告後離開")
     args = parser.parse_args()
+    if args.install_biometry_models:
+        from .biometry import BiometryError, install_biometry_models
+
+        try:
+            install_biometry_models()
+        except BiometryError as exc:
+            message, result = str(exc), 1
+        else:
+            message, result = "本機 OCR 模型可用。", 0
+        if sys.platform == "win32" and sys.stdout is None:
+            ctypes.windll.user32.MessageBoxW(0, message, "VGHKS-bot", 0x10 if result else 0x40)
+        else:
+            print(message, file=sys.stderr if result else sys.stdout)
+        return result
     if args.self_test_report:
         from .selftest_bot import self_test
 

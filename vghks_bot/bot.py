@@ -13,6 +13,7 @@ from vghks_sdk import LoginRejectedError
 
 from . import __version__
 from .approvals import Approvals
+from .biometry import biometry_variant
 from .bot_gateway import AccountGateway, NetworkGate
 from .bot_store import Registry
 from .database_format import manifest
@@ -113,10 +114,12 @@ class Workspace(Application):
             self._logout()
 
     def _logout(self):
-        self.resources.reset()
         self.analysis.cataract_queue.pause("帳號已登出，重新登入後可繼續背景抓取。")
-        self.gateway.online = False
         with self.lock:
+            self.gateway.online = False
+            self.entered = False
+            self.analysis.biometry.invalidate()
+            self.resources.reset()
             for state in self.states.values():
                 if not state.data.get("cataract_background"):
                     state.cancel.set()
@@ -126,7 +129,6 @@ class Workspace(Application):
         self.task_manager.cancel_pending()
         self.gateway.close()
         self.accounts[self.account_id] = replace(self.accounts[self.account_id], password="")
-        self.entered = False
         self.offline_mode = False
 
     def delete_records(self, values):
@@ -179,6 +181,7 @@ class Workspace(Application):
         self.request_close()
         self.gateway.close(wait=True)
         self.resources.close(wait=True)
+        self.analysis.biometry.close(wait=True)
         with self.review.lock:
             threads = list(self.review.threads.values())
         for thread in threads:
@@ -275,6 +278,7 @@ class BotApplication:
 
     def bootstrap(self):
         return {"version": __version__, "csrf": self.csrf_token, "today": today().isoformat(),
+                "biometry_variant": biometry_variant(),
                 "patient_name_profile": patient_name_display_profile(),
                 "accounts": self.public_accounts(), "last_account": self.registry.preference("last_account"),
                 "concurrency": self.gate.maximum, "data_dir": str(self.source_directory),

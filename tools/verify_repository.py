@@ -15,6 +15,13 @@ sys.path.insert(0, str(ROOT))
 
 from vghks_bot import __version__  # noqa: E402
 
+UNSTAGED_PUBLIC_ASSETS = (
+    "cataract-biometry-exchange.js",
+    "cataract-biometry-review.css", "cataract-biometry-review.js",
+    "cataract-biometry.css", "cataract-biometry.js", "cataract-scans.css", "cataract-scans.js",
+    "review-archive.js",
+)
+
 
 def check_metadata(root=ROOT, tag=""):
     project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))["project"]
@@ -25,11 +32,15 @@ def check_metadata(root=ROOT, tag=""):
     sdk = next(v for v in project["dependencies"] if v.startswith("vghks-sdk @ "))
     if not re.search(r"@[a-f0-9]{40}$", sdk):
         raise ValueError("Pin vghks-sdk to a full commit")
-    if sdk not in (root / "requirements-build.lock.txt").read_text(encoding="utf-8").splitlines():
+    locked_requirements = (root / "requirements-build.lock.txt").read_text(encoding="utf-8").splitlines()
+    if sdk not in locked_requirements:
         raise ValueError("Build lock and project SDK commits differ")
     core, _, revision = core_requirement(root)
-    if core not in (root / "requirements-build.lock.txt").read_text(encoding="utf-8").splitlines():
+    if core not in locked_requirements:
         raise ValueError("Build lock and project sheet-core commits differ")
+    biometry, _, _ = biometry_requirement(root)
+    if biometry not in locked_requirements:
+        raise ValueError("Build lock and project biometry-parser commits differ")
     if json.loads((root / "tests/fixtures/gas_contract.json").read_text(encoding="utf-8"))["revision"] != revision:
         raise ValueError("GAS contract and sheet-core commits differ")
     defaults = json.loads((root / "vghks_bot/defaults.json").read_text(encoding="utf-8"))
@@ -58,6 +69,29 @@ def check_core_installation(root=ROOT):
             or vcs.get("vcs") != "git" or vcs.get("commit_id") != revision
             or provenance.get("subdirectory") != "packages/python"):
         raise ValueError("Installed vghks-sheet-core differs from the pinned commit; run "
+                         f'python -m pip install --no-deps --force-reinstall "{requirement}"')
+    return revision
+
+
+def biometry_requirement(root=ROOT):
+    project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    requirement = next(item for item in project["dependencies"] if item.startswith("biometry-parser[ocr] @ "))
+    match = re.fullmatch(r"biometry-parser\[ocr\] @ git\+(https://github\.com/eyeduck-ai/biometry-parser\.git)@([a-f0-9]{40})", requirement)
+    if not match:
+        raise ValueError("Pin biometry-parser to a full canonical Git commit")
+    return requirement, match[1], match[2]
+
+
+def check_biometry_installation(root=ROOT):
+    requirement, url, revision = biometry_requirement(root)
+    try:
+        provenance = json.loads(importlib.metadata.distribution("biometry-parser").read_text("direct_url.json") or "{}")
+    except (importlib.metadata.PackageNotFoundError, ValueError) as exc:
+        raise ValueError("Cannot verify installed biometry-parser; reinstall the pinned parser") from exc
+    vcs = provenance.get("vcs_info", {}) if isinstance(provenance, dict) else {}
+    if (not isinstance(provenance, dict) or not isinstance(vcs, dict) or provenance.get("url") != url
+            or vcs.get("vcs") != "git" or vcs.get("commit_id") != revision):
+        raise ValueError("Installed biometry-parser differs from the pinned commit; run "
                          f'python -m pip install --no-deps --force-reinstall "{requirement}"')
     return revision
 
@@ -110,6 +144,15 @@ def tracked_directory(relative, *, root=ROOT, suffixes=None):
     return [root / name for name in paths]
 
 
+def bundled_static_assets(root=ROOT):
+    """Include the named public assets in local builds before staging."""
+    directory = "vghks_bot/static"
+    static = tracked_directory(directory, root=root)
+    additional = [f"{directory}/{name}" for name in UNSTAGED_PUBLIC_ASSETS]
+    check_contents(root, additional)
+    return sorted(set(static).union(root / name for name in additional))
+
+
 def check_contents(root, paths):
     if not paths:
         raise ValueError("No source files found in the repository")
@@ -129,9 +172,10 @@ def main():
     version = check_metadata(tag=os.environ.get("RELEASE_TAG", ""))
     sdk_commit = check_sdk_installation()
     core_commit = check_core_installation()
+    biometry_commit = check_biometry_installation()
     paths = source_paths()
     check_contents(ROOT, paths)
-    print(f"Source boundary OK: {len(paths)} files, version {version}, SDK {sdk_commit}, sheet core {core_commit}")
+    print(f"Source boundary OK: {len(paths)} files, version {version}, SDK {sdk_commit}, sheet core {core_commit}, biometry parser {biometry_commit}")
 
 
 if __name__ == "__main__":

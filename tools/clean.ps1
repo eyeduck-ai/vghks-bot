@@ -1,4 +1,4 @@
-# Remove regenerable caches; optionally retain validation and the newest two ZIPs.
+# Remove regenerable caches; optionally retain validation and the newest two ZIPs per variant.
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
     [switch]$KeepValidationReports,
@@ -55,13 +55,16 @@ if ($OldReleases) {
     $vghksDist = Join-Path $vghksRoot 'dist'
     if (Test-Path -LiteralPath $vghksDist) {
         $vghksDist = Get-VghksCleanupPath $vghksDist
-        $vghksArchives = @(Get-ChildItem -LiteralPath $vghksDist -File -Filter 'VGHKS-bot-v*-windows-x64.zip' |
+        $vghksArchives = @(Get-ChildItem -LiteralPath $vghksDist -File -Filter 'VGHKS-bot-*-windows-x64.zip' |
             ForEach-Object {
-                if ($_.Name -match '^VGHKS-bot-v(?<version>\d+\.\d+\.\d+)-windows-x64\.zip$') {
-                    [pscustomobject]@{Path=$_.FullName; Version=[version]$Matches.version}
+                if ($_.Name -match '^VGHKS-bot(?<variant>-(?:pdf|ocr|basic|lite))?-v(?<version>\d+\.\d+\.\d+)-windows-x64\.zip$') {
+                    [pscustomobject]@{Path=$_.FullName; Version=[version]$Matches.version; Variant=[string]$Matches.variant}
                 }
-            } | Sort-Object Version -Descending)
-        $vghksCandidates += @($vghksArchives | Select-Object -Skip 2 -ExpandProperty Path)
+            } | Group-Object Variant)
+        foreach ($vghksVariant in $vghksArchives) {
+            $vghksCandidates += @($vghksVariant.Group | Sort-Object Version -Descending |
+                Select-Object -Skip 2 -ExpandProperty Path)
+        }
     }
 }
 

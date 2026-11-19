@@ -262,7 +262,10 @@ async function deleteSavedRecords(ids) {
 }
 
 async function refreshWorkspace() {
-  if (activePane === "analysis" && typeof refreshAnalysisRuns === "function") await refreshAnalysisRuns();
+  if (activePane === "analysis") {
+    if (typeof refreshAnalysisRuns === "function") await refreshAnalysisRuns();
+    if (toolWorkspace) return;
+  }
   const busy = history.filter(r => active.has(r.status));
   $("#activeJobs").replaceChildren(...busy.map(run => {
     const node = el("div", undefined, "running-job");

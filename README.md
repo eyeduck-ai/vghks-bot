@@ -6,7 +6,7 @@ VGHKS 院內系統的本機工作台，提供 Windows 單檔 EXE、瀏覽器介�
 
 ## 下載與更新
 
-1. 從 [Releases](https://github.com/eyeduck-ai/vghks-bot/releases/latest) 下載 `VGHKS-bot.exe` 或完整 Windows x64 ZIP，放在可寫入的資料夾。
+1. 從 [Releases](https://github.com/eyeduck-ai/vghks-bot/releases/latest) 選擇基本版 `VGHKS-bot.exe`、文字 PDF 版 `VGHKS-bot-pdf.exe`，或離線 OCR 版 `VGHKS-bot-ocr.exe`。也可下載對應的 Windows x64 ZIP。將 EXE 放在可寫入的資料夾。
 2. 更新前按側欄「結束程式」，更換 EXE 並保留同層完整的 `VGHKS-bot-data/`。
 3. 執行 EXE 開啟本機介面。院內功能需要醫院網路及有效帳號；Google 刀表可獨立連線。
 

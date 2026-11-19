@@ -130,6 +130,13 @@ class Handler(BaseHTTPRequestHandler):
             "/analysis.js": ("analysis.js", "text/javascript; charset=utf-8"),
             "/sheet-connection.js": ("sheet-connection.js", "text/javascript; charset=utf-8"),
             "/cataract.js": ("cataract.js", "text/javascript; charset=utf-8"),
+            "/cataract-scans.js": ("cataract-scans.js", "text/javascript; charset=utf-8"),
+            "/cataract-scans.css": ("cataract-scans.css", "text/css; charset=utf-8"),
+            "/cataract-biometry.js": ("cataract-biometry.js", "text/javascript; charset=utf-8"),
+            "/cataract-biometry.css": ("cataract-biometry.css", "text/css; charset=utf-8"),
+            "/cataract-biometry-exchange.js": ("cataract-biometry-exchange.js", "text/javascript; charset=utf-8"),
+            "/cataract-biometry-review.js": ("cataract-biometry-review.js", "text/javascript; charset=utf-8"),
+            "/cataract-biometry-review.css": ("cataract-biometry-review.css", "text/css; charset=utf-8"),
             "/cataract-export.js": ("cataract-export.js", "text/javascript; charset=utf-8"),
             "/cataract-numeric.js": ("cataract-numeric.js", "text/javascript; charset=utf-8"),
             "/scan-browser.js": ("scan-browser.js", "text/javascript; charset=utf-8"),
@@ -138,6 +145,7 @@ class Handler(BaseHTTPRequestHandler):
             "/utility-dock.js": ("utility-dock.js", "text/javascript; charset=utf-8"),
             "/utility-dock.css": ("utility-dock.css", "text/css; charset=utf-8"),
             "/report-gallery.js": ("report-gallery.js", "text/javascript; charset=utf-8"),
+            "/review-archive.js": ("review-archive.js", "text/javascript; charset=utf-8"),
             "/review-paging.js": ("review-paging.js", "text/javascript; charset=utf-8"),
             "/report-gallery.css": ("report-gallery.css", "text/css; charset=utf-8"),
             "/clinical-ui.js": ("clinical-ui.js", "text/javascript; charset=utf-8"),
@@ -194,7 +202,7 @@ class Handler(BaseHTTPRequestHandler):
             raise ValueError("請求內容必須是物件。")
         return value
 
-    def asset_reply(self, path, mime, *, filename=None, download=False):
+    def asset_reply(self, path, mime, *, filename=None, download=False, headers=None):
         import re
 
         size = path.stat().st_size
@@ -221,6 +229,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Security-Policy", "default-src 'none'; frame-ancestors 'self'")
         self.send_header("Cross-Origin-Resource-Policy", "same-origin")
         self.send_header("Referrer-Policy", "no-referrer")
+        for key, value in (headers or {}).items():
+            self.send_header(key, value)
         if status == 206:
             self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
         self.end_headers()

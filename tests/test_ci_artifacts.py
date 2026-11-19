@@ -1,12 +1,14 @@
 import copy
 import hashlib
-import json
 import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from unittest.mock import patch
 
 from tools import ci_artifacts as ci
+from tools import package_release
+from tools.release_variants import SOURCE_REPORT, VARIANTS
 from tools.test_suite import class_timings, plan_shards, select_shard
 
 
@@ -159,39 +161,89 @@ class ArtifactTests(unittest.TestCase):
             with self.subTest(field=field):
                 self.assertIsNone(ci.successful_main_run([changed], "owner/repo", "a" * 40, 42))
 
-    def public_files(self):
-        for name in ("VGHKS-bot.exe",):
-            (self.directory / name).write_bytes(name.encode())
-        with zipfile.ZipFile(self.directory / "VGHKS-bot-v1.2.3-windows-x64.zip", "w") as bundle:
-            for exe in ("VGHKS-bot.exe",):
-                bundle.write(self.directory / exe, exe)
-            for name in ci.REPORT_NAMES:
-                exe = "VGHKS-bot.exe"
-                bundle.writestr("validation/" + name, json.dumps(
-                    {"ok": True, "credentials_blank": True, "sha256": ci.digest(self.directory / exe)}))
+    def public_files(self, *, package=True):
+        release = self.directory / "dist"
+        release.mkdir()
+        reports = self.directory / ".build/ci"
+        ci.write_json(reports / SOURCE_REPORT, {"ok": True})
+        for variant in VARIANTS:
+            exe = release / variant.executable
+            exe.write_bytes(variant.executable.encode())
+            status = {"ok": True, "variant": variant.kind, "sha256": ci.digest(exe), "executable": variant.executable}
+            ci.write_json(reports / variant.selftest, status)
+            ci.write_json(reports / variant.verification, {**status, "credentials_blank": True})
+        (self.directory / "README.md").write_text("Synthetic readme", encoding="utf-8")
+        (self.directory / "CHANGELOG.md").write_text("## 1.2.3\n\nSynthetic changes", encoding="utf-8")
+        notices = self.directory / ".build/licenses/THIRD_PARTY_NOTICES.txt"
+        notices.parent.mkdir(parents=True)
+        notices.write_text("Synthetic notices", encoding="utf-8")
+        if package:
+            self.package_release()
+        return release
+
+    def package_release(self):
+        with patch.object(package_release, "tracked_directory", return_value=[]):
+            package_release.main(self.directory, "1.2.3")
+
+    @staticmethod
+    def update_checksums(release):
         names = ci.release_files("1.2.3") - {"SHA256SUMS.txt", "RELEASE_NOTES.md"}
-        (self.directory / "SHA256SUMS.txt").write_text(
-            "".join(f"{ci.digest(self.directory / name)}  {name}\n" for name in sorted(names)), encoding="utf-8")
-        (self.directory / "RELEASE_NOTES.md").write_text("Synthetic release", encoding="utf-8")
+        (release / "SHA256SUMS.txt").write_text(
+            "".join(f"{ci.digest(release / name)}  {name}\n" for name in sorted(names)), encoding="utf-8")
 
     def test_release_checksums_zip_executables_and_frozen_reports(self):
-        self.public_files()
-        files = ci.verify_files(self.directory, "1.2.3")
-        self.assertEqual(set(files), ci.release_files("1.2.3"))
-        (self.directory / "VGHKS-bot.exe").write_bytes(b"different binary")
+        release = self.public_files()
+        files = ci.verify_files(release, "1.2.3")
+        self.assertEqual(set(files), {
+            "VGHKS-bot.exe", "VGHKS-bot-pdf.exe", "VGHKS-bot-ocr.exe", "SHA256SUMS.txt", "RELEASE_NOTES.md",
+            "VGHKS-bot-v1.2.3-windows-x64.zip", "VGHKS-bot-pdf-v1.2.3-windows-x64.zip",
+            "VGHKS-bot-ocr-v1.2.3-windows-x64.zip",
+        })
+        (release / "VGHKS-bot.exe").write_bytes(b"different binary")
         with self.assertRaisesRegex(ValueError, "checksums"):
-            ci.verify_files(self.directory, "1.2.3")
+            ci.verify_files(release, "1.2.3")
+
+    def test_package_requires_all_correct_variant_reports_before_writing_any_archive(self):
+        release = self.public_files(package=False)
+        for variant in VARIANTS:
+            with self.subTest(variant=variant.kind):
+                report = self.directory / ".build/ci" / variant.selftest
+                original = ci.read_json(report)
+                ci.write_json(report, {**original, "variant": "wrong variant"})
+                with self.assertRaisesRegex(ValueError, "different variant"):
+                    self.package_release()
+                self.assertEqual(list(release.glob("*.zip")), [])
+                ci.write_json(report, original)
+
+    def test_package_rejects_stale_frozen_self_test_for_same_variant(self):
+        release = self.public_files(package=False)
+        path = self.directory / ".build/ci/exe-selftest-pdf.json"
+        ci.write_json(path, {**ci.read_json(path), "sha256": "0" * 64})
+        with self.assertRaisesRegex(ValueError, "executable validation differs.*exe-selftest-pdf.json"):
+            self.package_release()
+        self.assertEqual(list(release.glob("*.zip")), [])
+
+    def test_promotion_rejects_swapped_frozen_reports_even_with_matching_archive_hash(self):
+        release = self.public_files()
+        archive = release / "VGHKS-bot-v1.2.3-windows-x64.zip"
+        with zipfile.ZipFile(archive) as bundle:
+            entries = {name: bundle.read(name) for name in bundle.namelist()}
+        entries["validation/exe-selftest.json"] = b'{"ok":true,"variant":"lite"}'
+        with zipfile.ZipFile(archive, "w") as bundle:
+            for name, data in entries.items():
+                bundle.writestr(name, data)
+        self.update_checksums(release)
+        with self.assertRaisesRegex(ValueError, "different variant"):
+            ci.verify_files(release, "1.2.3")
 
     def test_main_release_rejects_a_bundled_monitor_even_with_matching_checksums(self):
-        self.public_files()
-        archive = self.directory / "VGHKS-bot-v1.2.3-windows-x64.zip"
+        release = self.public_files()
+        archive = release / "VGHKS-bot-v1.2.3-windows-x64.zip"
         with zipfile.ZipFile(archive, "a") as bundle:
             bundle.writestr("VGHKS-calendar-monitor.exe", b"obsolete synthetic monitor")
-        names = ci.release_files("1.2.3") - {"SHA256SUMS.txt", "RELEASE_NOTES.md"}
-        (self.directory / "SHA256SUMS.txt").write_text(
-            "".join(f"{ci.digest(self.directory / name)}  {name}\n" for name in sorted(names)), encoding="utf-8")
+        self.update_checksums(release)
         with self.assertRaisesRegex(ValueError, "Monitor artifacts"):
-            ci.verify_files(self.directory, "1.2.3")
+            ci.verify_files(release, "1.2.3")
 
     def test_release_manifest_binds_run_attempt_tree_version_and_file_hashes(self):
         run = self.run_metadata()
