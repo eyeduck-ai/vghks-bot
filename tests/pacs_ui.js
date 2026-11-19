@@ -21,7 +21,7 @@ async function main() {
   await button.emit("click");await button.emit("click");await tick();
   assert.equal(calls.length, 1, "double click sent a second command");
   assert.equal(button.disabled, true);
-  assert.equal(control["aria-busy"], "true");
+  assert.equal(button["aria-busy"], "true");
   const replacement = make();root.append(replacement);control.remove();
   assert.equal(replacement.querySelector("button").disabled, true, "progress redraw enabled duplicate submit");
   await replacement.querySelector("button").emit("click");await tick();
@@ -63,6 +63,42 @@ async function main() {
   const offline = c.window.ClinicalUI.pacsControl({scope,enabled:false,request:async () => {throw new Error("offline command");}});
   root.append(offline);assert.equal(offline.querySelector("button").disabled, true);
   await offline.querySelector("button").emit("click");await tick();
+
+  const timers = new Map();let nextTimer = 0;
+  c.setTimeout = (run, delay) => {timers.set(++nextTimer, {run, delay});return nextTimer;};
+  c.clearTimeout = id => timers.delete(id);
+  const batchGate = deferred(), batchCalls = [];
+  const batch = c.window.ClinicalUI.pacsControl({scope:{...scope,resource:"orders",reference:""},compact:true,batch:true,
+    enabled:false,request:values => {batchCalls.push(values);return batchGate.promise;}});
+  root.append(batch);
+  const batchButton = batch.querySelector("button"), batchMessage = batch.querySelector(".pacs-message");
+  assert.equal(batchButton.disabled, true);
+  batch.refresh({enabled:true,reset:true});
+  await batchButton.emit("click");await tick();
+  assert.equal(batchButton.dataset.state, "busy");
+  assert.equal(batchMessage.classList.contains("is-visible"), false);
+  batch.refresh({enabled:true,reset:true});
+  assert.equal(batchButton.disabled, true, "changing selection reenabled an active batch");
+  await batchButton.emit("click");
+  batchGate.resolve({status:"PARTIAL",message:"舊選取"});await tick();
+  assert.equal(batchCalls.length, 1);
+  assert.equal(batchButton.disabled, false);
+  assert.equal(batchMessage.textContent, "", "old batch result appeared after selection changed");
+
+  const compact = c.window.ClinicalUI.pacsControl({scope,compact:true,
+    request:async () => ({status:"HANDOFF_SENT",message:"請核對檢查"})});root.append(compact);
+  await compact.querySelector("button").emit("click");await tick();
+  assert.equal(compact.querySelector("button").dataset.state, "sent");
+  assert.equal(compact.querySelector(".pacs-message").classList.contains("is-visible"), true);
+  [...timers.values()].find(timer => timer.delay === 1600).run();
+  assert.equal(compact.querySelector("button").dataset.state, undefined, "success left the button highlighted");
+  const errorControl = c.window.ClinicalUI.pacsControl({scope,compact:true,
+    request:async () => ({status:"UNAVAILABLE",message:"請啟動 DownloadApp"})});root.append(errorControl);
+  await errorControl.querySelector("button").emit("click");await tick();
+  assert.equal(errorControl.querySelector("button").dataset.state, "error");
+  assert.equal(errorControl.querySelector("button").disabled, false);
+  assert.equal(errorControl.querySelector(".pacs-message").classList.contains("is-visible"), true);
+  assert.equal(compact.querySelector(".pacs-message").classList.contains("is-visible"), false, "two floating messages overlapped");
 
   // Render the production retina order card and exercise its bound endpoint,
   // including the cohort guard after a delayed UI action.

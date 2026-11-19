@@ -19,7 +19,7 @@ from test_review_history import ALIAS, DETAIL, MRN, REPORT, HistorySDK
 from vghks_sdk import ParseError
 from vghks_sdk.integrations.smartiris import SmartIrisClient, SmartIrisLaunchResult
 from vghks_sdk.integrations.smartiris_availability import SmartIrisAvailability
-from vghks_sdk.models import PacsLaunchContext, PacsLaunchRef
+from vghks_sdk.models import ClinicalOrder, PacsLaunchContext, PacsLaunchRef
 from vghks_sdk.models.pacs_launch import SMARTWONDER_BASE_URL, SMARTWONDER_WADO_URL
 
 from vghks_bot.analysis_fetch import clean
@@ -92,6 +92,75 @@ class PacsTests(unittest.TestCase):
 
     def run_task(self, **values):
         return wait_task(self.work, self.work.review.start(values)["task_id"])
+
+    def batch_scope(self, *request_numbers):
+        scope = {**self.scope, "resource": "orders", "reference": ""}
+        orders = [ClinicalOrder(ALIAS, "LEGACY", "O", f"合成影像 {index}", "2024-01-01",
+                                pacs_launch_ref=PacsLaunchRef(ALIAS, number) if number else None)
+                  for index, number in enumerate(request_numbers)]
+        self.work.analysis.store.save_step(MRN, "orders-history:*", "order_index", clean(orders), "TEST")
+        rows = {row["name"]: row["id"] for row in self.work.review.history.read(scope)["data"]}
+        scope["order_keys"] = [rows[order.name] for order in orders]
+        return scope
+
+    def test_batch_handoff_serializes_distinct_studies_and_reports_skipped_orders(self):
+        scope = self.batch_scope("FIRST", "SECOND", "SECOND", "SAME-STUDY", None)
+        events = []
+
+        def prepare(reference):
+            events.append(("prepare", reference.request_no))
+            return replace(launch_context(reference), study_uid="1.2.1" if reference.request_no == "FIRST" else "1.2.2")
+
+        def opened(context):
+            self.assertTrue(self.app.pacs_lock.locked())
+            events.append(("handoff", context.reference.request_no))
+            return SmartIrisLaunchResult("HANDOFF_SENT")
+
+        self.viewer.open_study.side_effect = opened
+        with patch.object(self.work.gateway.connection.orders, "prepare_pacs_launch", side_effect=prepare):
+            result = self.work.pacs.open(scope)
+
+        self.viewer.check_availability.assert_called_once()
+        self.assertEqual(events, [("prepare", "FIRST"), ("handoff", "FIRST"), ("prepare", "SECOND"),
+                                  ("handoff", "SECOND"), ("prepare", "SAME-STUDY")])
+        self.assertEqual(result["status"], "PARTIAL")
+        self.assertEqual(result["counts"], {"selected": 5, "sent": 2, "duplicate": 2, "no_pacs": 1,
+                                            "selection_required": 0, "failed": 0, "unknown": 0, "pending": 0})
+        self.assertIsNone(result["viewer_loaded"])
+        self.assertNotIn("SAME-STUDY", json.dumps(result))
+
+    def test_batch_stops_on_uncertain_handoff_without_retrying_or_preparing_remaining_orders(self):
+        scope = self.batch_scope("FIRST", "SECOND", "THIRD")
+        self.viewer.open_study.return_value = SmartIrisLaunchResult("OUTCOME_UNKNOWN", error_code="SMARTIRIS_TIMEOUT")
+        PacsSDK.calls.clear()
+        result = self.work.pacs.open(scope)
+        self.assertEqual(result["status"], "OUTCOME_UNKNOWN")
+        self.assertEqual(result["counts"]["unknown"], 1)
+        self.assertEqual(result["counts"]["pending"], 2)
+        self.assertEqual([call[2].request_no for call in PacsSDK.calls if call[1] == "prepare-pacs"], ["FIRST"])
+        self.viewer.open_study.assert_called_once()
+        self.assertFalse(self.app.pacs_lock.locked())
+
+    def test_batch_requires_every_order_to_be_in_the_verified_list_before_probing(self):
+        scope = self.batch_scope("FIRST", "SECOND")
+        visit_scope = {**scope, "resource": "visits", "reference": ""}
+        self.run_task(kind="history", **visit_scope)
+        current = next(row for row in self.work.review.history.read(visit_scope)["data"] if row["case_no"] == "ONE")
+        case_scope = {**scope, "resource": "case_orders", "reference": current["id"]}
+        self.run_task(kind="history", **case_scope)
+        selected, = self.work.review.history.read(case_scope)["data"]
+        PacsSDK.calls.clear()
+        for invalid in ({**scope, "mrn": "OTHER"},
+                        {**scope, "order_keys": [*scope["order_keys"], "f" * 64]},
+                        {**scope, "order_keys": [scope["order_keys"][0]] * 21},
+                        {**case_scope, "order_keys": [selected["id"], scope["order_keys"][0]]}):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                self.work.pacs.open(invalid)
+        self.factory.assert_not_called()
+        self.assertEqual(PacsSDK.calls, [])
+        result = self.work.pacs.open({**case_scope, "order_keys": [selected["id"]]})
+        self.assertEqual(result["status"], "NO_PACS")
+        self.viewer.open_study.assert_not_called()
 
     def test_jpeg_report_never_inspects_or_opens_native_viewer(self):
         task = self.run_task(kind="history", **self.scope)

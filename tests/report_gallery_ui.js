@@ -217,12 +217,12 @@ async function historyTests(){
  const pdf=asset("PDFREF","PDF","application/pdf"),image=asset("IMAGEREF","IMG");
  const items=[{ref_key:"PDFREF",ordinal:1,status:"ready",kind:"pdf"},{ref_key:"IMAGEREF",ordinal:2,status:"pending",kind:"image"}];
  const details=[{fields:{檢查項目:"合成眼科醫囑"}}],texts=[{text:"合成文字報告"}];let data={...payload(items,[pdf]),details,texts};
- c.ClinicalUI.loading=()=>s.node("div","等待","clinical-loading");c.ClinicalUI.textDownload=()=>s.node("button","文字報告");c.ClinicalUI.pacsControl=options=>{const value=s.node("div","本地 PACS","pacs-control");value.options=options;return value;};
+ c.ClinicalUI.loading=()=>s.node("div","等待","clinical-loading");c.ClinicalUI.textDownload=()=>s.node("button","文字報告");c.ClinicalUI.pacsControl=options=>{const value=s.node("div","本地 PACS","pacs-control");value.options=options;value.refresh=({enabled})=>{value.disabled=!enabled;};return value;};
  c.window.FileCompare={context(){}};c.work.online=true;c.extensionTask="";c.dialog=()=>{$("#dataDialog").open=true;};c.setPatientDialogContext=()=>{};c.reviewPatientIdentity=()=>({name:"合成病人"});c.JobProgress={pending(){},publish(){}};
  c.Option=function(label,value){const option=s.node("option",label);option.value=value;return option;};
  c.table=(_headers,rows)=>{shown.push(rows);return s.node("table");};c.paginate=(_host,page,total,change)=>{pages.push({page,total,change});};
  c.api=async(path,values)=>{calls.push({path,values});if(path==="/reviews/history/read")return {data,complete,updated_at:"same-second",issues:[],coverage:{orders_start:"2015-11-25"}};if(path==="/reviews/pacs/open")return {status:"HANDOFF_SENT",message:"合成交接"};if(path==="/tasks/start"){if(startGate)await startGate.promise;return {task_id:"TASK"};}if(path.startsWith("/tasks/detail"))return {status,revision,updated_at:"same-second"};throw new Error(path);};
- s.run("vghks_bot/static/review-history.js");const ui=c.window.ReviewHistoryUI;
+ s.run("vghks_bot/static/review-archive.js");s.run("vghks_bot/static/review-history.js");const ui=c.window.ReviewHistoryUI;
  await ui.open("order_report","TEST001","ORDER");
  const panel=$("#dataContent"),viewport=panel.querySelector(".report-gallery-viewport"),stage=viewport.firstElementChild,iframe=stage.firstElementChild,detailDisclosure=panel.querySelector(".history-report-details"),textDisclosure=panel.querySelector(".history-report-texts");viewport.scrollTop=77;
  const controls=()=>[...$("#dataDialogActions").querySelectorAll(".history-action"),...panel.querySelectorAll(".history-action")];
@@ -252,6 +252,12 @@ async function historyTests(){
  await panel.querySelectorAll(".history-action").find(value=>value.textContent.startsWith("全部")).run();assert.equal(pages.at(-1).total,105,"all tab hid other reports");
  assert.equal(panel.querySelectorAll("table").length,1,"orders were split into multiple tables");
  assert.equal(headers[0]["aria-sort"],"ascending");assert.deepEqual(names().slice(0,3),["Alpha 0","Alpha 1","Alpha 2"]);
+ const bulk=panel.querySelector(".history-order-bulk"),allRows=grid.querySelector("thead").querySelector("input");
+ allRows.checked=true;await allRows.emit("change");
+ assert.equal(bulk.querySelector(".pacs-control").disabled,true);
+ assert.match(bulk.querySelector(".caption").textContent,/最多 20 筆/);
+ assert.equal(bulk.querySelector(".history-order-download").disabled,false,"PACS cap also disabled ZIP download");
+ allRows.checked=false;await allRows.emit("change");
  assert.equal(names().length,40);assert.equal(grid.querySelector("tbody").firstElementChild.children[3].textContent,"—","execution date was inferred from the order date");
  assert.equal(panel.querySelectorAll(".history-order-category").length,0);assert.equal(panel.querySelectorAll("h4").length,0);
  assert.equal(panel.all().some(value=>value.textContent.includes("點選後才讀取")),false);
@@ -263,7 +269,7 @@ async function historyTests(){
  const search=panel.querySelector("input");search.value="2026-09";await search.emit("input");assert.equal(pages.at(-1).total,60,"date search discarded matching other orders");
  assert.equal(panel.querySelectorAll(".history-action").find(value=>value.textContent.startsWith("全部"))["aria-pressed"],"true","cross-category search changed the default scope");
  search.value="Alpha 59";await search.emit("input");assert.equal(pages.at(-1).total,1);assert.equal(names()[0],"Alpha 59");
- const direct=panel.querySelector(".pacs-control").options;
+ const direct=grid.querySelector("tbody").querySelector(".pacs-control").options;
  assert.equal(direct.scope.resource,"order_report");assert.equal(direct.scope.reference,"OTHER59");assert.equal(direct.scope.mrn,"TEST001");assert.equal(direct.buttonText,"本地 PACS");assert.equal(direct.current(),true);
  assert.equal(calls.filter(call=>call.path==="/reviews/pacs/open").length,0,"rendering sent a native command");await direct.request(direct.scope);assert.equal(calls.at(-1).path,"/reviews/pacs/open");assert.equal($("#dataDialog").classList.contains("order-list-dialog"),true,"direct PACS opened the JPG report");
  search.value="";await search.emit("input");await panel.querySelectorAll(".history-action").find(value=>value.textContent.startsWith("眼科檢查")).run();assert.equal(pages.at(-1).total,45);
@@ -297,7 +303,7 @@ async function orderArchiveTests(){
  const orders=[{id:"CACHED",name:"Alpha",ophthalmic:true},{id:"NEED",name:"Beta",ophthalmic:true},{id:"ERROR",name:"Gamma",ophthalmic:false}];
  let exportGate=null;
  Object.assign(c,{AbortController,dialog:()=>{$("#dataDialog").open=true;},setPatientDialogContext(){},reviewPatientIdentity:()=>({name:"合成病人"}),extensionTask:""});
- c.ClinicalUI.loading=()=>s.node("div","等待","clinical-loading");c.ClinicalUI.pacsControl=()=>s.node("div","本地 PACS","pacs-control");
+ c.ClinicalUI.loading=()=>s.node("div","等待","clinical-loading");c.ClinicalUI.pacsControl=options=>{const value=s.node("div","本地 PACS","pacs-control");value.options=options;value.refresh=({enabled})=>{value.disabled=!enabled;};return value;};
  c.ClinicalUI.saveBlob=(blob,name)=>saved.push({blob,name});c.window.ClinicalUI=c.ClinicalUI;
  c.window.FileCompare={context(){}};c.work.online=true;
  c.window.ScanBrowser={async runResource(request,values,current){assert.equal(current(),true);prepared.push(values);}};
@@ -308,6 +314,7 @@ async function orderArchiveTests(){
    if(values.reference==="ERROR")throw new Error("synthetic read failure");
    return {data:payload([],[]),complete:values.reference==="CACHED",issues:[]};
   }
+  if(endpoint==="/reviews/pacs/open")return {status:"HANDOFF_SENT"};
   if(endpoint!=="/reviews/history/export")throw new Error(endpoint);
   assert.equal(options.raw,true);archives.push({values,signal:options.signal});
   if(exportGate)await exportGate.promise;
@@ -320,13 +327,19 @@ async function orderArchiveTests(){
  const select=async input=>{input.checked=true;await input.emit("change");};
  await ui.open("orders","TEST001");
  assert.equal(fileControls().firstElementChild.disabled,true);
- await select(selectAll());assert.equal(fileControls().children[2].textContent,"已選 2 筆");
+ assert.equal(fileControls().firstElementChild.textContent,"下載附件");assert.ok(fileControls().firstElementChild.classList.contains("primary"));
+ assert.equal(fileControls().querySelector(".pacs-control").disabled,true);
+ await select(selectAll());assert.equal(fileControls().querySelector(".caption").textContent,"已選 2 筆");
  await panel.querySelectorAll(".history-action").find(value=>value.textContent==="查看內容").run();
  await $("#dataDialogBack").emit("click");
- assert.equal(fileControls().children[2].textContent,"已選 2 筆","returning from the report discarded the selected rows");
+ assert.equal(fileControls().querySelector(".caption").textContent,"已選 2 筆","returning from the report discarded the selected rows");
  await panel.querySelectorAll(".history-action").find(value=>value.textContent.startsWith("其他（")).run();
  await select(panel.querySelector("tbody").querySelector("input"));
- assert.equal(fileControls().children[2].textContent,"已選 3 筆","filtering discarded earlier selections");
+ assert.equal(fileControls().querySelector(".caption").textContent,"已選 3 筆","filtering discarded earlier selections");
+ const pacs=fileControls().querySelector(".pacs-control");assert.equal(pacs.disabled,false);
+ assert.equal(pacs.options.batch,true);await pacs.options.request(pacs.options.scope);
+ assert.equal(calls.at(-1).endpoint,"/reviews/pacs/open");assert.equal(calls.at(-1).values.resource,"orders");
+ assert.equal(calls.at(-1).values.mrn,"TEST001");assert.deepEqual(Array.from(calls.at(-1).values.order_keys),["CACHED","NEED","ERROR"]);
  await fileControls().firstElementChild.emit("click");
  assert.deepEqual(prepared.map(value=>value.reference),["NEED"],"cached orders triggered unnecessary refetch or missing order blocked progress");
  assert.equal(archives[0].values.resource,"orders");assert.equal(archives[0].values.mrn,"TEST001");
